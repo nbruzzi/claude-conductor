@@ -9,7 +9,7 @@ Copyright 2026 nbruzzi
 
 **Audit gate:** mini-Knowledge-System audit on this document before sub-step 0.6 (file extraction) writes the actual `memories/*.md` files. Round-1 audit landed 6.5/10 with 1 critical + 3 major + 3 minor findings. **All 7 findings integrated below.** Verification round dispatched per audit-skill bounded-with-hard-cap-3 discipline.
 
-**Status:** AUDITED — round 2 verification pending.
+**Status:** AUDITED — round 2 verification GREEN. Sub-step 0.6 entry unblocked. Audit envelope closed.
 
 ## Scope filter
 

@@ -218,4 +218,55 @@ affects: [eslint, package.json, pre-commit-gates, devDependencies]
 
 ---
 
+```yaml
+ts: 2026-04-25T22:45:00Z
+kind: scope
+severity: major
+phase: 0
+affects: [memories-to-bundle, plugin-marquee-feature]
+```
+
+### 2026-04-25 — Sub-step 0.3 audit pass: 5 multi-instance memories restored to in-scope
+
+**Context:** Round-1 mini-Knowledge-System audit on `memories-to-bundle.md` landed 6.5/10 with KS-1 critical finding: the drop list incorrectly excluded `feedback-merge-commit-across-instances`, `feedback-validate-detector-before-behavior`, `feedback-self-monitoring-is-architectural`, `feedback-surface-merge-decisions`, `feedback-convergent-instances`. Auditor's verbatim observation: _"the drop reasoning ('Nick-specific multi-instance workflow') is exactly inverted: the plugin IS a multi-instance workflow."_
+
+**Options considered:**
+
+1. Defend the original drop decisions as correct-in-context — would commit the plugin to shipping without its marquee-feature disciplines.
+2. Restore all 5 memories to in-scope; accept the heavier anonymization burden — preserves plugin's discipline-as-code value proposition for multi-instance coordination.
+3. Restore some-but-not-all (e.g., merge-commit yes, convergent-instances no) — splits the difference but creates an inconsistent scope filter.
+
+**Chosen:** Option 2.
+
+**Reason:** The auditor's framing is correct. The plugin EXTENDS Anthropic's Agent Teams. Multi-instance disciplines (merge-vs-rebase across instances, convergent vs divergent observation, surface-merge-decisions) are exactly the disciplines the plugin's audience (peer Claudes coordinating across sessions) needs. Dropping them would be silently-stripping the plugin's own thesis. Total in-scope: 13 → 18. Anonymization burden is higher but mechanical per the expanded rules.
+
+**Reversal cost:** Trivial within Phase 0 — drop any of the 5 from `memories-to-bundle.md` if anonymization proves intractable in sub-step 0.6. After v0.1.0-phase-0 tag: requires a memory-deprecation flow (not yet defined).
+
+---
+
+```yaml
+ts: 2026-04-25T22:50:00Z
+kind: tooling
+severity: minor
+phase: 0
+affects: [audit-skill-discipline, verification-rounds]
+```
+
+### 2026-04-25 — Sub-step 0.3 verification round closed audit envelope at GREEN
+
+**Context:** Per audit-skill bounded-with-hard-cap-3 discipline, round-2 verification dispatched after KS-1..7 integration. Verifier returned ADDRESSED for all 7 findings, no new showstoppers, GREEN ship-as-is verdict.
+
+**Options considered:**
+
+1. Trust GREEN verdict; close envelope; proceed to sub-step 0.3b — bias toward forward motion.
+2. Dispatch round 3 anyway as belt-and-suspenders — violates the audit-skill's hard cap and the "bias is to close the envelope" rule.
+
+**Chosen:** Option 1.
+
+**Reason:** The audit-skill's recently-loosened bounded-with-hard-cap-3 explicitly says: "The bias is to close the envelope. Round 1 found real issues; round 2 confirms they're fixed and lets the work proceed. Don't optimize for finding more." Verifier returned GREEN cleanly; no signal pointing to deeper issues.
+
+**Reversal cost:** None — GREEN is a release-the-deliverable signal, not a frozen-can't-change one. Sub-step 0.6 may surface issues during the actual extraction/rewrite that warrant updating `memories-to-bundle.md`; that's normal mid-extraction adjustment, not a re-audit.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
