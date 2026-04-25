@@ -1,0 +1,40 @@
+# Bun
+node_modules/
+bun.lockb
+.bun/
+
+# TypeScript
+*.tsbuildinfo
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Generated docs
+docs/api/auto-generated/
+
+# Local-only working files
+.local/

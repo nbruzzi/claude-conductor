@@ -1,0 +1,5 @@
+# Audits
+#
+# Multi-persona audit transcripts and verification rounds land here as
+# `phase-<N>/<persona>-<round>.md`. Survives across sessions; informs Phase 5
+# terminal full-diff audit. See INDEX.md for the catalog.

@@ -1,0 +1,10 @@
+# Bundled Memories
+#
+# Anonymized rewrites of cross-session feedback patterns extracted from
+# Nick's personal memory pool. Each declares cadence: durable + scope: global
+# in frontmatter per V2 schema. Audience is future-Claude + peer Claudes
+# using this plugin, NOT humans operating Claude.
+#
+# Phase 0 deliverable — populated from `memories-to-bundle.md` audit
+# deliverable after the anonymization rewrite + cross-reference graph audit.
+# See INDEX.md for the catalog.
