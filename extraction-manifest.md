@@ -9,7 +9,7 @@ Copyright 2026 nbruzzi
 
 **Audit gate:** mini-Architecture audit on this manifest (single persona) before sub-step 0.6 (file extraction) begins. Findings integrated; no circular references between plugin and dotfiles. Approved before Phase 1.
 
-**Status:** DRAFT (awaiting mini-audit).
+**Status:** AUDITED 2026-04-25 (mini-Architecture audit + verification round; 6/6 findings addressed; score 9.0/10; ship verdict). Audit transcripts at `audits/phase-0/architecture-r1.md` + `audits/phase-0/architecture-r2-verification.md` (filed at sub-step 0.10 audit-transcript-durability deliverable).
 
 ## Scope filter
 
