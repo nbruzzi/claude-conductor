@@ -57,30 +57,30 @@ The plan's audience is **future-Claude + peer Claudes coordinating via Anthropic
 
 ### Hooks/checks — generic discipline gates
 
-| File                                              | Decision          | Rationale                                                                                                                  |
-| ------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `src/hooks/checks/auto-format.ts`                 | extract-with-shim | Generic format-on-stop discipline.                                                                                         |
-| `src/hooks/checks/branch-enforcement.ts`          | extract-with-shim | Generic branching rule (>3 files = branch first).                                                                          |
-| `src/hooks/checks/config-protection.ts`           | extract-with-shim | Generic config-protection. **NEEDS ENHANCEMENT** in plugin (approval-aware mechanism per Phase 0 substrate-gap follow-up). |
-| `src/hooks/checks/destructive-cmd.ts`             | extract-with-shim | Generic destructive-command guard.                                                                                         |
-| `src/hooks/checks/fact-force.ts`                  | extract-with-shim | Generic fact-forcing gate.                                                                                                 |
-| `src/hooks/checks/handoff-latest-guard.ts`        | extract-with-shim | Generic LATEST-symlink protection.                                                                                         |
-| `src/hooks/checks/handoff-symlink-write-guard.ts` | extract-with-shim | Generic handoff-symlink write-through protection.                                                                          |
-| `src/hooks/checks/no-any.ts`                      | extract-with-shim | Generic TypeScript discipline.                                                                                             |
-| `src/hooks/checks/no-enum.ts`                     | extract-with-shim | Generic TypeScript discipline.                                                                                             |
-| `src/hooks/checks/pre-commit.ts`                  | extract-with-shim | Generic pre-commit gate orchestrator.                                                                                      |
-| `src/hooks/checks/prefer-bun.ts`                  | extract-with-shim | Generic Bun-over-Node guard.                                                                                               |
-| `src/hooks/checks/sensitive-files.ts`             | extract-with-shim | Generic sensitive-file guard.                                                                                              |
-| `src/hooks/checks/test-gate.ts`                   | extract-with-shim | Generic autonomous-mode test enforcement.                                                                                  |
-| `src/hooks/checks/sync-common.ts`                 | extract-with-shim | Cross-sibling primitives (oneLine, appendLogWithRotation, diagnosePushFailure) — generalizable.                            |
-| `src/hooks/checks/architecture-coverage.ts`       | extract-with-shim | Generic architecture-as-code coverage check.                                                                               |
-| `src/hooks/checks/architecture-drift.ts`          | extract-with-shim | Generic architecture-as-code drift check.                                                                                  |
-| `src/hooks/checks/architecture-orphans.ts`        | extract-with-shim | Generic architecture-as-code orphans check.                                                                                |
-| `src/hooks/checks/channel-gc.ts`                  | extract-with-shim | Generic channel GC.                                                                                                        |
-| `src/hooks/checks/active-channels-load.ts`        | extract-with-shim | Generic active-channels surface at SessionStart.                                                                           |
-| `src/hooks/checks/session-collision-gate.ts`      | extract-with-shim | Generic peer-detection PreToolUse — sibling of new Phase 1 identity hook.                                                  |
-| `src/hooks/checks/session-presence-register.ts`   | extract-with-shim | Generic SessionStart presence registration.                                                                                |
-| `src/hooks/checks/session-presence-unregister.ts` | extract-with-shim | Generic Stop presence cleanup.                                                                                             |
+| File                                              | Decision          | Rationale                                                                                                                                                                                                                           |
+| ------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/hooks/checks/auto-format.ts`                 | extract-with-shim | Generic format-on-stop discipline.                                                                                                                                                                                                  |
+| `src/hooks/checks/branch-enforcement.ts`          | extract-with-shim | Generic branching rule (>3 files = branch first).                                                                                                                                                                                   |
+| `src/hooks/checks/config-protection.ts`           | extract-with-shim | Generic config-protection. **NEEDS ENHANCEMENT** in plugin (approval-aware mechanism per Phase 0 substrate-gap follow-up).                                                                                                          |
+| `src/hooks/checks/destructive-cmd.ts`             | extract-with-shim | Generic destructive-command guard.                                                                                                                                                                                                  |
+| `src/hooks/checks/fact-force.ts`                  | extract-with-shim | Generic fact-forcing gate.                                                                                                                                                                                                          |
+| `src/hooks/checks/handoff-latest-guard.ts`        | extract-with-shim | Generic LATEST-symlink protection.                                                                                                                                                                                                  |
+| `src/hooks/checks/handoff-symlink-write-guard.ts` | extract-with-shim | Generic handoff-symlink write-through protection.                                                                                                                                                                                   |
+| `src/hooks/checks/no-any.ts`                      | extract-with-shim | Generic TypeScript discipline.                                                                                                                                                                                                      |
+| `src/hooks/checks/no-enum.ts`                     | extract-with-shim | Generic TypeScript discipline.                                                                                                                                                                                                      |
+| `src/hooks/checks/pre-commit.ts`                  | extract-with-shim | Generic pre-commit gate orchestrator.                                                                                                                                                                                               |
+| `src/hooks/checks/prefer-bun.ts`                  | extract-with-shim | Generic Bun-over-Node guard.                                                                                                                                                                                                        |
+| `src/hooks/checks/sensitive-files.ts`             | extract-with-shim | Generic sensitive-file guard.                                                                                                                                                                                                       |
+| `src/hooks/checks/test-gate.ts`                   | extract-with-shim | Generic autonomous-mode test enforcement.                                                                                                                                                                                           |
+| `src/hooks/checks/sync-common.ts`                 | extract-with-shim | Cross-sibling primitives (oneLine, appendLogWithRotation, diagnosePushFailure) — generalizable.                                                                                                                                     |
+| `src/hooks/checks/architecture-coverage.ts`       | keep-in-dotfiles  | Per ARCH-2 audit finding: reads dotfiles' `architecture.yaml`; bundling creates a silent-no-op trap when default resolves to non-existent plugin file. Extract engine only when plugin grows its own architecture graph (Phase 5+). |
+| `src/hooks/checks/architecture-drift.ts`          | keep-in-dotfiles  | Same — reads dotfiles' yaml.                                                                                                                                                                                                        |
+| `src/hooks/checks/architecture-orphans.ts`        | keep-in-dotfiles  | Same — reads dotfiles' yaml.                                                                                                                                                                                                        |
+| `src/hooks/checks/channel-gc.ts`                  | extract-with-shim | Generic channel GC.                                                                                                                                                                                                                 |
+| `src/hooks/checks/active-channels-load.ts`        | extract-with-shim | Generic active-channels surface at SessionStart.                                                                                                                                                                                    |
+| `src/hooks/checks/session-collision-gate.ts`      | extract-with-shim | Generic peer-detection PreToolUse — sibling of new Phase 1 identity hook.                                                                                                                                                           |
+| `src/hooks/checks/session-presence-register.ts`   | extract-with-shim | Generic SessionStart presence registration.                                                                                                                                                                                         |
+| `src/hooks/checks/session-presence-unregister.ts` | extract-with-shim | Generic Stop presence cleanup.                                                                                                                                                                                                      |
 
 ### Hooks/checks — Nick-specific (KEEP)
 
@@ -168,7 +168,13 @@ Familiar auditors that reference Nick-specific context-sources need `context_sou
 
 ## Cross-component import edges
 
-The bundled subset has these explicit cross-edges (mapped via grep on `import.*from "../"`):
+**Full enumeration:** `grep -rEn 'from "\.\./' nbruzzi/claude-dotfiles/src --include="*.ts" | grep -v test` returns **191 edges** across the substrate. The vast majority are mundane: `checks/*.ts` files importing types/helpers from `hooks/types.ts`, `hooks/lock.ts`, `hooks/session-id.ts`, `hooks/checks/sync-common.ts`. Those resolve cleanly because the importer and importee carry the same decision (extract-with-shim → extract-with-shim, or keep-in-dotfiles → extract-with-shim via re-export shim).
+
+**Per ARCH-5 audit finding:** the 8 edges originally listed below are spot-checks, NOT a full enumeration. The full grep enumeration runs at sub-step 0.6 entry as a checklist — every edge categorized (mundane shim-resolved / non-obvious / blocked-by-cycle), and the manifest appendix below grows with the categorized output before extraction begins.
+
+### Cross-decision edges (the load-bearing subset)
+
+The non-obvious edges — where the importer and importee carry different decisions, or where extraction creates a new constraint — are:
 
 | From                                         | To                                    | Edge type | Resolution                                                                                     |
 | -------------------------------------------- | ------------------------------------- | --------- | ---------------------------------------------------------------------------------------------- |
@@ -182,6 +188,74 @@ The bundled subset has these explicit cross-edges (mapped via grep on `import.*f
 | `src/hooks/checks/vault-commit.ts`           | `src/hooks/checks/dotfiles-common.ts` | direct    | **ARCH-4 cross-trio dependency** — kept in dotfiles per backlog item; not generalized.         |
 
 **No circular references** between plugin and dotfiles after extraction. Dotfiles becomes a downstream consumer of the plugin via shim re-exports for the extract-with-shim files.
+
+**Additional non-obvious edge surfaced by the full grep:** `src/hooks/session-id.ts` imports `isValidSessionId` from `src/active-sessions/index.ts` — both extract-with-shim, but this means the channels module's transitive dependency on `active-sessions/index.ts` is two hops (channels → session-id → active-sessions). Resolves cleanly within the extract-with-shim subset. No cycle.
+
+## Dual-registry contract (per ARCH-1 audit finding)
+
+The audit caught that `hooks/registry.ts` "specific check registrations stay in plugin OR dotfiles" was hand-waving. Resolved:
+
+**Plugin owns the `Registry` class** with bundled-check registrations for the discipline-as-code surface (auto-format, branch-enforcement, config-protection, destructive-cmd, fact-force, handoff guards, no-any, no-enum, pre-commit, prefer-bun, sensitive-files, test-gate, sync-common-derived helpers, channel-gc, active-channels-load, session-collision-gate, presence register/unregister).
+
+**Dotfiles' bootstrap** (`src/hooks/dispatcher.ts` after extraction, on the `claude-conductor-extraction` feature branch) calls:
+
+```ts
+import { Registry } from "claude-conductor/hooks/registry";
+import { register as registerVaultTrio } from "./checks/vault-trio-registrations";
+import { register as registerDotfilesTrio } from "./checks/dotfiles-trio-registrations";
+import { register as registerIntent } from "./checks/intent-registrations";
+import { register as registerMemorySystem } from "./checks/memory-system-registrations";
+import { register as registerFeedback } from "./checks/feedback-registrations";
+import { register as registerArchitecture } from "./checks/architecture-registrations";
+import { register as registerHindsight } from "./checks/hindsight-registrations";
+
+const registry = new Registry();
+// Plugin's bundled registrations are added by Registry's constructor.
+// Dotfiles' Nick-specific registrations layer on top:
+registerVaultTrio(registry);
+registerDotfilesTrio(registry);
+registerIntent(registry);
+registerMemorySystem(registry);
+registerFeedback(registry);
+registerArchitecture(registry);
+registerHindsight(registry);
+// ... (all 19 keep-in-dotfiles checks enumerated)
+```
+
+**Sub-step 0.6 verification:** every keep-in-dotfiles `checks/*.ts` is explicitly enumerated in a dotfiles-side bootstrap registration. No silent-stop-firing of Nick's intent/vault/dotfiles/memory checks post-extraction.
+
+## Shim symmetry checklist (per ARCH-3 audit finding)
+
+The audit caught that the shim pattern doesn't enumerate per-file shim files left behind on the dotfiles side. Resolved: **every** extract-with-shim file MUST have a verified shim file at the original dotfiles path post-extraction.
+
+Sub-step 0.6 maintains a checklist as files move:
+
+```
+[ ] src/active-sessions/index.ts → plugin: src/active-sessions/index.ts; dotfiles shim: src/active-sessions/index.ts re-exports from plugin ✓
+[ ] src/active-sessions/cli.ts → plugin: ...; dotfiles shim: ... ✓
+[ ] src/channels/index.ts → ... ✓
+... (one row per extract-with-shim file, ~30+ rows)
+[ ] src/shared/presence-failure-log.ts → ... ✓ (load-bearing — imported by both active-sessions and dotfiles-commit)
+```
+
+Verification: after sub-step 0.6 completes, run dotfiles' 1102-test suite. If any test fails with `Cannot find module 'claude-conductor/...'` or similar resolution error, the shim file is missing or malformed. Rollback per Phase rollback contract.
+
+## Dotfiles-side `install.sh` + `dotfiles-sync.ts` allowlist deltas (per ARCH-6 audit finding)
+
+The audit caught that the manifest didn't carry forward parent plan ARCH-5 deliverable. Resolved:
+
+**`nbruzzi/claude-dotfiles/install.sh` updates** (on `claude-conductor-extraction` feature branch):
+
+- DIRS array: every directory containing only extract-with-shim files becomes a stub re-export directory pointing at the plugin. Specifically: `src/active-sessions/` → all 3 files become re-export shims; `src/channels/` → same; `src/todos/` → same; `src/shared/` → same; `src/hooks/handlers/` → all 5 files; `src/hooks/lock.ts` `session-id.ts` `timing.ts` `types.ts` `input.ts` `run-checks.ts` `dispatcher.ts` `registry.ts` → all become re-export shims.
+- `skills/audit/`, `skills/commit-push-pr/`, `skills/session/*` (handoff/handoff-resume/channel/presence) → moved to plugin; install.sh DIRS gets stubs OR removes the entries (decided at sub-step 0.9).
+- `agents/audit/` → same.
+
+**`nbruzzi/claude-dotfiles/src/hooks/checks/dotfiles-sync.ts` allowlist updates** (same feature branch):
+
+- Allowlist patterns for the moved files updated so the auto-sync hook tracks the SHIM files (which are tiny re-export markers) rather than the originals (which no longer exist).
+- Specifically: any pattern that matched `src/active-sessions/**/*.ts` previously now matches the shim paths only.
+
+**Verification:** fresh-machine `git clone nbruzzi/claude-dotfiles && ./install.sh && bun test` on the `claude-conductor-extraction` feature branch should restore the post-extraction state and pass all 1102 tests. Sub-step 0.9 includes this smoke-run as a success criterion.
 
 ## Shim pattern
 
@@ -214,6 +288,7 @@ Before file extraction (sub-step 0.6) begins, the manifest gets a single-persona
 
 ## Open questions
 
-- **Familiar auditors with Nick-specific `context_sources`:** the registry references vault paths and Nick's memory files. Anonymization rewrite during extraction (per KS-1) replaces with neutral references or removes context_sources for the bundled copies. Specific decisions tracked at sub-step 0.3.
-- **`memory-index-sync.ts` plugin equivalent:** plugin needs its own indexer (per KS-2) not the dotfiles `-Users-nbruzzi`-hardcoded one. Sub-step 0.4 deliverable. Until then, plugin's MEMORY.md namespace is undefined.
-- **Hooks/checks/architecture-\* extraction scope:** these are generic but currently read `architecture.yaml` from a specific path in dotfiles. Generic-paths refactor needs an env-var-resolved path. Decision: `$CLAUDE_CONDUCTOR_ARCHITECTURE_FILE` defaults to `<plugin-root>/architecture.yaml` (which doesn't exist yet — populated when plugin grows enough to warrant its own architecture graph; Phase 5+ likely).
+- **Familiar auditor `context_sources` anonymization (per ARCH-4 audit finding):** carved out as **sub-step 0.3b** (separate from sub-step 0.3 memory rewrite). Different deliverable file: `agents-to-bundle.md`. Different review criteria: agent frontmatter rewrite, removing or neutralizing references to vault paths, Nick's memory files, dotfiles-specific paths. The 5 familiar auditors (architecture-integration, code-standards, domain-business, knowledge-system, workflow-process) get individual frontmatter rewrites + canonical-context-source replacements.
+- **`memory-index-sync.ts` plugin equivalent:** plugin needs its own indexer (per KS-2) not the dotfiles `-Users-nbruzzi`-hardcoded one. Sub-step 0.4 deliverable. Plugin's indexer scopes to `<plugin-root>/memories/` only and uses a namespaced prefix (`[claude-conductor]`) in surfacing. Coexistence with dotfiles' indexer on Nick's machine: both run; both write to MEMORY.md but with different prefixes. Collision test in sub-step 0.4.
+- **Hooks/checks/architecture-\* extraction scope (resolved via ARCH-2 audit finding):** flipped to `keep-in-dotfiles`. Plugin extracts the engine (`src/architecture/engine.ts` for parsing + walk) only when plugin grows its own architecture graph (Phase 5+). Until then, dotfiles' architecture-as-code discipline stays whole.
+- **Manifest enumeration completeness (per ARCH-5 audit finding):** the cross-component edges section above lists 8 spot-checks. Sub-step 0.6 entry runs the full grep enumeration over `nbruzzi/claude-dotfiles/src/`, categorizes the 191 total edges into mundane / non-obvious / blocked, and appends the categorized list as a new section before extraction begins.
