@@ -9,7 +9,7 @@ Copyright 2026 nbruzzi
 
 **Audit gate:** mini-Architecture audit on this document landed 7.5/10 (ship-with-conditions) with 2 critical + 3 major + 2 minor findings. **All 7 findings integrated below.** Verification round dispatched per audit-skill bounded-with-hard-cap-3 discipline.
 
-**Status:** AUDITED — round 2 verification pending.
+**Status:** AUDITED — round 2 verification GREEN. Sub-step 0.6 entry unblocked. Audit envelope closed.
 
 ## Scope filter
 

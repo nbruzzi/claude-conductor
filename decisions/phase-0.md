@@ -269,4 +269,56 @@ affects: [audit-skill-discipline, verification-rounds]
 
 ---
 
+```yaml
+ts: 2026-04-25T23:30:00Z
+kind: scope
+severity: major
+phase: 0
+affects: [agents-to-bundle, plugin-marquee-feature, registry-extensibility]
+```
+
+### 2026-04-25 — Sub-step 0.3b audit pass: Audit Protocol rewrite, validation gate fixes, template ships
+
+**Context:** Round-1 mini-Architecture audit on `agents-to-bundle.md` landed 7.5/10 (ship-with-conditions) with 2 critical + 3 major + 2 minor findings. Two critical defects directly affected gate executability:
+
+- ARCH-1: original rewrite plan covered frontmatter + body narrative but missed the **Audit Protocol numbered-check list** (operational instruction) as a substrate-leak vector. `architecture-integration.md` steps 7/9/10/11 reference install.sh, sync allowlist, PostToolUse, sentinel; `knowledge-system.md` steps 6/7/8/9/10/11 reference wiki conventions, three-layer architecture, hot.md, backlog hygiene.
+- ARCH-2: original step-6 YAML resolver was non-functional (awk range pattern terminated at first lowercase line, killing the memory: block; slash-presence heuristic misclassified plain filenames).
+
+**Options considered:**
+
+1. Defend the original rewrite plan — would ship a memory-loader gate that lets substrate leaks through and a context-source resolver that doesn't actually resolve memory refs.
+2. Integrate all 7 findings; rewrite gates as Bun-based YAML-aware extractors; ship the template per ARCH-7 — full ceiling-standard fix.
+3. Integrate criticals only (ARCH-1, ARCH-2); defer majors/minors to v0.5+ — partial fix; leaves cross-deliverable inconsistency (ARCH-4) and the non-mechanical trigger lists (ARCH-5).
+
+**Chosen:** Option 2.
+
+**Reason:** All 7 findings are pre-ship blockers under the "professional product" bar. ARCH-3's incomplete registry rewrite would silently break the audit-skill's BIZ-row commission path. ARCH-4's `ceiling-standard.md` cross-deliverable inconsistency would ship two adjacent docs disagreeing on disposition. ARCH-5's prose-comment trigger lists invite drift between agent frontmatter and registry TSV. ARCH-6's `model: opus` open question deserves a documented answer in the deliverable, not a deferral. ARCH-7's template stub costs one file and demonstrates the registry's extensibility story (without it, "registry pattern is extensible" is claim-without-demo).
+
+**Reversal cost:** Trivial within Phase 0 — agents-to-bundle.md is the rewrite spec, not the rewritten files. Sub-step 0.6 reads it and produces the actual `agents/*.md`. Any decision here can be overridden at extraction time if needed.
+
+---
+
+```yaml
+ts: 2026-04-25T23:35:00Z
+kind: tooling
+severity: minor
+phase: 0
+affects: [audit-skill-discipline, verification-rounds]
+```
+
+### 2026-04-25 — Sub-step 0.3b verification round closed audit envelope at GREEN
+
+**Context:** Per audit-skill bounded-with-hard-cap-3 discipline, round-2 verification dispatched after ARCH-1..7 integration. Verifier returned ADDRESSED for all 7 findings with executability spot-checks on the 4 validation-gate scripts (steps 5, 6, 7, 8). One nit-not-blocker noted: step-7 rg pattern catches `feedback-*` and `multi-persona-audit-pattern` shapes; if Phase 0 sub-step 0.6 introduces a non-feedback memory ref, the meta-gate dry-run (step 8) catches it.
+
+**Options considered:**
+
+1. Trust GREEN verdict; close envelope; proceed to sub-step 0.4.
+2. Round 3 to widen step-7 regex pre-emptively — verifier explicitly flagged this as not-a-blocker.
+
+**Chosen:** Option 1. Round-3 dispatch on a non-blocker would violate the audit-skill's "bias is to close the envelope" rule.
+
+**Reversal cost:** None — if sub-step 0.6 introduces a memory ref the step-7 regex misses, the meta-gate dry-run (step 8) catches it on the positive control fixture.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
