@@ -40,6 +40,7 @@ These exist in the source pool but do NOT bundle into the plugin. The discipline
 - `feedback-wind-down-ordering.md` — same wind-down ritual.
 - `feedback-commit-trailer-attribution.md` — original-user trailer convention.
 - `feedback-always-push.md` — original-user-specific commit-push discipline (push-discipline depends on the user's substrate, not the plugin's).
+- `ceiling-standard.md` — original ceiling memory anchored on the capturing user's verbatim quote. The same discipline (autonomous ceiling, step-away trust) is covered more sharply by `feedback-self-apply-ceiling-discipline.md` (in-scope). Bundle the latter; drop the original to avoid two-memories-same-discipline drift.
 - `feedback-check-existing-before-building.md` — generic discipline but the body anchors heavily on substrate-specific examples; **reconsider in a future bundling pass** with a cleaner rewrite.
 - `feedback-subagent-distance-as-default.md` — generic discipline; **reconsider in a future bundling pass** when the plugin has its own subagent flows to anchor against.
 - `feedback-verify-end-to-end.md` — generic discipline; **reconsider in a future bundling pass.**
