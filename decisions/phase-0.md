@@ -389,4 +389,35 @@ affects: [paths-resolver, all-future-extracted-checks]
 
 ---
 
+```yaml
+ts: 2026-04-26T01:00:00Z
+kind: api-shape
+severity: minor
+phase: 0
+affects: [memory-loader, type-design, schema-vocabulary]
+```
+
+### 2026-04-26 — Sub-step 0.4: memory-loader shipped with TS Expert audit findings integrated
+
+**Context:** Per parent plan + execution sub-plan, sub-step 0.4 ships `src/memory-loader/index.ts`. Single-persona TypeScript Expert review landed 8.5/10 with 0 critical + 3 major + 4 minor findings. Major findings + 2 worth-landing minors integrated.
+
+**Findings integrated:**
+
+- **TS-1** (major) — `validateFrontmatter` return type changed from `MemoryFrontmatter | string` to discriminated union `{ ok: true; value: MemoryFrontmatter } | { ok: false; reason: string }`. Call site uses `validated.ok` discriminator instead of `typeof === "string"`. Encodes the success/failure invariant in the type system.
+- **TS-2** (major) — User-defined type predicates (`isMemoryType`, `isCadence`, `isScope`, `isOrigin`) replace `as Cadence` / `as Scope` / `as Origin` casts. Validation now narrows the type without unchecked casts. Reorderable refactors won't silently break.
+- **TS-3** (major) — `MemoryFrontmatter.type` narrowed from `string` to `MemoryType = "feedback" | "user" | "project" | "reference"` (V2 schema vocabulary). A typo like `"feeback"` now lands in errors with a useful reason instead of silently shipping.
+- **TS-5** (minor) — Added `feedback-typoed-key.md` fixture and corresponding test confirming "typo-as-missing" behavior is intentional (a typoed key produces "missing required field" for the canonical key).
+- **TS-7** (minor) — Removed duplicate `NAMESPACE_PREFIX_VALUE` re-export. Single export `NAMESPACE_PREFIX` is canonical.
+
+**Findings not integrated:**
+
+- **TS-4** (minor) — Defensive null checks for regex captures. Auditor noted "noise but acceptable." Switched to destructuring per the auditor's secondary suggestion (`const [, block, body] = match`) — same defensive shape, cleaner.
+- **TS-6** (minor) — Style nit on `&& length > 0` in paths.ts. Skipped — the explicit length check defends against `process.env["X"] = ""` edge cases that empty-string-falsy in other contexts catches but is hidden in `&&` form.
+
+**Reversal cost:** Trivial — type narrowing is additive; type predicates can be replaced with broader checks if needed. Schema vocabulary expansion (e.g., adding a 5th `type` value) is one entry in `TYPE_VALUES` plus one entry in the union type.
+
+**Test coverage:** 14 tests on memory-loader (parsing fixtures, dir handling, formatting), 17 on paths.ts. Total 31. Combined with smoke test = 32. All pass.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
