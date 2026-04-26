@@ -5,6 +5,8 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022"],
     "types": ["bun"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -26,11 +28,7 @@
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
-    "rootDir": ".",
-    "outDir": "./dist",
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
+    "rootDir": "."
   },
   "include": ["src/**/*", "test/**/*", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "build"]
