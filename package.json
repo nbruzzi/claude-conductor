@@ -25,5 +25,12 @@
     "prettier": "^3.0.0",
     "typescript": "^5.5.0"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "exports": {
+    "./shared/presence-failure-log": {
+      "types": "./src/shared/presence-failure-log.ts",
+      "import": "./src/shared/presence-failure-log.ts",
+      "default": "./src/shared/presence-failure-log.ts"
+    }
+  }
 }
