@@ -57,13 +57,17 @@ export type HookResult = {
   detail?: string;
 };
 
-/** Hook event types that the dispatcher routes. */
-export type HookEvent =
-  | "pre-tool-use"
-  | "post-tool-use"
-  | "stop"
-  | "session-start"
-  | "user-prompt-submit";
+/** Hook event types that the dispatcher routes. Runtime array is the source
+ * of truth; the type derives from it so add/remove only happens in one place. */
+export const HOOK_EVENTS = [
+  "pre-tool-use",
+  "post-tool-use",
+  "stop",
+  "session-start",
+  "user-prompt-submit",
+] as const satisfies readonly string[];
+
+export type HookEvent = (typeof HOOK_EVENTS)[number];
 
 /** Handler function signature. */
 export type HookHandler = (input: HookInput) => Promise<HookResult>;
