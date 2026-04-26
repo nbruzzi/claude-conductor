@@ -475,4 +475,65 @@ affects: [batch-1-extraction, hooks-types, exact-optional]
 
 ---
 
+```yaml
+ts: 2026-04-26T02:30:00Z
+kind: architectural
+severity: major
+phase: 0
+affects: [hooks-dispatcher, hooks-handlers, sub-step-0.6-batch-3b]
+```
+
+### 2026-04-26 — Sub-step 0.6 batch 3b surfaces dispatcher refactor as design pivot
+
+**Context:** Batches 1, 2, 3a successfully extracted 11 source files + 8 test files (146 tests passing). Investigating batch 3b (hooks orchestration: registry, run-checks, dispatcher, handlers/\*) revealed a structural mismatch.
+
+**Finding:** Plugin handlers (`src/hooks/handlers/post-tool-use.ts`, `session-start.ts`, `stop.ts`, etc.) currently import 13+ specific check files BY NAME, including 9 `keep-in-dotfiles` checks: `read-tracker`, `dotfiles-sync`, `vault-sync`, `run-affected-tests`, `memory-index-sync`, `session-telemetry-tracker`, `backlog-nudge`, `vault-catchup`, `memory-scope-filter`, `pending-threads-briefing`, `dotfiles-catchup`, `wiki-inject`, `feedback-events-briefing`.
+
+This means a naive copy-extract of handlers would either:
+
+1. Pull all the `keep-in-dotfiles` checks into the plugin (contradicts manifest decisions);
+2. Leave broken imports in extracted handlers (won't compile); or
+3. Require commenting out the `keep-in-dotfiles` check imports in the plugin copy (creates plugin/dotfiles divergence).
+
+**Manifest's intended resolution** (per "Dual-registry contract" section, ARCH-1 of the manifest audit): plugin handlers call registry-registered checks dynamically; dotfiles' bootstrap registers its specific checks via dotfiles-side registration files. This requires a structural refactor of the dispatcher pattern.
+
+**Options considered:**
+
+1. Improvise the refactor inline within batch 3b — risks design drift, no audit trail.
+2. Stop, document the finding, plan the refactor explicitly, audit the design, THEN execute — slower but ceiling-aligned.
+3. Defer the dispatcher entirely (extract registry + run-checks + nothing else from batch 3b) — leaves the plugin without a runtime entry point.
+
+**Chosen:** Option 2.
+
+**Reason:** The dispatcher refactor is structural (changes how all check registration flows), behavior-affecting (every hook event runs through this path), and substantively impacts both plugin and dotfiles substrates. Per `feedback-plan-mode-for-structural-changes.md` memory, this triggers plan mode + multi-persona audit by default. Improvising the refactor mid-extraction would violate the discipline.
+
+**Reversal cost:** Trivial — batches 1-3a remain valid; batch 3b is documented as REQUIRES-PLAN, queued for a focused session.
+
+---
+
+```yaml
+ts: 2026-04-26T02:35:00Z
+kind: scope
+severity: minor
+phase: 0
+affects: [path-resolution, generic-paths-refactor, sub-step-0.8]
+```
+
+### 2026-04-26 — Path-resolver migration deferred from sub-step 0.6 to sub-step 0.8
+
+**Context:** Extracted code (active-sessions/index.ts, hooks/timing.ts, channels/index.ts, todos/index.ts) uses `~/.claude/active-sessions/`, `~/.claude/hook-timing.jsonl`, `~/.claude/channels/`, `~/.claude/todos/` paths via `homedir()` resolution + per-component env-var overrides (`CLAUDE_ACTIVE_SESSIONS_DIR`, etc.). The plugin's `src/shared/paths.ts` resolvers use a different convention: `~/.claude/conductor/<component>/` defaults with `CLAUDE_CONDUCTOR_<COMPONENT>_DIR` env vars and `$CLAUDE_CONDUCTOR_ROOT` root override.
+
+**Decision:** Extract code AS-IS in sub-step 0.6. Path-resolver migration deferred to sub-step 0.8 (originally "Generic-paths CI grep check") which now expands to "Generic-paths refactor sweep + CI grep check."
+
+**Reason:** Replacing per-file path resolution requires deciding the dotfiles-compat-vs-plugin-isolation question:
+
+- **Compat mode:** plugin uses `~/.claude/active-sessions/` (same as dotfiles) → atomic flip at Phase 5 is trivial; both repos share runtime state.
+- **Isolation mode:** plugin uses `~/.claude/conductor/active-sessions/` → no shared state; clean separation; Phase 5 requires migration.
+
+This is a substrate-level decision that benefits from explicit planning. The `nbruzzi` CI grep check in sub-step 0.8 (originally a one-line regex) becomes a sweep that also handles path-resolver migration once the compat-vs-isolation question is settled.
+
+**Reversal cost:** Low — extracted code is mechanical to refactor with sed once the convention is locked.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
