@@ -195,34 +195,38 @@ The non-obvious edges — where the importer and importee carry different decisi
 
 The audit caught that `hooks/registry.ts` "specific check registrations stay in plugin OR dotfiles" was hand-waving. Resolved:
 
-**Plugin owns the `Registry` class** with bundled-check registrations for the discipline-as-code surface (auto-format, branch-enforcement, config-protection, destructive-cmd, fact-force, handoff guards, no-any, no-enum, pre-commit, prefer-bun, sensitive-files, test-gate, sync-common-derived helpers, channel-gc, active-channels-load, session-collision-gate, presence register/unregister).
+**Plugin owns the `RegistryBuilder` / `SealedRegistry` types** plus a `registerBundled` sibling module covering the discipline-as-code surface (auto-format, branch-enforcement, config-protection, destructive-cmd, fact-force, handoff guards, no-any, no-enum, pre-commit, prefer-bun, sensitive-files, test-gate, sync-common-derived helpers, channel-gc, active-channels-load, session-collision-gate, presence register/unregister). The constructor is import-free; bundled registrations live in their own `bundled-registrations.ts` so `registry.ts` is a single-file move in batch 4 (per the ARCH-2 audit finding).
 
-**Dotfiles' bootstrap** (`src/hooks/dispatcher.ts` after extraction, on the `claude-conductor-extraction` feature branch) calls:
+**Dotfiles' bootstrap** (`src/hooks/dispatcher.ts` on the `claude-conductor-extraction` feature branch — current sub-step 0.6 batch 3b state) calls all 9 register modules. Post-batch-4, `registerBundled` and `RegistryBuilder` move to the plugin and the plugin's dispatcher owns the `registerBundled` call; this dotfiles dispatcher drops to 8 register modules.
 
 ```ts
-import { Registry } from "claude-conductor/hooks/registry";
-import { register as registerVaultTrio } from "./checks/vault-trio-registrations";
-import { register as registerDotfilesTrio } from "./checks/dotfiles-trio-registrations";
-import { register as registerIntent } from "./checks/intent-registrations";
-import { register as registerMemorySystem } from "./checks/memory-system-registrations";
-import { register as registerFeedback } from "./checks/feedback-registrations";
-import { register as registerArchitecture } from "./checks/architecture-registrations";
-import { register as registerHindsight } from "./checks/hindsight-registrations";
+import { RegistryBuilder } from "./registry.ts"; // → "claude-conductor/hooks/registry" post-batch-4
+import { assertWiringComplete } from "./registry-assertion.ts";
+import { registerBundled } from "./checks/bundled-registrations.ts"; // moves to plugin in batch 4
+import { registerVaultTrio } from "./checks/vault-trio-registrations.ts";
+import { registerDotfilesTrio } from "./checks/dotfiles-trio-registrations.ts";
+import { registerIntent } from "./checks/intent-registrations.ts";
+import { registerMemorySystem } from "./checks/memory-system-registrations.ts";
+import { registerFeedback } from "./checks/feedback-registrations.ts";
+import { registerArchitecture } from "./checks/architecture-registrations.ts";
+import { registerSessionDiscipline } from "./checks/session-discipline-registrations.ts"; // 8th sibling — covers stragglers (read-tracker, run-affected-tests, session-telemetry-tracker, session-log-guard, session-summary, observer-nominator, pending-threads-briefing, backlog-nudge) per ARCH-1/ARCH-6
+import { registerHindsight } from "./checks/hindsight-registrations.ts";
 
-const registry = new Registry();
-// Plugin's bundled registrations are added by Registry's constructor.
-// Dotfiles' Nick-specific registrations layer on top:
-registerVaultTrio(registry);
-registerDotfilesTrio(registry);
-registerIntent(registry);
-registerMemorySystem(registry);
-registerFeedback(registry);
-registerArchitecture(registry);
-registerHindsight(registry);
-// ... (all 19 keep-in-dotfiles checks enumerated)
+const builder = new RegistryBuilder();
+registerBundled(builder);
+registerVaultTrio(builder);
+registerDotfilesTrio(builder);
+registerIntent(builder);
+registerMemorySystem(builder);
+registerFeedback(builder);
+registerArchitecture(builder);
+registerSessionDiscipline(builder);
+registerHindsight(builder);
+const registry = builder.seal();
+assertWiringComplete(registry); // exits 2 if any blocking check is registered-but-unwired in ORDER, or any ORDER entry references an unregistered check
 ```
 
-**Sub-step 0.6 verification:** every keep-in-dotfiles `checks/*.ts` is explicitly enumerated in a dotfiles-side bootstrap registration. No silent-stop-firing of Nick's intent/vault/dotfiles/memory checks post-extraction.
+**Sub-step 0.6 verification:** every keep-in-dotfiles `checks/*.ts` is registered through one of the 8 dotfiles-side `*-registrations.ts` sibling modules (vault-trio, dotfiles-trio, intent, memory-system, feedback, architecture, session-discipline, hindsight). No silent-stop-firing of Nick's intent/vault/dotfiles/memory checks post-extraction. The bidirectional `assertWiringComplete` runs at boot and accumulates ALL errors before exiting, catching both registered-but-unwired and wired-but-unregistered drift in one pass.
 
 ## Shim symmetry checklist (per ARCH-3 audit finding)
 
