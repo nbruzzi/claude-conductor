@@ -11,6 +11,17 @@ Copyright 2026 nbruzzi
 
 **Status:** AUDITED 2026-04-25 (mini-Architecture audit + verification round; 6/6 findings addressed; score 9.0/10; ship verdict). Audit transcripts at `audits/phase-0/architecture-r1.md` + `audits/phase-0/architecture-r2-verification.md` (filed at sub-step 0.10 audit-transcript-durability deliverable).
 
+**Sub-step 0.6 progress:**
+
+- Batch 3a (active-sessions + channels + todos primitives) — landed.
+- Batch 3b (dispatcher refactor) — landed at dotfiles `fec3849`.
+- Batch 3c (cross-repo file:-link substrate) — landed at dotfiles `543803d` + plugin `d52399c`.
+- Batch 4 (25-file plugin staging) — landed at plugin `588b922`.
+- Batch 4b (atomic 8-file dotfiles flip — registry + 4 helpers shimmed) — landed at dotfiles `8ea7686` + plugin `67c5e02`. 7-day soak verification scheduled 2026-05-04.
+- **Batch 6 (this commit) — Step 1 plugin commit:** 2 skills (audit, commit-push-pr) + 4 session commands + first plugin.json manifest. Step 2 dotfiles flip to follow once Alpha completes cce → main reconciliation.
+- Batch 5 (21 hooks/checks extraction, Alpha) — in progress under merge-conflict resolution + plan-mode + multi-persona audit.
+- Batch 7 (20 agents) — pending Step 1 + Step 2 of batch 6 + completion of batch 5.
+
 ## Scope filter
 
 The plan's audience is **future-Claude + peer Claudes coordinating via Anthropic's Agent Teams**, not Nick's personal setup. Filter:

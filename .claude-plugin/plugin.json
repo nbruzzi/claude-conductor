@@ -1,0 +1,21 @@
+{
+  "name": "claude-conductor",
+  "version": "0.0.0",
+  "description": "Disciplined multi-agent coordination for Claude Code — multi-persona audit skill, handoff system surviving Agent Teams /resume, channels for inter-session coordination, presence registry. Apache-2.0.",
+  "author": {
+    "name": "nbruzzi",
+    "url": "https://github.com/nbruzzi"
+  },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/nbruzzi/claude-conductor",
+  "keywords": [
+    "audit",
+    "handoff",
+    "coordination",
+    "channels",
+    "presence",
+    "discipline",
+    "multi-persona",
+    "agent-teams"
+  ]
+}
