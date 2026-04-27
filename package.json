@@ -31,6 +31,36 @@
       "types": "./src/shared/presence-failure-log.ts",
       "import": "./src/shared/presence-failure-log.ts",
       "default": "./src/shared/presence-failure-log.ts"
+    },
+    "./hooks/registry": {
+      "types": "./src/hooks/registry.ts",
+      "import": "./src/hooks/registry.ts",
+      "default": "./src/hooks/registry.ts"
+    },
+    "./hooks/registry-assertion": {
+      "types": "./src/hooks/registry-assertion.ts",
+      "import": "./src/hooks/registry-assertion.ts",
+      "default": "./src/hooks/registry-assertion.ts"
+    },
+    "./hooks/checks/config-protection-store": {
+      "types": "./src/hooks/checks/config-protection-store.ts",
+      "import": "./src/hooks/checks/config-protection-store.ts",
+      "default": "./src/hooks/checks/config-protection-store.ts"
+    },
+    "./hooks/checks/config-protection-cli": {
+      "types": "./src/hooks/checks/config-protection-cli.ts",
+      "import": "./src/hooks/checks/config-protection-cli.ts",
+      "default": "./src/hooks/checks/config-protection-cli.ts"
+    },
+    "./hooks/checks/fact-force-scope-store": {
+      "types": "./src/hooks/checks/fact-force-scope-store.ts",
+      "import": "./src/hooks/checks/fact-force-scope-store.ts",
+      "default": "./src/hooks/checks/fact-force-scope-store.ts"
+    },
+    "./hooks/checks/fact-force-scope-cli": {
+      "types": "./src/hooks/checks/fact-force-scope-cli.ts",
+      "import": "./src/hooks/checks/fact-force-scope-cli.ts",
+      "default": "./src/hooks/checks/fact-force-scope-cli.ts"
     }
   }
 }
