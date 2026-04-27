@@ -42,25 +42,125 @@
       "import": "./src/hooks/registry-assertion.ts",
       "default": "./src/hooks/registry-assertion.ts"
     },
-    "./hooks/checks/config-protection-store": {
-      "types": "./src/hooks/checks/config-protection-store.ts",
-      "import": "./src/hooks/checks/config-protection-store.ts",
-      "default": "./src/hooks/checks/config-protection-store.ts"
+    "./hooks/checks/active-channels-load": {
+      "types": "./src/hooks/checks/active-channels-load.ts",
+      "import": "./src/hooks/checks/active-channels-load.ts",
+      "default": "./src/hooks/checks/active-channels-load.ts"
+    },
+    "./hooks/checks/auto-format": {
+      "types": "./src/hooks/checks/auto-format.ts",
+      "import": "./src/hooks/checks/auto-format.ts",
+      "default": "./src/hooks/checks/auto-format.ts"
+    },
+    "./hooks/checks/branch-enforcement": {
+      "types": "./src/hooks/checks/branch-enforcement.ts",
+      "import": "./src/hooks/checks/branch-enforcement.ts",
+      "default": "./src/hooks/checks/branch-enforcement.ts"
+    },
+    "./hooks/checks/bundled-registrations": {
+      "types": "./src/hooks/checks/bundled-registrations.ts",
+      "import": "./src/hooks/checks/bundled-registrations.ts",
+      "default": "./src/hooks/checks/bundled-registrations.ts"
+    },
+    "./hooks/checks/channel-gc": {
+      "types": "./src/hooks/checks/channel-gc.ts",
+      "import": "./src/hooks/checks/channel-gc.ts",
+      "default": "./src/hooks/checks/channel-gc.ts"
+    },
+    "./hooks/checks/config-protection": {
+      "types": "./src/hooks/checks/config-protection.ts",
+      "import": "./src/hooks/checks/config-protection.ts",
+      "default": "./src/hooks/checks/config-protection.ts"
     },
     "./hooks/checks/config-protection-cli": {
       "types": "./src/hooks/checks/config-protection-cli.ts",
       "import": "./src/hooks/checks/config-protection-cli.ts",
       "default": "./src/hooks/checks/config-protection-cli.ts"
     },
-    "./hooks/checks/fact-force-scope-store": {
-      "types": "./src/hooks/checks/fact-force-scope-store.ts",
-      "import": "./src/hooks/checks/fact-force-scope-store.ts",
-      "default": "./src/hooks/checks/fact-force-scope-store.ts"
+    "./hooks/checks/config-protection-store": {
+      "types": "./src/hooks/checks/config-protection-store.ts",
+      "import": "./src/hooks/checks/config-protection-store.ts",
+      "default": "./src/hooks/checks/config-protection-store.ts"
+    },
+    "./hooks/checks/destructive-cmd": {
+      "types": "./src/hooks/checks/destructive-cmd.ts",
+      "import": "./src/hooks/checks/destructive-cmd.ts",
+      "default": "./src/hooks/checks/destructive-cmd.ts"
+    },
+    "./hooks/checks/fact-force": {
+      "types": "./src/hooks/checks/fact-force.ts",
+      "import": "./src/hooks/checks/fact-force.ts",
+      "default": "./src/hooks/checks/fact-force.ts"
     },
     "./hooks/checks/fact-force-scope-cli": {
       "types": "./src/hooks/checks/fact-force-scope-cli.ts",
       "import": "./src/hooks/checks/fact-force-scope-cli.ts",
       "default": "./src/hooks/checks/fact-force-scope-cli.ts"
+    },
+    "./hooks/checks/fact-force-scope-store": {
+      "types": "./src/hooks/checks/fact-force-scope-store.ts",
+      "import": "./src/hooks/checks/fact-force-scope-store.ts",
+      "default": "./src/hooks/checks/fact-force-scope-store.ts"
+    },
+    "./hooks/checks/handoff-latest-guard": {
+      "types": "./src/hooks/checks/handoff-latest-guard.ts",
+      "import": "./src/hooks/checks/handoff-latest-guard.ts",
+      "default": "./src/hooks/checks/handoff-latest-guard.ts"
+    },
+    "./hooks/checks/handoff-symlink-write-guard": {
+      "types": "./src/hooks/checks/handoff-symlink-write-guard.ts",
+      "import": "./src/hooks/checks/handoff-symlink-write-guard.ts",
+      "default": "./src/hooks/checks/handoff-symlink-write-guard.ts"
+    },
+    "./hooks/checks/no-any": {
+      "types": "./src/hooks/checks/no-any.ts",
+      "import": "./src/hooks/checks/no-any.ts",
+      "default": "./src/hooks/checks/no-any.ts"
+    },
+    "./hooks/checks/no-enum": {
+      "types": "./src/hooks/checks/no-enum.ts",
+      "import": "./src/hooks/checks/no-enum.ts",
+      "default": "./src/hooks/checks/no-enum.ts"
+    },
+    "./hooks/checks/pre-commit": {
+      "types": "./src/hooks/checks/pre-commit.ts",
+      "import": "./src/hooks/checks/pre-commit.ts",
+      "default": "./src/hooks/checks/pre-commit.ts"
+    },
+    "./hooks/checks/prefer-bun": {
+      "types": "./src/hooks/checks/prefer-bun.ts",
+      "import": "./src/hooks/checks/prefer-bun.ts",
+      "default": "./src/hooks/checks/prefer-bun.ts"
+    },
+    "./hooks/checks/sensitive-files": {
+      "types": "./src/hooks/checks/sensitive-files.ts",
+      "import": "./src/hooks/checks/sensitive-files.ts",
+      "default": "./src/hooks/checks/sensitive-files.ts"
+    },
+    "./hooks/checks/session-collision-gate": {
+      "types": "./src/hooks/checks/session-collision-gate.ts",
+      "import": "./src/hooks/checks/session-collision-gate.ts",
+      "default": "./src/hooks/checks/session-collision-gate.ts"
+    },
+    "./hooks/checks/session-presence-register": {
+      "types": "./src/hooks/checks/session-presence-register.ts",
+      "import": "./src/hooks/checks/session-presence-register.ts",
+      "default": "./src/hooks/checks/session-presence-register.ts"
+    },
+    "./hooks/checks/session-presence-unregister": {
+      "types": "./src/hooks/checks/session-presence-unregister.ts",
+      "import": "./src/hooks/checks/session-presence-unregister.ts",
+      "default": "./src/hooks/checks/session-presence-unregister.ts"
+    },
+    "./hooks/checks/sync-common": {
+      "types": "./src/hooks/checks/sync-common.ts",
+      "import": "./src/hooks/checks/sync-common.ts",
+      "default": "./src/hooks/checks/sync-common.ts"
+    },
+    "./hooks/checks/test-gate": {
+      "types": "./src/hooks/checks/test-gate.ts",
+      "import": "./src/hooks/checks/test-gate.ts",
+      "default": "./src/hooks/checks/test-gate.ts"
     }
   }
 }
