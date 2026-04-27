@@ -1,3 +1,7 @@
+---
+description: Inter-session channel control — list, join, send, read, close lifecycle-bound JSONL inboxes for coordinating with peer Claude sessions during parallel work.
+---
+
 # /channel — Inter-session channel control
 
 Channels are lifecycle-bound inboxes between two sessions coordinating through

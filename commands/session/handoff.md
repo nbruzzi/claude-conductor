@@ -1,3 +1,7 @@
+---
+description: Create a session handoff document — captures completed work, decisions, failed approaches, and next steps so a fresh Claude session can seamlessly continue.
+---
+
 # /handoff — Create a session handoff document
 
 Generate a structured handoff document that captures everything a fresh Claude session needs to seamlessly continue this work.

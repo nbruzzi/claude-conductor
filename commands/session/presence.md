@@ -1,3 +1,7 @@
+---
+description: Cross-session presence control — manage and inspect the heartbeat registry that detects concurrent Claude sessions sharing artifacts (preventive collision signal).
+---
+
 # /presence — Cross-session presence control
 
 Presence heartbeats are the preventive-tier collision signal for concurrent

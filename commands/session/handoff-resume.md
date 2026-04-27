@@ -1,3 +1,7 @@
+---
+description: Resume from a previous session's handoff — reads LATEST handoff, checks for git drift, briefs the user, supports parallel-mode for cross-session coordination.
+---
+
 # /handoff-resume — Resume from a previous session's handoff
 
 Pick up where a previous session left off using a handoff document.
