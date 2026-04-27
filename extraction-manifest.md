@@ -18,9 +18,10 @@ Copyright 2026 nbruzzi
 - Batch 3c (cross-repo file:-link substrate) — landed at dotfiles `543803d` + plugin `d52399c`.
 - Batch 4 (25-file plugin staging) — landed at plugin `588b922`.
 - Batch 4b (atomic 8-file dotfiles flip — registry + 4 helpers shimmed) — landed at dotfiles `8ea7686` + plugin `67c5e02`. 7-day soak verification scheduled 2026-05-04.
-- **Batch 6 (this commit) — Step 1 plugin commit:** 2 skills (audit, commit-push-pr) + 4 session commands + first plugin.json manifest. Step 2 dotfiles flip to follow once Alpha completes cce → main reconciliation.
-- Batch 5 (21 hooks/checks extraction, Alpha) — in progress under merge-conflict resolution + plan-mode + multi-persona audit.
-- Batch 7 (20 agents) — pending Step 1 + Step 2 of batch 6 + completion of batch 5.
+- Batch 6 — LANDED. 2 skills (audit, commit-push-pr) + 4 session commands + first plugin.json manifest, plus dotfiles install.sh rewire and dotfiles-sync resolver fix.
+- Batch 5 — LANDED partial (17 of 19 hooks/checks shimmed; 3 deferred: session-collision-gate, session-presence-register, bundled-registrations — pending active-sessions extraction).
+- **Batch 7a (this commit) — 18 cross-session feedback memories** extracted to `memories/` with anonymization rewrites per `memories-to-bundle.md`. Plugin-side only (no dotfiles flip; memories live at user-local `~/.claude/projects/.../memory/` and are not synced via install.sh). Resolves the cross-reference graph dependency for batch 7b's familiar auditor `context_sources.memory` blocks.
+- Batch 7b (21 agents) — pending. Will execute against `agents-to-bundle.md` rewrite spec; cross-reference graph check resolves clean once batch 7a memories exist (this commit).
 
 ## Scope filter
 

@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
+- Phase 0 sub-step 0.6 batch 7a — extracted 18 cross-session feedback memories from upstream substrate to `memories/` with anonymization rewrites per audited `memories-to-bundle.md` (sub-step 0.3 deliverable, GREEN R2-verified). All bundled memories use V2 schema vocabulary (`cadence: stable`, `scope: global`, `updated: 2026-04-25`, `origin: extracted`). Cross-reference graph check passes (no dangling links between bundled memories); CI substrate-leak grep passes (with documented allowed-in-frontmatter false positives on `updated:` date). `claude plugin validate` PASS. Tests still 168/168.
+- Phase 0 sub-step 0.6 batch 6 follow-up F-3 — added `description:` frontmatter to 4 session command files (handoff, handoff-resume, channel, presence). `claude plugin validate` now passes with 0 frontmatter warnings.
 - Phase 0 sub-step 0.6 batch 6 — extracted 2 skills + 4 session commands from dotfiles. Plugin now ships `.claude-plugin/plugin.json` (first manifest), `skills/audit/SKILL.md`, `skills/commit-push-pr/SKILL.md`, and `commands/session/{handoff,handoff-resume,channel,presence}.md`. Auto-discovery from `skills/` and `commands/` subdirectories per official Claude Code plugin reference. Markdown-only move; no TS / no exports map change.
 - Phase 0 in progress — repo cut, initial scaffold, extraction-manifest preparation underway. See `~/.claude/plans/claude-conductor-phase-0-execution.md` (private, not in repo) for the active sub-plan.
 
