@@ -20,8 +20,8 @@ Copyright 2026 nbruzzi
 - Batch 4b (atomic 8-file dotfiles flip — registry + 4 helpers shimmed) — landed at dotfiles `8ea7686` + plugin `67c5e02`. 7-day soak verification scheduled 2026-05-04.
 - Batch 6 — LANDED. 2 skills (audit, commit-push-pr) + 4 session commands + first plugin.json manifest, plus dotfiles install.sh rewire and dotfiles-sync resolver fix.
 - Batch 5 — LANDED partial (17 of 19 hooks/checks shimmed; 3 deferred: session-collision-gate, session-presence-register, bundled-registrations — pending active-sessions extraction).
-- **Batch 7a (this commit) — 18 cross-session feedback memories** extracted to `memories/` with anonymization rewrites per `memories-to-bundle.md`. Plugin-side only (no dotfiles flip; memories live at user-local `~/.claude/projects/.../memory/` and are not synced via install.sh). Resolves the cross-reference graph dependency for batch 7b's familiar auditor `context_sources.memory` blocks.
-- Batch 7b (21 agents) — pending. Will execute against `agents-to-bundle.md` rewrite spec; cross-reference graph check resolves clean once batch 7a memories exist (this commit).
+- Batch 7a — LANDED. 18 cross-session feedback memories extracted to `memories/` with anonymization rewrites per `memories-to-bundle.md`. Resolves cross-reference graph dependency for batch 7b familiar auditor `context_sources.memory` blocks.
+- **Batch 7b (this commit) — 21 agents** extracted to `agents/` per `agents-to-bundle.md`. 13 cold + 2 generic bundle as-is; 4 familiar auditors anonymized; 1 (`domain-business`) dropped; NEW `familiar/_template.md` ships unregistered. Plugin Step 1 done; dotfiles flip (Step 2 — install.sh DIRS rewire + dotfiles-sync resolver agents/\* skip + primitive-lift refactor) lands separately.
 
 ## Scope filter
 
