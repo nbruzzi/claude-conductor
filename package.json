@@ -37,6 +37,11 @@
       "import": "./src/hooks/registry.ts",
       "default": "./src/hooks/registry.ts"
     },
+    "./hooks/bundled-check-names": {
+      "types": "./src/hooks/bundled-check-names.ts",
+      "import": "./src/hooks/bundled-check-names.ts",
+      "default": "./src/hooks/bundled-check-names.ts"
+    },
     "./hooks/registry-assertion": {
       "types": "./src/hooks/registry-assertion.ts",
       "import": "./src/hooks/registry-assertion.ts",

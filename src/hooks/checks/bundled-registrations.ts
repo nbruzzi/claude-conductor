@@ -14,6 +14,7 @@
  */
 
 import type { RegistryBuilder } from "../registry.ts";
+import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
 import { check as checkHandoffSymlinkWriteGuard } from "./handoff-symlink-write-guard.ts";
 import { check as checkFactForce } from "./fact-force.ts";
@@ -33,7 +34,9 @@ import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
 import { check as checkSessionPresenceRegister } from "./session-presence-register.ts";
 
-export function registerBundled(builder: RegistryBuilder): void {
+export function registerBundled(
+  builder: RegistryBuilder<BundledCheckName>,
+): void {
   // pre-tool-use
   builder.register("pre-tool-use", {
     name: "session-collision-gate",

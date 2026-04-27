@@ -92,6 +92,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 - [src/index.ts](src/index.ts) — public API surface placeholder (populated as extraction progresses).
 - [src/shared/paths.ts](src/shared/paths.ts) — per-component path resolvers with 3-layer env precedence (sub-step 0.5).
 - [src/memory-loader/index.ts](src/memory-loader/index.ts) — V2-schema memory loader + INDEX.md formatter (sub-step 0.4).
+- [src/hooks/bundled-check-names.ts](src/hooks/bundled-check-names.ts) — `BUNDLED_CHECKS_BY_EVENT` source-of-truth + derived `BundledCheckName` literal union + `BUNDLED_CHECK_NAMES` flat array (sub-step 0.7 #10; exported via `./hooks/bundled-check-names`).
 
 ## Tests (`test/`)
 
@@ -99,6 +100,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 - [test/shared/paths.test.ts](test/shared/paths.test.ts) — 17 tests covering RE-8 precedence cases + smoke tests.
 - [test/memory-loader/index.test.ts](test/memory-loader/index.test.ts) — 14 tests covering parsing, validation, filtering, formatting.
 - [test/memory-loader/fixtures/](test/memory-loader/fixtures/) — 7 fixtures (valid + invalid + filtered shapes).
+- [test/hooks/bundled-registrations.test.ts](test/hooks/bundled-registrations.test.ts) — meta-test for the 18 bundled discipline checks: build registry, seal, assert (event, name) tuples + count + duplicates + bidirectional set-equality + compile-time narrowing via `@ts-expect-error`. Replaces per-component-stub approach (sub-step 0.7 Decision C).
 
 ## Test infrastructure (`test-utils/`)
 

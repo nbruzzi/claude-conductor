@@ -536,4 +536,210 @@ This is a substrate-level decision that benefits from explicit planning. The `nb
 
 ---
 
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: scope
+severity: minor
+phase: 0
+affects: [test-infrastructure, sub-step-0.7]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision A: top-level `test-utils/` directory
+
+**Context:** Sub-step 0.7 promotes the existing `test/helpers/tmp-repo.ts` into a first-class plugin component. Parent plan literal text says `test-utils/`.
+
+**Options considered:**
+
+1. Top-level `test-utils/` — matches parent plan; signals first-class component.
+2. Keep at `test/helpers/` — co-located with tests; private-by-default.
+3. `src/test-utils/` — under src/, treated as package source.
+
+**Chosen:** Option 1.
+
+**Reason:** Parent plan author intent + structural signal. `private: true` today so no external consumer; relative-import-only via `test-utils/index.ts` re-export keeps the surface internal until public-flip authorizes a stability commitment.
+
+**Reversal cost:** Low — 4-line move + import-path updates.
+
+---
+
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: api-shape
+severity: minor
+phase: 0
+affects: [test-infrastructure, sub-step-0.7]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision B: `test-utils/index.ts` re-export entry
+
+**Context:** Single-file `tmp-repo.ts` could be imported directly OR via an index re-export.
+
+**Options considered:**
+
+1. Index re-export (`export * from "./tmp-repo.ts";`) — single import path; cleaner.
+2. Direct imports (`from "../../test-utils/tmp-repo.ts"`) — no extra file.
+
+**Chosen:** Option 1.
+
+**Reason:** Single import path scales cleanly when more helpers land. Convention: NO `*.test.ts` files inside `test-utils/`; helper-tests live in `test/test-utils/<helper>.test.ts` (durability comment in `test-utils/index.ts`).
+
+**Reversal cost:** Trivial — flatten to direct imports.
+
+---
+
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: scope
+severity: major
+phase: 0
+affects: [test-infrastructure, anti-drift, sub-step-0.7]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision C: meta-test replaces per-component stubs
+
+**Context:** Original v1 plan specified 16 per-component stubs each asserting `check.name` literal + `check.event` literal + named export resolves. Bravo's v1 audit (cluster A; TS-1 + TA-1 critical) caught: each plugin check file exports only `check` (an async function) — `check.name` is `Function.prototype.name === "check"` for every file; `check.event` is `undefined`. Stubs would all pass spuriously.
+
+**Options considered:**
+
+1. 16 stubs as v1 specified — known broken; rejected.
+2. 16 stubs upgraded to mini-roundtrip behavior tests — heavier; couples to internal hook contract.
+3. ONE meta-test iterating `BUNDLED_CHECKS_BY_EVENT`, building registry, sealing, asserting (event, name) tuples + count + duplicates.
+
+**Chosen:** Option 3.
+
+**Reason:** Real anti-drift value with minimum surface. Single source of truth; automatic on bundle changes. Behavior tests for bundled checks already exist canonical in dotfiles; duplicating them in plugin is sub-step 0.7-successor work.
+
+**Reversal cost:** Trivial — one test file revert.
+
+---
+
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: tooling
+severity: major
+phase: 0
+affects: [ci, github-actions, sub-step-0.7, sub-step-0.8]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision D: clone `templates/github-ci.yml` shape; defer `check-generic-paths` to 0.8
+
+**Context:** Original v1 CI workflow included `bun run check-generic-paths` in command list. Bravo's v1 audit (cluster D; RE-1 + ARCH-1 critical) caught: script doesn't exist (deferred to 0.8 per the path-resolver decision-log entry above). Workflow shipping with `check-generic-paths` would have shipped red CI on first push. v1 also lacked `bun install --frozen-lockfile`, SHA-pinned actions, `permissions: contents: read`, `timeout-minutes`, no actionlint.
+
+**Options considered:**
+
+1. v1 default — known broken; rejected.
+2. Clone dotfiles' `templates/github-ci.yml` shape verbatim; drop `check-generic-paths` until 0.8 ships; add `timeout-minutes: 10` (RE-4 fix); add `actionlint` as devDep + `lint:actions` script + workflow self-test step (TA-4 fix).
+
+**Chosen:** Option 2.
+
+**Reason:** Template already encodes the canonical shape (frozen-lockfile + SHA-pinned + permissions). Dropping the missing script avoids the RE-1 hole. Adding `actionlint` as a workflow self-test step makes YAML errors fail-fast before downstream checks eat clock.
+
+**Reversal cost:** Trivial — delete `.github/workflows/test.yml` + revert package.json + bun.lock.
+
+---
+
+```yaml
+ts: 2026-04-27T20:40:00Z
+kind: api-shape
+severity: major
+phase: 0
+affects: [registry, hooks-types, name-tightening, sub-step-0.7, item-10]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision E: generic `CheckRegistration<Name extends string = string>` + parametrized `RegistryBuilder`/`SealedRegistry`
+
+**Context:** Item #10 ("tighten BundledCheckName literal union") productive scope. Three distinct types carry `name: string` today: `CheckRegistration` (registry-builder input — bundled-registrations.ts USES this), `CheckMeta` (CLI surface; tools field; not in registry-builder path), `OrderEntry` (per-event handler policy; ORDER files). Bravo's v1 audit (cluster C; TS-2 + TA-3 + TS-5 major) caught: v1's E1+E4 hybrid (`BundledCheckMeta` intersection alias) doesn't actually narrow at consumption sites (`SealedRegistry.checksFor` returns `name: string`; consumers must `as`-cast). Initial v2 mis-named the target as `CheckMeta`; Alpha-self-caught at ~20:40Z and corrected to `CheckRegistration`.
+
+**Options considered:**
+
+1. E1+E4 intersection alias — known-broken (no actual narrowing); rejected.
+2. Tighten `CheckRegistration.name: BundledCheckName` directly — breaks dotfiles' non-bundled registrations.
+3. Generic `CheckRegistration<Name extends string = string>` + parametrized `RegistryBuilder<Name>` + parametrized `SealedRegistry<Name>`. Default `string` keeps every existing dotfiles caller working without ripple. Plugin's `bundled-registrations.ts` narrows via `RegistryBuilder<BundledCheckName>` so registration `name` fields type-check against the closed literal union.
+
+**Chosen:** Option 3 (E3).
+
+**Reason:** Backward-compatible at every dotfiles call-site (verified — `~/.claude-dotfiles/src/hooks/registry.ts` is a re-export shim from plugin; 11 call-sites use `new RegistryBuilder()` / `: RegistryBuilder` without explicit type arguments; default kicks in). Narrowing flows through `seal()` + `checksFor()` so the meta-test asserts on `SealedRegistry<BundledCheckName>` directly — no `as`-cast escape hatch.
+
+**Out-of-scope deferrals:** `CheckMeta.name` (CLI surface) and `OrderEntry.name` (ORDER files) tightening deferred. Different consumer sets; mixed cross-repo concerns. The productive #10 win is registration-site narrowing; CheckMeta/OrderEntry tightenings compose at successor sub-step when their consumer surfaces are mapped.
+
+**Reversal cost:** Low — revert generic + revert bundled-check-names.ts + revert registration-site narrowing.
+
+---
+
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: sequencing
+severity: minor
+phase: 0
+affects: [branch-strategy, sub-step-0.7]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision F: stay on `phase-0-initial-scaffold` (no sub-branch)
+
+**Context:** Sub-step 0.7 is part of the long-lived `phase-0-initial-scaffold` branch; plugin doesn't merge anywhere until v0.1.0.
+
+**Options considered:**
+
+1. Atomic commits on `phase-0-initial-scaffold` (no sub-branch).
+2. Sub-branch `phase-0-sub-0.7` off parent.
+
+**Chosen:** Option 1.
+
+**Reason:** Sub-branching when the parent isn't getting PR'd adds management overhead without audit-trail value. Atomic commits per logical change provide the per-step traceability.
+
+**Reversal cost:** Trivial — `git revert <sha>` on any commit.
+
+---
+
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: api-shape
+severity: minor
+phase: 0
+affects: [exports-map, sub-step-0.7]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision G: asymmetric `package.json` exports — `./test-utils` excluded, `./hooks/bundled-check-names` included
+
+**Context:** Plugin is `private: true` today, but exports map IS the public-contract surface for the day `private` flips. Bravo's v1 audit (ARCH-4 major) caught: adding `./test-utils` to exports without an api-shape decision-log entry leaks future-stability commitment.
+
+**Options considered:**
+
+1. Both `./test-utils` and `./hooks/bundled-check-names` in exports — public-stability commitment for both.
+2. Neither in exports — relative imports only; defer all stability decisions.
+3. Asymmetric: `./test-utils` excluded (no public consumer; internal helpers); `./hooks/bundled-check-names` included (public-stability seam dotfiles will consume during reconciliation).
+
+**Chosen:** Option 3.
+
+**Reason:** `test-utils/`'s consumer surface (`makeTmpRepo` API) doesn't need stability today. `bundled-check-names` does — dotfiles imports `BundledCheckName` to compose `AllCheckNames` when reconciliation lands. Asymmetric matches the actual consumer story.
+
+**Reversal cost:** Trivial — flip a single exports-map entry.
+
+---
+
+```yaml
+ts: 2026-04-27T20:35:00Z
+kind: tooling
+severity: minor
+phase: 0
+affects: [catalog-discipline, decisions-log, sub-step-0.7]
+```
+
+### 2026-04-27 — Sub-step 0.7 Decision H: catalog discipline (INDEX.md + decisions/phase-0.md updates per-step)
+
+**Context:** Bravo's v1 audit (cluster E; ARCH-2 + ARCH-3 major) caught: original v1 plan added 4+ artifact classes without INDEX.md updates and made 6 architectural decisions without `decisions/phase-0.md` entries. INDEX.md catalog discipline says "Every shipped knowledge artifact MUST appear here"; sub-step 0.10 audit gate verifies this.
+
+**Options considered:**
+
+1. Skip catalog updates — known precedent-setting drift; rejected.
+2. INDEX.md updates inline with each step's commit; `decisions/phase-0.md` entries land as part of step 2 for review-batch coherence.
+
+**Chosen:** Option 2.
+
+**Reason:** Each commit includes the INDEX.md update for what it ships. Decision-log entries land together in step 2 for review-batch coherence. Locality (decision-log entry next to the artifact landing) outweighs the multi-concern smell flagged by ARCH-OOS-3.
+
+**Reversal cost:** Trivial — revert the affected commits.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
