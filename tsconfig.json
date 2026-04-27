@@ -30,6 +30,6 @@
     "verbatimModuleSyntax": false,
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*", "scripts/**/*.ts"],
+  "include": ["src/**/*", "test/**/*", "test-utils/**/*", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "build"]
 }

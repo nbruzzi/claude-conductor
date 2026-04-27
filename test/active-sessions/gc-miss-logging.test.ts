@@ -37,7 +37,7 @@ import {
   touchHeartbeat,
 } from "../../src/active-sessions/index.ts";
 import { readPresenceFailures } from "../../src/shared/presence-failure-log.ts";
-import { makeTmpHome, type TmpHome } from "../helpers/tmp-repo.ts";
+import { makeTmpHome, type TmpHome } from "../../test-utils/index.ts";
 
 let tmpHome: TmpHome | null = null;
 let prevHome: string | undefined;

@@ -99,3 +99,10 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 - [test/shared/paths.test.ts](test/shared/paths.test.ts) — 17 tests covering RE-8 precedence cases + smoke tests.
 - [test/memory-loader/index.test.ts](test/memory-loader/index.test.ts) — 14 tests covering parsing, validation, filtering, formatting.
 - [test/memory-loader/fixtures/](test/memory-loader/fixtures/) — 7 fixtures (valid + invalid + filtered shapes).
+
+## Test infrastructure (`test-utils/`)
+
+Cross-test helpers promoted from `test/helpers/` per sub-step 0.7 Decision A. Top-level home signals first-class plugin component; `package.json` exports map intentionally excludes `./test-utils` (Decision G — internal-to-plugin via relative imports only). No `*.test.ts` files inside `test-utils/`; helper-tests (if needed in future) live in `test/test-utils/<helper>.test.ts`.
+
+- [test-utils/index.ts](test-utils/index.ts) — re-export entry point.
+- [test-utils/tmp-repo.ts](test-utils/tmp-repo.ts) — `makeTmpHome` / `makeTmpRepo` / `runDispatcher` helpers for throwaway-repo + dispatcher-subprocess test patterns.

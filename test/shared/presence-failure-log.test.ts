@@ -22,7 +22,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { makeTmpHome, type TmpHome } from "../helpers/tmp-repo.ts";
+import { makeTmpHome, type TmpHome } from "../../test-utils/index.ts";
 import {
   appendPresenceFailure,
   failureLogPath,
