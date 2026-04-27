@@ -102,6 +102,10 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 - [test/memory-loader/fixtures/](test/memory-loader/fixtures/) — 7 fixtures (valid + invalid + filtered shapes).
 - [test/hooks/bundled-registrations.test.ts](test/hooks/bundled-registrations.test.ts) — meta-test for the 18 bundled discipline checks: build registry, seal, assert (event, name) tuples + count + duplicates + bidirectional set-equality + compile-time narrowing via `@ts-expect-error`. Replaces per-component-stub approach (sub-step 0.7 Decision C).
 
+## CI / GitHub Actions (`.github/workflows/`)
+
+- [.github/workflows/test.yml](.github/workflows/test.yml) — CI workflow cloning `~/.claude-dotfiles/templates/github-ci.yml` shape per sub-step 0.7 Decision D. SHA-pinned actions, `bun install --frozen-lockfile`, `permissions: contents: read`, `timeout-minutes: 10`. Sequential typecheck/format:check/lint/test. `check-generic-paths` deferred to sub-step 0.8 (script doesn't exist yet); actionlint integration deferred per plan-v2.1 fallback (see workflow comment).
+
 ## Test infrastructure (`test-utils/`)
 
 Cross-test helpers promoted from `test/helpers/` per sub-step 0.7 Decision A. Top-level home signals first-class plugin component; `package.json` exports map intentionally excludes `./test-utils` (Decision G — internal-to-plugin via relative imports only). No `*.test.ts` files inside `test-utils/`; helper-tests (if needed in future) live in `test/test-utils/<helper>.test.ts`.
