@@ -29,6 +29,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import {
   approvalsDir,
   canonicalizePath,
+  isApprovalMarker,
   markerPath,
   sanitizeReason,
   type ApprovalMarker,
@@ -136,15 +137,21 @@ function listApprovals(): void {
   for (const file of files) {
     const target = `${dir}/${file}`;
     try {
-      const marker = JSON.parse(readFileSync(target, "utf8")) as ApprovalMarker;
+      // Sub-step 0.10 TS-1: predicate-validated read replaces unchecked cast.
+      const parsed = JSON.parse(readFileSync(target, "utf8")) as unknown;
+      if (!isApprovalMarker(parsed)) {
+        // Corrupt or invalid shape — leave for manual inspection.
+        continue;
+      }
+      const marker = parsed;
       const expiresAt = Date.parse(marker.expires_at);
-      if (Number.isFinite(expiresAt) && expiresAt > now) {
+      if (expiresAt > now) {
         active.push(marker);
       } else {
         unlinkSync(target);
       }
     } catch {
-      // corrupt marker — leave for manual inspection
+      // unreadable marker — leave for manual inspection
     }
   }
   if (active.length === 0) {

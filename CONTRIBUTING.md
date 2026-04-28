@@ -60,7 +60,34 @@ Multi-persona audit dispatches and verification rounds are captured at `audits/p
 
 ## Generic-paths discipline
 
-No `nbruzzi`-specific paths in code outside CONTRIBUTING/CHANGELOG/decisions/audits. CI grep check enforces. Per-component env vars (`CLAUDE_CONDUCTOR_CHANNELS_DIR`, etc.) override the `$CLAUDE_CONDUCTOR_ROOT` default-prefix; `$CLAUDE_CONDUCTOR_ROOT` itself defaults to `~/.claude/conductor` when unset.
+No `nbruzzi`-specific paths in code outside CONTRIBUTING/CHANGELOG/decisions/audits. CI grep check (`scripts/check-generic-paths.sh`) enforces three rules:
+
+- **P1** — hardcoded `nbruzzi` substrate identifier
+- **P2** — hardcoded `/Users/<name>/` absolute paths
+- **P3** — `\.claude/` literal under `src/` outside the explicit bypasser allowlist (Decision N: 16 files use `\.claude/` legitimately — kill switches, log dirs, the resolver itself, sensitive-file matchers — new code joins via `paths.ts` resolvers OR adds itself to the allowlist with rationale)
+
+### Path resolution
+
+Plugin path resolvers live in `src/shared/paths.ts`. Per Decision N (sub-step 0.10 ARCH-1 fix), each of the eight components resolves through **three layers**, in priority order:
+
+| Layer | Trigger                                                             | Value                                              |
+| ----- | ------------------------------------------------------------------- | -------------------------------------------------- |
+| 1     | `CLAUDE_CONDUCTOR_<COMPONENT>_DIR` env set (per-component override) | env value verbatim — caller chose the path         |
+| 2     | `CLAUDE_CONDUCTOR_ROOT` env set (root-prefix override)              | `$CLAUDE_CONDUCTOR_ROOT/<component-defaultSuffix>` |
+| 3     | Neither set (fallback)                                              | `~/.claude/<component-defaultSuffix>`              |
+
+The eight components split into two **defaultSuffix** classes:
+
+- **6 dotfiles-canonical components** (`channels`, `todos`, `identity`, `active-sessions`, `handoffs`, `memories`) — defaultSuffix is the bare component name. Layer 3 resolves to `~/.claude/X/` matching dotfiles canonical. Layer 2 resolves to `$CLAUDE_CONDUCTOR_ROOT/X/`.
+- **2 plugin-internal components** (`audits`, `decision-logs`) — defaultSuffix is `conductor/audits` / `conductor/decisions`. Layer 3 resolves to `~/.claude/conductor/X/`. Layer 2 resolves to `$CLAUDE_CONDUCTOR_ROOT/conductor/X/`. The `conductor/` prefix is embedded in defaultSuffix to avoid colliding with `~/.claude/audits/` (exists with unrelated content) or creating a stray `~/.claude/decisions/`.
+
+**Layer 2 implication:** setting `CLAUDE_CONDUCTOR_ROOT=/opt/foo` gives `/opt/foo/channels/` for the 6 canonical components AND `/opt/foo/conductor/audits/` for `audits` (the conductor prefix from defaultSuffix is preserved). To override the audits/decision-logs path entirely, use the per-component Layer 1 env var (`CLAUDE_CONDUCTOR_AUDITS_DIR=/elsewhere`).
+
+`CLAUDE_CONDUCTOR_*_DIR` env vars and `CLAUDE_CONDUCTOR_ROOT` are NOT defaulted to `~/.claude` — they're either set or unset. The `~/.claude` value enters resolution only at Layer 3 (the `FALLBACK_ROOT_SUFFIX` constant in `paths.ts`).
+
+### Slash-command path convention
+
+The bundled session slash commands (`commands/session/*.md`) shell out to dotfiles' channel/todos/active-sessions CLI via `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}`. Default works for the sibling-clone install layout (`~/claude-conductor` and `~/.claude-dotfiles` as siblings). Non-default installs export `CLAUDE_DOTFILES_ROOT` once. CLI-1 (sub-step 0.10) — see Decision N.
 
 ## Branching
 

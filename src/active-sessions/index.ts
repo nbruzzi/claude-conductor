@@ -114,7 +114,8 @@ export type ArtifactMeta = {
 
 /** Root directory for all presence state. Delegates to the centralized
  *  resolver in `src/shared/paths.ts` which honors `CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR`,
- *  `CLAUDE_CONDUCTOR_ROOT`, and falls back to `~/.claude/conductor/active-sessions`. */
+ *  `CLAUDE_CONDUCTOR_ROOT`, and falls back to `~/.claude/active-sessions`
+ *  (per Decision N: shared canonical with dotfiles, not under `conductor/`). */
 export function resolveActiveSessionsDir(): string {
   return activeSessionsDir();
 }

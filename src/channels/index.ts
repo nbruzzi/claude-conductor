@@ -40,6 +40,7 @@ import {
   writeSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { isValidSessionId } from "../active-sessions/index.ts";
 import { extractSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 
@@ -83,7 +84,8 @@ export type ChannelSummary = {
 /** Root directory for all channel state. Delegates to the centralized
  *  resolver in `src/shared/paths.ts` which honors `CLAUDE_CONDUCTOR_CHANNELS_DIR`
  *  (per-component env), `CLAUDE_CONDUCTOR_ROOT` (root prefix), and falls back
- *  to `~/.claude/conductor/channels`. */
+ *  to `~/.claude/channels` (per Decision N: shared canonical with dotfiles,
+ *  not under `conductor/`). */
 export function resolveChannelsDir(): string {
   return channelsDir();
 }
@@ -124,12 +126,18 @@ export function channelIdFromHandoff(handoffPath: string): string {
 export function resolveSessionId(
   raw: Record<string, unknown> | undefined,
 ): string {
+  // Defense-in-depth: every session-id consumed here flows into filesystem
+  // paths (channelDir, heartbeatPath, body file names). isValidSessionId
+  // gates against `..`/`/`/empty/etc. — symmetric with session-id.ts:42 and
+  // active-sessions/index.ts:302. Sub-step 0.10 RE-2.
   const envOverride = process.env["CLAUDE_SESSION_ID"];
-  if (envOverride && envOverride.length > 0) return envOverride;
+  if (envOverride && envOverride.length > 0 && isValidSessionId(envOverride)) {
+    return envOverride;
+  }
   const fromInput = raw ? extractSessionId(raw) : undefined;
-  if (fromInput) return fromInput;
+  if (fromInput && isValidSessionId(fromInput)) return fromInput;
   throw new Error(
-    "[channels] session_id not found — pass hook input with raw.session_id or set CLAUDE_SESSION_ID",
+    "[channels] session_id not found or invalid — pass hook input with raw.session_id (matching isValidSessionId) or set CLAUDE_SESSION_ID",
   );
 }
 
@@ -215,11 +223,22 @@ function withMetadataLock<T>(id: string, fn: () => T): T {
   }
 }
 
-function readMetadataRaw(id: string): ChannelMetadata {
-  const text = readFileSync(metadataPath(id), "utf-8");
-  const parsed = JSON.parse(text) as unknown;
+/**
+ * Pure validator for unmarshalled `ChannelMetadata` JSON. No filesystem
+ * touches; throws with a path-agnostic `sourceLabel` so the same validator
+ * works for both the active-channel branch (label = channel id) and the
+ * archive branch (label = archived entry name).
+ *
+ * Sub-step 0.10 TS-1 + cross-audit TS-A6 — path-parameterized split. Replaces
+ * the inline shape-check that lived only in `readMetadataRaw` and was bypassed
+ * by the archive branch's `as ChannelMetadata` cast.
+ */
+export function validateChannelMetadata(
+  parsed: unknown,
+  sourceLabel: string,
+): ChannelMetadata {
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error(`[channels] metadata for ${id} is not an object`);
+    throw new Error(`[channels] metadata for ${sourceLabel} is not an object`);
   }
   const obj = parsed as Record<string, unknown>;
   const created_at = obj["created_at"];
@@ -233,7 +252,9 @@ function readMetadataRaw(id: string): ChannelMetadata {
     !Array.isArray(participants) ||
     !participants.every((p): p is string => typeof p === "string")
   ) {
-    throw new Error(`[channels] metadata for ${id} has an invalid shape`);
+    throw new Error(
+      `[channels] metadata for ${sourceLabel} has an invalid shape`,
+    );
   }
   const meta: ChannelMetadata = {
     created_at,
@@ -244,6 +265,24 @@ function readMetadataRaw(id: string): ChannelMetadata {
   const closed_at = obj["closed_at"];
   if (typeof closed_at === "string") meta.closed_at = closed_at;
   return meta;
+}
+
+/**
+ * FS + validate. Both call sites (active-channel `readMetadataRaw` and
+ * archive-branch listChannels iteration) flow through here so the validator
+ * is impossible to bypass via the path-shape choice.
+ */
+function readAndValidateMetadata(
+  path: string,
+  sourceLabel: string,
+): ChannelMetadata {
+  const text = readFileSync(path, "utf-8");
+  const parsed = JSON.parse(text) as unknown;
+  return validateChannelMetadata(parsed, sourceLabel);
+}
+
+function readMetadataRaw(id: string): ChannelMetadata {
+  return readAndValidateMetadata(metadataPath(id), id);
 }
 
 function writeMetadataRaw(
@@ -534,11 +573,15 @@ export function listChannels(opts?: {
     if (existsSync(archive)) {
       for (const entry of readdirSync(archive)) {
         try {
-          const text = readFileSync(
+          // Sub-step 0.10 TS-1 + TS-A6: archive branch routed through the
+          // same validator as the active-channel branch via the
+          // path-parameterized `readAndValidateMetadata`. Replaces the
+          // unchecked `as ChannelMetadata` cast that previously trusted
+          // archive metadata shape.
+          const meta = readAndValidateMetadata(
             join(archive, entry, "metadata.json"),
-            "utf-8",
+            entry,
           );
-          const meta = JSON.parse(text) as ChannelMetadata;
           out.push({
             id: entry,
             metadata: meta,

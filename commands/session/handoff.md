@@ -137,7 +137,7 @@ Build a `TodoFile` JSON payload from the final TaskList state at end-of-session:
 Write it via the CLI (atomic temp+rename under the hood):
 
 ```bash
-cd /Users/nbruzzi/.claude-dotfiles
+cd "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
 echo "$JSON_PAYLOAD" | bun run src/todos/cli.ts write "<handoff-id>"
 ```
 
@@ -206,7 +206,7 @@ This is what `/handoff-resume` reads by default.
 
 ## Step 7: Write the dotfiles session summary
 
-Write a condensed 2-4 sentence version of the summary to `~/.claude-dotfiles/.session-summary`. This gets used as the git commit message body when the dotfiles Stop hook runs.
+Write a condensed 2-4 sentence version of the summary to `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/.session-summary`. This gets used as the git commit message body when the dotfiles Stop hook runs.
 
 ## Step 8: Confirm
 

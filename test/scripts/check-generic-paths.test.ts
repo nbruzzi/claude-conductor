@@ -127,4 +127,57 @@ describe("scripts/check-generic-paths.sh", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("clean");
   });
+
+  it("flags \\.claude/ literal in non-allowlisted source file (P3)", () => {
+    mkdirSync(join(repo, "src", "hooks", "checks"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "hooks", "checks", "newcheck.ts"),
+      "export function check() { return `${process.env.HOME}/.claude/newcheck-state`; }\n",
+    );
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("error[P3]");
+    expect(stderr).toContain("src/hooks/checks/newcheck.ts");
+    expect(stderr).toContain("route through paths.ts");
+  });
+
+  it("does NOT flag \\.claude/ in JSDoc narration (Layer 3 generic for P3)", () => {
+    mkdirSync(join(repo, "src", "hooks", "checks"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "hooks", "checks", "narrated.ts"),
+      "/**\n * Reads from ~/.claude/conductor/foo for context.\n */\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("scans markdown in commands/session/ directory (CLI-1 regression test)", () => {
+    mkdirSync(join(repo, "commands", "session"), { recursive: true });
+    // Build literals at runtime to avoid self-flagging this test file.
+    const ident = ["nbr", "uzz", "i"].join("");
+    writeFileSync(
+      join(repo, "commands", "session", "fakehandoff.md"),
+      `# Fake handoff\n\n\`\`\`bash\ncd /Users/${ident}/.claude-dotfiles\n\`\`\`\n`,
+    );
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("error[P1]");
+    expect(stderr).toContain("commands/session/fakehandoff.md");
+  });
+
+  it("does NOT flag P3 alone in markdown files (documentation, not runtime)", () => {
+    mkdirSync(join(repo, "skills"), { recursive: true });
+    writeFileSync(
+      join(repo, "skills", "doc.md"),
+      "# Skill\n\nReads from ~/.claude/something/foo.\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
 });

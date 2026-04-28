@@ -24,7 +24,7 @@ import { realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, normalize } from "node:path";
 
-import { effectiveHome } from "../../shared/home";
+import { effectiveHome } from "../../shared/home.ts";
 
 // Re-exported for back-compat with dotfiles shims that import effectiveHome
 // from this module's old location. Canonical source is `src/shared/home.ts`;
@@ -42,6 +42,36 @@ export type ApprovalMarker = {
   readonly expires_at: string;
   readonly reason: string;
 };
+
+/** ISO-8601-ish date string check — rejects empty, garbage, and NaN-producing inputs. */
+function isIsoString(v: unknown): v is string {
+  return typeof v === "string" && Number.isFinite(Date.parse(v));
+}
+
+/**
+ * Type predicate for unmarshalled `ApprovalMarker` JSON. Validates shape +
+ * runtime invariants downstream code already assumes:
+ *   - `version === 1` literal (rejects future-version markers a current
+ *     consumer cannot interpret)
+ *   - `path` is a non-empty string (path canonicalization downstream)
+ *   - `approved_at` and `expires_at` parse as finite-ms timestamps
+ *   - `reason` is a string (sanitized downstream)
+ *
+ * Sub-step 0.10 TS-1 — replaces the `as ApprovalMarker` cast that accepted
+ * any JSON object shape. Adversarial-audit TS-A1 spec.
+ */
+export function isApprovalMarker(v: unknown): v is ApprovalMarker {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    o["version"] === 1 &&
+    typeof o["path"] === "string" &&
+    o["path"].length > 0 &&
+    isIsoString(o["approved_at"]) &&
+    isIsoString(o["expires_at"]) &&
+    typeof o["reason"] === "string"
+  );
+}
 
 export function approvalsDir(): string {
   return join(effectiveHome(), ".claude", APPROVALS_DIR_NAME);

@@ -14,11 +14,19 @@ import { block, pass, warn } from "../types.ts";
 
 const SOURCE = "test-gate";
 
-const HOME = process.env["HOME"] ?? "";
-const GATE_FILE = `${HOME}/.claude/test-gate-on`;
+// HOME-derived path is computed per-call so test harnesses can override
+// process.env.HOME at runtime. A module-level const binds HOME at import time
+// and defeats test isolation — if HOME is unset at import (Claude Code
+// subprocess boundary, certain CI runners), the gate path resolves to
+// "/.claude/test-gate-on", an absolute path that never exists, silently
+// bypassing the gate forever. Sibling pattern: branch-enforcement.ts:54-67.
+function gateFile(): string {
+  const home = process.env["HOME"] ?? "";
+  return `${home}/.claude/test-gate-on`;
+}
 
 export async function check(input: HookInput): Promise<HookResult> {
-  if (!existsSync(GATE_FILE)) return pass();
+  if (!existsSync(gateFile())) return pass();
 
   const cwd = input.cwd ?? process.cwd();
   const pkgPath = join(cwd, "package.json");

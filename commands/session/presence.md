@@ -55,7 +55,7 @@ behaviour (artifact resolution, atomic writes, liveness classification) stays
 consistent with the hooks.
 
 ```bash
-cd /Users/nbruzzi/.claude-dotfiles
+cd "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
 CLAUDE_SESSION_ID="<session-id>" bun run src/active-sessions/cli.ts <subcommand> [args...]
 ```
 

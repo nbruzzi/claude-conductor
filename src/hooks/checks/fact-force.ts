@@ -48,7 +48,11 @@ import { LockTimeoutError, withLock } from "../lock.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { block, pass } from "../types.ts";
-import { scopeMarkerPath, type ScopeMarker } from "./fact-force-scope-store.ts";
+import {
+  isScopeMarker,
+  scopeMarkerPath,
+  type ScopeMarker,
+} from "./fact-force-scope-store.ts";
 
 const SOURCE = "fact-force";
 
@@ -297,12 +301,23 @@ export async function check(input: HookInput): Promise<HookResult> {
 function tryConsumeScope(sessionId: string): boolean {
   const target = scopeMarkerPath(sessionId);
   if (!existsSync(target)) return false;
+  // Sub-step 0.10 TS-1: predicate-validated read replaces unchecked cast.
+  // Closes the NaN-loop risk: if files_consumed parses as NaN, the
+  // `consumed >= max_files` comparison silently returns false and the marker
+  // would loop forever returning false on every gate. Predicate now requires
+  // Number.isInteger + non-negative + files_consumed <= max_files.
   let marker: ScopeMarker;
   try {
-    marker = JSON.parse(readFileSync(target, "utf8")) as ScopeMarker;
+    const parsed = JSON.parse(readFileSync(target, "utf8")) as unknown;
+    if (!isScopeMarker(parsed)) {
+      console.error(`[${SOURCE}] scope marker invalid shape — deleting`);
+      tryUnlink(target);
+      return false;
+    }
+    marker = parsed;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[${SOURCE}] scope marker corrupt — deleting: ${msg}`);
+    console.error(`[${SOURCE}] scope marker unreadable — deleting: ${msg}`);
     tryUnlink(target);
     return false;
   }

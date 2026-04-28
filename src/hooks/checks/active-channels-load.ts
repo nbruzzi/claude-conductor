@@ -24,6 +24,7 @@ import {
   newestHeartbeatMtime,
   touchHeartbeat,
 } from "../../channels/index.ts";
+import { isValidSessionId } from "../../active-sessions/index.ts";
 import { extractSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
@@ -52,8 +53,10 @@ function formatAge(ageMs: number | null): string {
 
 export async function check(input: HookInput): Promise<HookResult> {
   try {
+    // Defense-in-depth: session-id flows into heartbeatPath via touchHeartbeat
+    // below. Gate via isValidSessionId before any path-join. Sub-step 0.10 RE-2.
     const sessionId = extractSessionId(input.raw);
-    if (!sessionId) return pass();
+    if (!sessionId || !isValidSessionId(sessionId)) return pass();
 
     let channels: ReturnType<typeof listChannels>;
     try {

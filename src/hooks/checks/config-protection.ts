@@ -25,6 +25,7 @@ import type { HookInput, HookResult } from "../types.ts";
 import { pass, block } from "../types.ts";
 import {
   canonicalizePath,
+  isApprovalMarker,
   markerPath,
   type ApprovalMarker,
 } from "./config-protection-store.ts";
@@ -81,12 +82,20 @@ function consumeApproval(absolutePath: string): boolean {
       // EACCES / EIO / etc. → no approval (fail-closed).
       return false;
     }
+    // Sub-step 0.10 TS-1: predicate-validated read replaces unchecked cast.
     let marker: ApprovalMarker;
     try {
-      marker = JSON.parse(readFileSync(claimed, "utf8")) as ApprovalMarker;
+      const parsed = JSON.parse(readFileSync(claimed, "utf8")) as unknown;
+      if (!isApprovalMarker(parsed)) {
+        // Invalid shape (corrupt, future-version, missing fields) → consume +
+        // fail-closed. The rename already moved it out of the active set so
+        // re-edits won't re-trigger.
+        tryUnlink(claimed);
+        return false;
+      }
+      marker = parsed;
     } catch {
-      // Corrupt JSON or unreadable → consume + fail-closed. (The rename
-      // already moved it out of the active set so re-edits won't re-trigger.)
+      // Unreadable JSON → consume + fail-closed.
       tryUnlink(claimed);
       return false;
     }

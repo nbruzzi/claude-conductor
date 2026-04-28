@@ -25,10 +25,15 @@
  * Decision E entry for the deferral rationale.
  */
 
-import type { HookEvent, HookProfile, CheckFn } from "./types.ts";
+import type {
+  HookEvent,
+  HookProfile,
+  CheckFn,
+  KnownToolName,
+} from "./types.ts";
 import { HOOK_EVENTS } from "./types.ts";
 
-export type { HookProfile };
+export type { HookProfile, KnownToolName };
 
 export const ALL_PROFILES: HookProfile[] = ["minimal", "standard", "strict"];
 
@@ -38,7 +43,7 @@ export type CheckMeta = {
   /** One-line description shown by --list. */
   description: string;
   /** Tool names this check applies to, or "*" for all tools. */
-  tools: string;
+  tools: KnownToolName | "*";
   /** Whether this check can block (exit 2). */
   canBlock: boolean;
   /** Which profiles include this check. */
@@ -89,16 +94,17 @@ export type CheckRegistration<Name extends string = string> = {
 /**
  * Per-event handler policy for one check.
  *
- * Note: `name: string` here is the deferred-tightening target — see
- * top-of-file note + Decision E in `decisions/phase-0.md`. The productive
- * #10 win for sub-step 0.7 is on `CheckRegistration` (registration-site
- * narrowing); `OrderEntry` and `CheckMeta` tightening compose later.
+ * `tools` is the closed `KnownToolName` literal-union (sub-step 0.10
+ * TS-2 / D7a). A typo like `tools: ["Edti"]` is now a compile error
+ * instead of a runtime no-op. `name: string` remains broad — Decision E
+ * in `decisions/phase-0.md` retains it; the win there composes
+ * separately when `CheckName` is tightened cross-repo.
  */
 export type OrderEntry = {
   name: string;
   earlyReturn: "on-block" | "on-output" | "never";
   silent?: boolean;
-  tools?: readonly string[];
+  tools?: readonly KnownToolName[];
 };
 
 /**

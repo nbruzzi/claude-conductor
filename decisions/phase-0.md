@@ -773,6 +773,7 @@ ts: 2026-04-28T00:30:30Z
 kind: architectural
 severity: major
 phase: 0
+superseded_by: N
 affects:
   [
     channels/index.ts,
@@ -784,6 +785,8 @@ affects:
 ```
 
 ### 2026-04-28 — Sub-step 0.8 Decision J: 3-module migration to paths.ts with env-var rename (clean break)
+
+> **SUPERSEDED by Decision N (2026-04-28 sub-step 0.10 audit gate).** The "no public consumers" premise was wrong — dotfiles is a consumer via the 19-shim chain. The locked isolation convention `~/.claude/conductor/X/` created a torn substrate where dotfiles canonical writes went to `~/.claude/X/` but plugin-shimmed reads targeted `~/.claude/conductor/X/`. Decision N reverts the conductor namespace as default for 6 components (channels, todos, identity, active-sessions, handoffs, memories) while keeping it for the 2 plugin-internal components (audits, decision-logs). Env-var rename (Option 1, clean break) PRESERVED — the rename was correct in the abstract; only the path-default decision was wrong.
 
 **Context:** Three core modules (`channels/`, `todos/`, `active-sessions/`) shipped the dotfiles-era resolver shape: non-namespaced env vars (`CHANNELS_DIR`, `TODOS_DIR`, `CLAUDE_ACTIVE_SESSIONS_DIR`), non-isolated default paths (`~/.claude/X/`), direct `homedir()` calls. `paths.ts` already implemented the locked isolation convention (`~/.claude/conductor/X/` per parent plan ARCH-1) but was an orphan with one consumer.
 
@@ -887,6 +890,160 @@ affects: [scripts/check-generic-paths.sh, .github/workflows/test.yml, CI gate]
 **actionlint deferred (Q1 default):** workflow has inline TODO; ships in a follow-up sub-step when SHA pin researched.
 
 **Reversal cost:** Trivial — revert 1-2 commits + remove CI step.
+
+---
+
+```yaml
+ts: 2026-04-28T11:30:00Z
+kind: architectural
+severity: critical
+phase: 0
+supersedes: J
+affects:
+  [
+    src/shared/paths.ts,
+    test/shared/paths.test.ts,
+    decisions/phase-0.md (Decision J frontmatter),
+    19 dotfiles shims (no functional change — namespace alignment),
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.10 Decision N: revert conductor namespace as DEFAULT for 6 of 8 components (post-mortem on Decision J)
+
+**Context:** Sub-step 0.10 4-persona terminal audit surfaced ARCH-1 critical: storage-namespace split severs runtime data flow across the dotfiles ↔ plugin shim boundary. Plugin's `paths.ts:54` defaulted `FALLBACK_ROOT_SUFFIX = join(".claude", "conductor")`. Dotfiles canonical (`channels/index.ts:81`, `todos/index.ts:26`, `active-sessions/index.ts:113`) defaulted to `~/.claude/X/`. 19 dotfiles shims re-export from `claude-conductor/hooks/checks/*` — those shimmed checks read paths via plugin's resolver, hitting the empty conductor namespace while the dotfiles canonical CLI writes to plain `~/.claude/X/`.
+
+Disk-truth verification: `~/.claude/active-sessions/` had 6 active artifact dirs (dotfiles writes), `~/.claude/conductor/active-sessions/` had 1 unrelated test fixture. Channel `2026-04-28_01-50` lived at `~/.claude/channels/2026-04-28_01-50/` while the shimmed `active-channels-load` SessionStart hook read from `~/.claude/conductor/channels/` (which doesn't exist). Coordination silently degraded; only worked because (a) dotfiles canonical channel CLI bypasses the hook, (b) Nick directs sessions to specific channels manually.
+
+Decision J's "no public consumers" premise was wrong: dotfiles IS a consumer via the shim chain. The clean break created the torn substrate.
+
+Beyond ARCH-1 itself, Nick observed a 5-surface friction pattern with the conductor namespace (ARCH-1 + ARCH-3 11/18 plugin checks bypass paths.ts + 0.8 smoke needed non-default verification + cross-edge-via-shim env-var trap memory + CLI-2 detector blind to \*.md). The conductor isolation was aspirational but never load-bearing in dual-install (dotfiles + plugin) — production reality is shared `~/.claude/X/`.
+
+**Options considered:**
+
+1. Revert all 8 components to `~/.claude/X/` — pollutes `~/.claude/` with new top-level `decisions/` and writes to existing `~/.claude/audits/` (different schema).
+2. Keep all 8 in `~/.claude/conductor/X/` — perpetuates ARCH-1 silent split, breaks coordination at runtime.
+3. Revert 6 components to `~/.claude/X/` matching dotfiles canonical; keep `audits` + `decision-logs` (plugin-internal, no dotfiles parity) embedded in `conductor/` via per-component `defaultSuffix` override.
+
+**Chosen:** Option 3.
+
+**Reason:** Six components (channels, todos, identity, active-sessions, handoffs, memories) have dotfiles canonical equivalents — the production namespace IS `~/.claude/X/`, plugin should match. Two components (audits, decision-logs) are plugin-internal artifacts with no dotfiles canonical — embedding `conductor/` in their default suffix avoids polluting `~/.claude/decisions/` (doesn't exist) or colliding with `~/.claude/audits/` (exists with different schema, per ARCH-A2). `CLAUDE_CONDUCTOR_*_DIR` per-component env vars and `CLAUDE_CONDUCTOR_ROOT` remain as opt-in for plugin-fresh installs that genuinely want isolation.
+
+**Implementation:** `paths.ts:54` `FALLBACK_ROOT_SUFFIX = ".claude"`. Component `defaultSuffix` for `audits` → `"conductor/audits"`, `decision-logs` → `"conductor/decisions"`. Layer-1 (per-component env) and layer-2 (`CLAUDE_CONDUCTOR_ROOT/<defaultSuffix>`) semantics preserved.
+
+**Test rename mapping:** `paths.test.ts:30` `FALLBACK_ROOT = join(homedir(), ".claude")` (was `…, ".claude", "conductor")`. Layer-3 fallback assertions for the 6 shared components drop the `conductor` segment; assertions for `audits` + `decision-logs` add it via the suffix.
+
+**Memory crystallized this cycle:** `feedback-arm-symmetric-monitor-at-resume.md` (channel JSONL Monitor at parallel-session resume), `feedback-direct-bravo-autonomously.md` (peer Claude direction is Alpha's job, not Nick's middleman role).
+
+**Reversal cost:** Trivial — single line revert in `paths.ts` + 4 test-assertion reverts. But the production-parity verification cycle would have to repeat.
+
+---
+
+```yaml
+ts: 2026-04-28T13:30:00Z
+kind: tooling
+severity: minor
+phase: 0
+affects:
+  [
+    scripts/check-import-extensions.sh,
+    scripts/check-bundled-registrations-parity.sh,
+    .github/workflows/test.yml,
+    src/shared/paths.ts (TS-4),
+    src/memory-loader/index.ts (TS-4),
+    src/hooks/checks/config-protection-store.ts (TS-4),
+    src/hooks/checks/fact-force-scope-store.ts (TS-4),
+    dotfiles .github/workflows/test.yml (ARCH-4 TODO),
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.10 Decision O: Slice 7 cleanup — detector additions + TS-4 .ts-extension fix + ARCH-4 inline TODO
+
+**Context:** Slice 7 closes the cleanup tail of the Phase 0 audit-remediation arc. Three substantive additions: (a) explicit `.ts` extension on the 4 remaining relative imports under `src/` (TS-4 per cross-audit TS-A3), (b) two new static-analysis scripts that turn the TS-4 invariant + the dotfiles-canonical parity contract into observable CI gates, (c) inline TODO in dotfiles' `test.yml` documenting the post-0.11 plugin-ref bump (ARCH-4). Without these gates, the next regression on either invariant goes undetected in the same "false-clean" failure mode that motivated CLI-2 in Slice 1.
+
+**Options considered:**
+
+1. Skip the new scripts; TS-4 alone fixes the immediate sites and rely on convention.
+2. Add `check-import-extensions.sh` only; defer parity script to Phase 1 with the cross-repo CI checkout work.
+3. Add both scripts; make `check-bundled-registrations-parity.sh` graceful-skip when the dotfiles canonical isn't reachable (Phase 0 CI runs without sibling-checkout).
+4. Add both scripts; require dotfiles sibling-checkout in plugin CI (parity becomes hard-required everywhere).
+
+**Chosen:** Option 3.
+
+**Reason:**
+
+- Option 1 reproduces the CLI-2 failure mode — invariants without detectors silently rot. Memory `feedback-self-monitoring-is-architectural.md`.
+- Option 2 leaves the dotfiles ↔ plugin parity contract observable only by manual diff. Decision N's premise (dotfiles canonical drives plugin defaults for 6 of 8 components) is load-bearing — drift in `bundled-registrations.ts` would silently break coordination at runtime.
+- Option 4 requires the install-sh-smoke pattern (sibling-checkout step + scoped GH_PAT, per memory `feedback-ci-cross-repo-checkout.md`) for the plugin's primary CI workflow. That's a larger change than Slice 7's scope; it's filed as Phase 1 follow-up.
+- Option 3 makes the parity check authoritative locally and informational in plugin-only CI, which is the right balance for v0.1.0. The graceful skip path emits a clear hint about `CLAUDE_DOTFILES_ROOT` so dev environments without sibling-clone get the expected behavior.
+
+**Implementation:**
+
+- **TS-4** — 4 relative imports gain explicit `.ts`: `src/shared/paths.ts:6`, `src/memory-loader/index.ts:6`, `src/hooks/checks/config-protection-store.ts:27`, `src/hooks/checks/fact-force-scope-store.ts:26`. Bun + TS `moduleResolution: Bundler` already accept these; the change is convention-only and `allowImportingTsExtensions: true` in `tsconfig.json` keeps both shapes valid mid-migration.
+- **`scripts/check-import-extensions.sh`** — bash 3.2+ portable. Scans tracked `src/**/*.ts` for relative imports/exports (`./` or `../`) whose path doesn't end in `.ts` or `.json`. Reports compiler-style with optional GHA annotations.
+- **`scripts/check-bundled-registrations-parity.sh`** — bash 3.2+ portable. Pre-strips plugin's intentional differences (SPDX header, `import type { BundledCheckName }`, `RegistryBuilder<BundledCheckName>` generic), prettier-normalizes both files via plugin's config, diffs the result. Graceful skip (exit 0 + hint) when dotfiles canonical is absent. Uses `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}` per Slice 3 env-var convention.
+- **CI wiring** — `.github/workflows/test.yml` adds `Check import extensions` and `Check bundled-registrations parity (skips if dotfiles absent)` steps after `Check generic paths`.
+- **ARCH-4 inline TODO** — dotfiles `.github/workflows/test.yml` gets a comment block above `ref: phase-0-initial-scaffold` documenting the bump-at-0.11. No functional change.
+
+**Reversal cost:** Trivial. Drop two scripts + revert 4 imports + drop 2 CI steps + drop one comment block. No cross-edge or dotfiles-canonical impact.
+
+---
+
+```yaml
+ts: 2026-04-28T13:55:00Z
+kind: scope
+severity: minor
+phase: 0
+affects:
+  [
+    src/hooks/checks/fact-force-scope-cli.ts (RE-1),
+    src/active-sessions/index.ts (CLI-2 JSDoc),
+    src/todos/index.ts (CLI-2 JSDoc),
+    src/channels/index.ts (CLI-2 JSDoc + validateChannelMetadata export),
+    scripts/check-generic-paths.sh (CLI-3 --help + --include-untracked text),
+    scripts/check-import-extensions.sh (CLI-3 --help),
+    scripts/check-bundled-registrations-parity.sh (CLI-3 --help),
+    commands/session/handoff.md (CLI-9),
+    test/hooks/checks/config-protection-store.test.ts (RE-4 NEW),
+    test/hooks/checks/fact-force-scope-store.test.ts (RE-4 NEW),
+    test/channels/metadata-validator.test.ts (RE-4 NEW),
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.10 Decision P: Slice 7.1 audit-remediation closure — RE-1 + CLI-2 + CLI-3 + CLI-9 + RE-4
+
+**Context:** Slice 8 fresh full-diff 4-persona audit (sibling-symmetric per plan §D6) produced aggregate 8.3/10 across TS Expert (9.0 SHIP), Architecture (8.7 SHIP-WITH-CONDITIONS, both closed inline by `800f9f7`), CLI DX (7.0 SHIP-WITH-CONDITIONS), Reliability (8.4 SHIP-WITH-CONDITIONS). Three convergences (C5/C6/C7) validated symmetric audit pattern — all already closed by Alpha's `e263adb` (Layer 3 widening for bash comments) + `800f9f7` (INDEX.md catalog refresh + KnownToolName widening). 5 still-open blockers + 1 important required Slice 7.1 closure before tag.
+
+**Options considered:**
+
+1. Defer all open findings to Phase 1, ship as-is — would tag v0.1.0 with documented gaps including a TS-1 closure miss (RE-1) on the operator-facing scope-cli list verb that lets malformed markers render to operators as "NaN files remaining."
+2. Close all 5 blockers + RE-4 in Slice 7.1 follow-up; defer RE-2/RE-3/RE-6/RE-7 + paper cuts to Phase 1 backlog.
+3. Close all findings (blockers + important + Phase 1 candidates) in one sweep — adds ~3-4 hours scope creep beyond the audit-remediation arc.
+
+**Chosen:** Option 2.
+
+**Reason:**
+
+- Option 1 contradicts `feedback-no-known-gaps.md` for the RE-1 closure miss specifically. The auditor's framing ("the hook validates correctly via isScopeMarker; the CLI list silently accepts malformed markers and renders NaN as remaining-budget to operators") is exactly the kind of CLI/hook divergence ARCH-1 was about, applied to marker shape. Tag-time discipline says close it.
+- Option 3 expands scope past the audit-remediation arc. RE-2 (extractSessionId helper API safe-by-default), RE-3 (channels module API guards), RE-6 (test-gate HOME observability), and RE-7 (channels acquireLock spin-wait) are honest defense-in-depth concerns but acceptable for v0.1.0. They're filed in `wiki/backlog.md` for Phase 1 with concrete fix sketches per memory `feedback-self-sufficient-notes.md`.
+- Option 2 is the right balance — close what matters for tag, defer what extends architecture without runtime risk.
+
+**Implementation:**
+
+- **RE-1** (`fact-force-scope-cli.ts:193`): added `isScopeMarker` to imports; replaced unchecked `as ScopeMarker` cast with predicate-validated read mirroring `config-protection-cli.ts:140-146` pattern. Slice 8 Reliability auditor caught this as TS-1 closure miss; convergence-via-divergence with Alpha's TS-Expert (her TS-N1 was about ChannelMetadata version, this was scope-cli list).
+- **CLI-2** (3 JSDoc strings): `active-sessions/index.ts:117`, `todos/index.ts:38`, `channels/index.ts:87` — replaced "falls back to `~/.claude/conductor/X`" with "falls back to `~/.claude/X`" + Decision N reference. Documentation-vs-code divergence closure.
+- **CLI-3** (detector help inconsistencies):
+  - `check-generic-paths.sh`: dropped misleading `--include-untracked` flag mention from clean-summary; replaced with accurate "untracked file(s) not scanned" + Phase 1 backlog reference.
+  - All 3 detector scripts: added `--help` / `-h` handler at top emitting the script's own header docstring.
+- **CLI-9** (`handoff.md:209`): replaced hardcoded `~/.claude-dotfiles/.session-summary` with `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/.session-summary` per Slice 3 env-var convention. Closes the 6th CLI-1 site missed in original Slice 1+3.
+- **RE-4** (negative-path tests for TS-1 predicates):
+  - `test/hooks/checks/config-protection-store.test.ts` — `isApprovalMarker` rejection axes (10 tests).
+  - `test/hooks/checks/fact-force-scope-store.test.ts` — `isScopeMarker` rejection axes including NaN-loop hazard, non-integer, range invariants (14 tests).
+  - `test/channels/metadata-validator.test.ts` — `validateChannelMetadata` rejection axes including lifecycle literal narrowing (11 tests). Required exporting `validateChannelMetadata` from `channels/index.ts` (was module-private).
+  - 35 new tests; total suite now 224/224.
+
+**Reversal cost:** Trivial per-fix. RE-1 is one import + 8-line read pattern; CLI-2 is 3 one-line edits; CLI-3 is removable; CLI-9 is one substitution; RE-4 tests can be deleted. The export of `validateChannelMetadata` is the only structural change and is additive (no consumer regression).
+
+**Phase 1 backlog (filed in `wiki/backlog.md`):** RE-2 helper API safe-by-default, RE-3 channels module API guards, RE-6 test-gate HOME observability, RE-7 acquireLock spin-wait, CLI-3 dynamic-import detection, CLI-3 `--include-untracked` implementation, plus Alpha's TS-N1/N2/N3 (ChannelMetadata version field, dispatcher unknown-tool console.warn, KNOWN_TOOL_NAMES exhaustiveness anchor). All with concrete fix sketches.
 
 ---
 

@@ -20,8 +20,17 @@
  *
  * Session identity: reads `CLAUDE_SESSION_ID` from env. Slash commands must
  * pass it through: `CLAUDE_SESSION_ID="$session_id" bun run ...`.
+ *
+ * Cross-edge invocation note (per memory `feedback-channel-cli-uuid-only-env.md`
+ * + sub-step 0.10 RE-2 tightening): this CLI rejects non-UUID-shaped
+ * CLAUDE_SESSION_ID via `isValidSessionId`. There is intentionally NO
+ * ppid-walk fallback here — that pattern lives in dotfiles' canonical
+ * `src/channels/cli.ts` for sessions whose UUID is harness-randomized
+ * without being env-exported. For cross-edge invocation from a session
+ * lacking a UUID-shaped CLAUDE_SESSION_ID, use the dotfiles canonical CLI.
  */
 
+import { isValidArtifactId } from "../active-sessions/index.ts";
 import {
   appendMessage,
   channelIdFromHandoff,
@@ -60,6 +69,20 @@ function requireArg(argv: string[], i: number, name: string): string {
   return v;
 }
 
+// Defense-in-depth: channel-id flows directly into channelDir → metadataPath →
+// heartbeatPath → bodyDir path joins. Without this gate, an argv value like
+// "../../etc" would escape the channels root. Symmetric with isValidSessionId
+// gating in active-sessions/index.ts:302. Sub-step 0.10 RE-2.
+function requireChannelId(argv: string[], i: number): string {
+  const v = requireArg(argv, i, "channel-id");
+  if (!isValidArtifactId(v)) {
+    die(
+      `invalid channel-id: "${v}" — must match /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/`,
+    );
+  }
+  return v;
+}
+
 function sid(): string {
   return resolveSessionId(undefined);
 }
@@ -94,23 +117,23 @@ async function main(): Promise<void> {
       return;
     }
     case "create": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       const handoffId = requireArg(rest, 1, "handoff-id");
       printJson(createChannel({ channelId, handoffId, sessionId: sid() }));
       return;
     }
     case "join": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       printJson(joinChannel({ channelId, sessionId: sid() }));
       return;
     }
     case "close": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       printJson(closeChannel({ channelId, sessionId: sid() }));
       return;
     }
     case "send": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       const kind = requireArg(rest, 1, "kind");
       if (!VALID_KINDS.includes(kind as ChannelKind)) {
         die(
@@ -130,7 +153,7 @@ async function main(): Promise<void> {
       return;
     }
     case "read": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       const resolved = readMessages(channelId).map((m) => {
         if (m.body_ref && !m.body) {
           const body = readBodyFile(channelId, m.body_ref);
@@ -147,17 +170,17 @@ async function main(): Promise<void> {
       return;
     }
     case "meta": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       printJson(readMetadata(channelId));
       return;
     }
     case "heartbeat": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       touchHeartbeat(channelId, sid());
       return;
     }
     case "peers": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       const meta = readMetadata(channelId);
       const self = sid();
       const now = Date.now();
@@ -181,7 +204,7 @@ async function main(): Promise<void> {
       return;
     }
     case "body": {
-      const channelId = requireArg(rest, 0, "channel-id");
+      const channelId = requireChannelId(rest, 0);
       const ref = requireArg(rest, 1, "body-ref");
       const body = readBodyFile(channelId, ref);
       if (body === null)

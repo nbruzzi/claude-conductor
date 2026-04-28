@@ -95,11 +95,18 @@ export async function check(input: HookInput): Promise<HookResult> {
         `prettier timed out after ${TIMEOUT_MS / 1000}s on ${file} — file may be unformatted`,
       );
     }
-    if (stderr.trim()) {
-      console.error(
-        `[${SOURCE}] prettier failed on ${file}: ${stderr.slice(0, 200)}`,
-      );
-    }
+    // Non-timeout prettier failure surfaces as user-visible warn — silent
+    // swallow (pass() with at most a console.error) hides quality regressions
+    // until the user notices unformatted diff noise. Cover BOTH the with-stderr
+    // and empty-stderr paths (e.g. OOM kill leaves stderr empty). Sub-step 0.10
+    // RE-3, expanded per cross-audit RE-A4.
+    const detail = stderr.trim()
+      ? stderr.slice(0, 200)
+      : `(no stderr output, exit code ${exitCode})`;
+    return warn(
+      SOURCE,
+      `prettier failed on ${file}: ${detail} — file may be unformatted`,
+    );
   }
 
   return pass();
