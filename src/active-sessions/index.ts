@@ -57,6 +57,7 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
+import { activeSessionsDir } from "../shared/paths.ts";
 
 /** 30-minute live window — mirrors channel heartbeat TTL. */
 export const LIVE_WINDOW_MS = 30 * 60 * 1000;
@@ -111,12 +112,11 @@ export type ArtifactMeta = {
   createdAt: number;
 };
 
-/** Root directory for all presence state. Tests override via env. */
+/** Root directory for all presence state. Delegates to the centralized
+ *  resolver in `src/shared/paths.ts` which honors `CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR`,
+ *  `CLAUDE_CONDUCTOR_ROOT`, and falls back to `~/.claude/conductor/active-sessions`. */
 export function resolveActiveSessionsDir(): string {
-  return (
-    process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] ??
-    join(homedir(), ".claude", "active-sessions")
-  );
+  return activeSessionsDir();
 }
 
 /**
@@ -136,6 +136,12 @@ export function setCoordinationRootsForTesting(
 }
 
 function defaultCoordinationRoots(): readonly string[] {
+  // NOTE: this calls homedir() directly (NOT effectiveHome()) by design —
+  // coordination roots are intentionally generic per RE-8 and span multiple
+  // substrates (~/.claude, ~/.claude-dotfiles, ~/Documents/Obsidian Vault).
+  // Test isolation via `process.env.HOME` mutation does NOT apply here because
+  // os.homedir() caches at process start. Tests should use
+  // setCoordinationRootsForTesting() above to inject their own root list.
   const home = homedir();
   const candidates = [
     join(home, ".claude"),

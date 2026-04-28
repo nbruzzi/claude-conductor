@@ -73,14 +73,14 @@ function countContentionEvents(): number {
 beforeEach(() => {
   tmpHome = makeTmpHome();
   prevHome = process.env["HOME"];
-  prevActiveSessionsDir = process.env["CLAUDE_ACTIVE_SESSIONS_DIR"];
+  prevActiveSessionsDir = process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
   process.env["HOME"] = tmpHome.home;
 
   REGISTRY_DIR = join(tmpHome.home, "registry");
   FAKE_REPO = join(tmpHome.home, "fake-repo");
   mkdirSync(REGISTRY_DIR, { recursive: true });
   mkdirSync(FAKE_REPO, { recursive: true });
-  process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] = REGISTRY_DIR;
+  process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = REGISTRY_DIR;
   ARTIFACT_PATH = realpathSync(FAKE_REPO);
   ARTIFACT_ID = artifactIdFromPath(ARTIFACT_PATH);
   setCoordinationRootsForTesting({ roots: [realpathSync(tmpHome.home)] });
@@ -94,8 +94,9 @@ afterEach(() => {
   if (prevHome === undefined) delete process.env["HOME"];
   else process.env["HOME"] = prevHome;
   if (prevActiveSessionsDir === undefined)
-    delete process.env["CLAUDE_ACTIVE_SESSIONS_DIR"];
-  else process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] = prevActiveSessionsDir;
+    delete process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
+  else
+    process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = prevActiveSessionsDir;
   tmpHome?.cleanup();
   tmpHome = null;
 });

@@ -42,7 +42,7 @@ beforeEach(() => {
   const fakeRepo = join(realRoot, "fake-repo");
   mkdirSync(REGISTRY_DIR, { recursive: true });
   mkdirSync(fakeRepo, { recursive: true });
-  process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] = REGISTRY_DIR;
+  process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = REGISTRY_DIR;
   ARTIFACT_PATH = realpathSync(fakeRepo);
   ARTIFACT_ID = artifactIdFromPath(ARTIFACT_PATH);
   setCoordinationRootsForTesting({ roots: [realRoot] });
@@ -50,7 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setCoordinationRootsForTesting(null);
-  delete process.env["CLAUDE_ACTIVE_SESSIONS_DIR"];
+  delete process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
   try {
     rmSync(SANDBOX_ROOT, { recursive: true, force: true });
   } catch {
