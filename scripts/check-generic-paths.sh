@@ -163,13 +163,20 @@ FILTERED_HITS=$(printf '%s\n' "$RAW_HITS" | awk -v p3_allow="$P3_ALLOWLIST_STR" 
       }
     }
 
-    # Layer 3 — JSDoc-narration lines (` * ` or ` /* ` prefix) for KNOWN
-    # patterns only. Documentation describing a path is not a runtime leak.
-    # Pattern-specific to avoid suppressing markdown bullet lists.
+    # Layer 3 — comment-narration lines (JSDoc `*`, line `//`, bash `#`)
+    # for KNOWN patterns only. Documentation describing a path is not a
+    # runtime leak. Pattern-specific to avoid suppressing markdown bullets.
+    # Bash `#` shape added when sub-step 0.10 Slice 7 parity-script narrated
+    # the pre-stripped SPDX-Copyright literal in its docstring (convergence
+    # via Bravo Slice 7 surfacing the gap in Alpha Slice 1).
     if (content ~ /^[[:space:]]*\*.*nbruzzi/) next
     if (content ~ /^[[:space:]]*\/\*.*nbruzzi/) next
+    if (content ~ /^[[:space:]]*\/\/.*nbruzzi/) next
+    if (content ~ /^[[:space:]]*#.*nbruzzi/) next
     if (content ~ /^[[:space:]]*\*.*\.claude\//) next
     if (content ~ /^[[:space:]]*\/\*.*\.claude\//) next
+    if (content ~ /^[[:space:]]*\/\/.*\.claude\//) next
+    if (content ~ /^[[:space:]]*#.*\.claude\//) next
 
     has_p1 = (content ~ /[Nn][Bb][Rr][Uu][Zz][Zz][Ii]/)
     has_p2 = (content ~ /\/Users\/[a-zA-Z][a-zA-Z0-9._-]*\//)
