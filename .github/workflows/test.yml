@@ -17,12 +17,13 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # TODO(0.7-followup): add actionlint workflow self-test step.
-      # Plan v2.1 §"Decision D" specified actionlint integration but the
-      # devDep / script / workflow-step trio was deferred at step 3
-      # execution because actionlint lacks a clean npm distribution
-      # (Bravo's RE-OOS-2 fallback path; documented in Risks table). For
-      # now, first-push CI run is the YAML integration verification.
+      # TODO(post-0.8): add `rhysd/actionlint@<SHA> # v<N>` step before this
+      # comment block. Deferred from sub-step 0.7 step 3 (originally per
+      # Decision D) and again at sub-step 0.8 commit 7 (per Q1 default at
+      # execute time — no SHA pin supplied). When SHA pin is researched, fold
+      # in via a separate sub-step. RE-3 standard (SHA-pinned third-party
+      # actions) applies; commit must include `decisions/phase-0.md` SHA-pin
+      # operations runbook entry per v2 plan Q6 + R13.
 
       - name: Typecheck
         run: bun run typecheck
@@ -32,6 +33,9 @@ jobs:
 
       - name: Lint
         run: bun run lint
+
+      - name: Check generic paths
+        run: bun run check-generic-paths
 
       - name: Test
         run: bun test

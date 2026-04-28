@@ -41,6 +41,7 @@ EXCLUDE_PATHSPECS=(
   ":(exclude)LICENSE"
   ":(exclude).claude-plugin/plugin.json"
   ":(exclude)scripts/check-generic-paths.sh"
+  ":(exclude)test/scripts/check-generic-paths.test.ts"
   ":(exclude)bun.lock"
   ":(exclude)decisions"
   ":(exclude)audits"
