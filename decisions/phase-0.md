@@ -1077,11 +1077,11 @@ affects: [.github/workflows/test.yml, decisions/phase-0.md]
   uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
   with:
     fail_on_error: true
-    reporter: github-pr-review
+    reporter: github-check
     level: error
 ```
 
-`fail_on_error: true` makes actionlint findings block the PR. `reporter: github-pr-review` posts inline review comments. `level: error` filters to actionable findings (drops style/warn noise that's not yet enforced).
+`fail_on_error: true` makes actionlint findings block the PR. `reporter: github-check` uses the Checks API (read-only on PRs); the original `github-pr-review` reporter was rejected because it requires `pull-requests: write` and the workflow's `permissions:` block grants only `contents: read` (narrow-by-default per the SHA-pin operations runbook below). Findings surface in the Checks tab + workflow log; PR-inline comments deferred unless permissions are explicitly widened. `level: error` filters to actionable findings (drops style/warn noise).
 
 **SHA-pin operations runbook (per TODO directive):**
 
