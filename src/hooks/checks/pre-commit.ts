@@ -12,7 +12,11 @@ import type { HookInput, HookResult } from "../types.ts";
 import { block, pass, warn } from "../types.ts";
 
 const SOURCE = "pre-commit";
-const SCRIPT_TIMEOUT_MS = 30_000;
+// Per-script timeout. Bumped from 30_000 to 60_000 in 2026-04-28 followup
+// after dotfiles' test suite grew past the 30s budget (1245 tests now run
+// in ~35-40s on dev hardware). The aggregate cap below remains the outer
+// brake at 120s for the whole pre-commit pipeline.
+const SCRIPT_TIMEOUT_MS = 60_000;
 const AGGREGATE_TIMEOUT_MS = 120_000;
 
 /**
