@@ -1047,4 +1047,51 @@ affects:
 
 ---
 
+```yaml
+ts: 2026-04-28T16:50:00Z
+kind: tooling
+severity: minor
+phase: 0-followon
+affects: [.github/workflows/test.yml, decisions/phase-0.md]
+```
+
+### 2026-04-28 — Sub-step 0.7+0.8 follow-on Decision Q: actionlint integration via reviewdog/action-actionlint (SHA-pin operations runbook)
+
+**Context:** sub-step 0.7 step 3 (originally per Decision D) and again at sub-step 0.8 commit 7 deferred actionlint integration with the explicit note "When SHA pin is researched, fold in via a separate sub-step." The TODO comment block in `.github/workflows/test.yml` named the requirement: RE-3 standard (SHA-pinned third-party actions) applies; commit must include `decisions/phase-0.md` SHA-pin operations runbook entry per v2 plan Q6 + R13. This is post-v0.1.0-phase-0 closure of the deferred item — workflow lives on `main` already, this edit ships as a 0-followon.
+
+**Options considered:**
+
+1. Skip actionlint entirely — workflow is small, hand-review at PR time. Trade-off: workflow drift / typo bugs land silently if reviewer misses them; the next CI editor reintroduces the same class.
+2. Use `rhysd/actionlint@<SHA>` directly — verified the repo does NOT publish an `action.yml` (404 on `/repos/rhysd/actionlint/contents/action.yml`). Direct usage is not available.
+3. Use `reviewdog/action-actionlint@<SHA>` — third-party but well-maintained wrapper that runs actionlint and emits reviewdog-style PR comments. Latest tag `v1.72.0` (2026-03-31), commit SHA `6fb7acc99f4a1008869fa8a0f09cfca740837d9d`.
+4. Inline the actionlint binary download via `bash <(curl ...)` from a SHA-pinned URL — workable but loses the GHA-native annotations and adds a curl-pipe-bash supply-chain surface.
+
+**Chosen:** Option 3.
+
+**Reason:** Option 1 reproduces the silent-failure pattern that motivated CLI-2 in Slice 1; workflows DO drift, the cost of static-analysis is small, the reward (regression catch at PR time) is real. Option 2 isn't available. Option 4 trades actionable output (PR-review comments) for an unnecessary curl-pipe surface. Option 3 hits the discipline note in the TODO comment ("RE-3 standard — SHA-pinned third-party actions") with the smallest reasonable wrapper.
+
+**Implementation:** added one step before `Typecheck` in `.github/workflows/test.yml`:
+
+```yaml
+- name: Lint workflow files (actionlint via reviewdog/action-actionlint)
+  uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
+  with:
+    fail_on_error: true
+    reporter: github-pr-review
+    level: error
+```
+
+`fail_on_error: true` makes actionlint findings block the PR. `reporter: github-pr-review` posts inline review comments. `level: error` filters to actionable findings (drops style/warn noise that's not yet enforced).
+
+**SHA-pin operations runbook (per TODO directive):**
+
+- Pinning convention: every third-party action that runs in CI MUST be SHA-pinned with a trailing `# vX.Y.Z` comment naming the released tag for human readability. Example: `uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6`.
+- Bumping convention: when bumping a SHA, also update the trailing `# vX.Y.Z` comment to reflect the new tag. Diffing both lines makes review-time intent clear.
+- SHA derivation: tags can be annotated (return tag-object SHA via `gh api /repos/<O>/<R>/git/refs/tags/<T>`) which then resolves to commit SHA via `gh api /repos/<O>/<R>/git/tags/<TAG-OBJECT-SHA>`. Always pin the COMMIT SHA, not the tag-object SHA — the latter is mutable if a maintainer force-pushes the tag.
+- Quarterly review: every quarter, audit `.github/workflows/*.yml` for outdated SHA pins. If a major release drops critical functionality (e.g., GHA runtime version bumps), update SHA + tag comment. Document the bump in `decisions/phase-1+.md` (or wherever the active phase log lives).
+
+**Reversal cost:** Trivial. Drop one workflow step + revert. The actionlint step doesn't affect any other step's success; CI without it is functionally equivalent (just loses the workflow-lint gate).
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
