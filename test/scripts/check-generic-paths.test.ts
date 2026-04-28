@@ -62,7 +62,12 @@ describe("scripts/check-generic-paths.sh", () => {
   it("exits 0 on a clean tree", () => {
     writeFileSync(join(repo, "ok.ts"), "export const x = 1;\n");
     commit(repo);
-    const { exitCode, stdout } = runScript(repo);
+    const { exitCode, stdout, stderr } = runScript(repo);
+    if (exitCode !== 0) {
+      console.error(`Unexpected exit ${exitCode}:`);
+      console.error(`STDOUT: ${stdout}`);
+      console.error(`STDERR: ${stderr}`);
+    }
     expect(exitCode).toBe(0);
     expect(stdout).toContain("clean");
     expect(stdout).toContain("0 violations");
