@@ -5,6 +5,41 @@
  * Shared types for the Claude Code hook dispatcher.
  */
 
+/**
+ * Closed literal-union of Claude Code built-in tool names referenced by
+ * `OrderEntry.tools` and `CheckMeta.tools`. Sub-step 0.10 TS-2 — replaces
+ * the unconstrained `string` typing that admitted typos like `"Edti"` to
+ * compile cleanly + silently disarm a check at runtime (the dispatcher's
+ * tool-filter would never match the typo, so the check became a no-op for
+ * that intended tool).
+ *
+ * To extend: add the new tool name to this union AND ensure any consumer
+ * of the union is exhaustive (e.g., `assertNever` in switch defaults).
+ *
+ * Per memory feedback-no-known-gaps.md — TS-2 was deferred in v0.1.0 plan
+ * but pulled forward into Slice 4.5 (D7a) so v0.1.0 SemVer is locked with
+ * the tightened typing, not the loose typing that would force a v0.2.0
+ * breaking change for cleanup.
+ */
+export const KNOWN_TOOL_NAMES = [
+  "Bash",
+  "Edit",
+  "Write",
+  "Read",
+  "Glob",
+  "Grep",
+  "MultiEdit",
+  "NotebookEdit",
+  "NotebookRead",
+  "Task",
+  "TodoWrite",
+  "WebFetch",
+  "WebSearch",
+  "ExitPlanMode",
+] as const satisfies readonly string[];
+
+export type KnownToolName = (typeof KNOWN_TOOL_NAMES)[number];
+
 /** Available hook profiles, from least to most strict. */
 export type HookProfile = "minimal" | "standard" | "strict";
 

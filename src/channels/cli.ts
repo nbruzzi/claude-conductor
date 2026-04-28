@@ -20,6 +20,14 @@
  *
  * Session identity: reads `CLAUDE_SESSION_ID` from env. Slash commands must
  * pass it through: `CLAUDE_SESSION_ID="$session_id" bun run ...`.
+ *
+ * Cross-edge invocation note (per memory `feedback-channel-cli-uuid-only-env.md`
+ * + sub-step 0.10 RE-2 tightening): this CLI rejects non-UUID-shaped
+ * CLAUDE_SESSION_ID via `isValidSessionId`. There is intentionally NO
+ * ppid-walk fallback here — that pattern lives in dotfiles' canonical
+ * `src/channels/cli.ts` for sessions whose UUID is harness-randomized
+ * without being env-exported. For cross-edge invocation from a session
+ * lacking a UUID-shaped CLAUDE_SESSION_ID, use the dotfiles canonical CLI.
  */
 
 import { isValidArtifactId } from "../active-sessions/index.ts";
