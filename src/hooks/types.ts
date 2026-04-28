@@ -23,19 +23,22 @@
  */
 export const KNOWN_TOOL_NAMES = [
   "Bash",
+  "BashOutput",
   "Edit",
-  "Write",
-  "Read",
+  "ExitPlanMode",
   "Glob",
   "Grep",
+  "KillShell",
   "MultiEdit",
   "NotebookEdit",
   "NotebookRead",
+  "Read",
+  "SlashCommand",
   "Task",
   "TodoWrite",
   "WebFetch",
   "WebSearch",
-  "ExitPlanMode",
+  "Write",
 ] as const satisfies readonly string[];
 
 export type KnownToolName = (typeof KNOWN_TOOL_NAMES)[number];
