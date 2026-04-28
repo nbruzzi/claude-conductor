@@ -742,4 +742,152 @@ affects: [catalog-discipline, decisions-log, sub-step-0.7]
 
 ---
 
+```yaml
+ts: 2026-04-28T00:30:00Z
+kind: architectural
+severity: minor
+phase: 0
+affects: [src/shared/home.ts, paths.ts, *-store hook checks]
+```
+
+### 2026-04-28 — Sub-step 0.8 Decision I: hoist effectiveHome to src/shared/home.ts (verbatim 3-line body)
+
+**Context:** Two hook-check files (`config-protection-store.ts:45-49`, `fact-force-scope-store.ts:48-52`) had identical local copies of `effectiveHome()`. `paths.ts` called `homedir()` directly, defeating test isolation per memory `feedback-homedir-not-live-from-env.md`. Bravo's v1 cross-audit (TS-1) flagged that the v1 plan body shorthand `process.env["HOME"] ?? homedir()` was a documentation lie — the existing source uses verbose 3-line form (which correctly returns `homedir()` for HOME=""; shorthand returns "").
+
+**Options considered:**
+
+1. Add `effectiveHome()` to paths.ts directly — wrong cohesion (path module owning a generic primitive).
+2. Hoist to `src/shared/home.ts`; route paths.ts + 2 stores through it — preserves verbatim body; avoids 4-copy proliferation.
+3. Each module keeps its own — DRY violation; drift hazard.
+
+**Chosen:** Option 2.
+
+**Reason:** Single source of truth at `src/shared/home.ts` with verbatim 3-line body. Test coverage in `test/shared/home.test.ts` (5 cases: HOME unset / empty / set / trailing-slash / "/") asserts the empty-string case returns `homedir()` (not ""). Generic primitive lives in shared/, not in path-specific module.
+
+**Reversal cost:** Trivial — `git revert <SHA>` restores per-file copies.
+
+---
+
+```yaml
+ts: 2026-04-28T00:30:30Z
+kind: architectural
+severity: major
+phase: 0
+affects:
+  [
+    channels/index.ts,
+    todos/index.ts,
+    active-sessions/index.ts,
+    tests,
+    env-var contract,
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.8 Decision J: 3-module migration to paths.ts with env-var rename (clean break)
+
+**Context:** Three core modules (`channels/`, `todos/`, `active-sessions/`) shipped the dotfiles-era resolver shape: non-namespaced env vars (`CHANNELS_DIR`, `TODOS_DIR`, `CLAUDE_ACTIVE_SESSIONS_DIR`), non-isolated default paths (`~/.claude/X/`), direct `homedir()` calls. `paths.ts` already implemented the locked isolation convention (`~/.claude/conductor/X/` per parent plan ARCH-1) but was an orphan with one consumer.
+
+**Options considered:**
+
+1. Clean break — retire old env vars; only `CLAUDE_CONDUCTOR_*_DIR` honored.
+2. Compat layer — recognize both old and new env vars during transition.
+3. Keep local resolvers — copy paths.ts semantics inline; no import.
+
+**Chosen:** Option 1.
+
+**Reason:** No public consumers (pre-v0.1.0; dotfiles is on its own feature branch and won't see the rename). Compat layer accumulates debt for zero callers. Atomic-commit discipline + big-bang env-var rename per memory `feedback-live-substrate-sequencing.md`.
+
+**Test rename mapping:** `CHANNELS_DIR` → `CLAUDE_CONDUCTOR_CHANNELS_DIR`; `TODOS_DIR` → `CLAUDE_CONDUCTOR_TODOS_DIR`; `CLAUDE_ACTIVE_SESSIONS_DIR` → `CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR`.
+
+**Reversal cost:** Modest — revert 3 commits (2a/2b/2c). Smoke-tested post-commit-4: heartbeat/channel/todo writes all land at `~/.claude/conductor/X/`.
+
+---
+
+```yaml
+ts: 2026-04-28T00:31:00Z
+kind: architectural
+severity: minor
+phase: 0
+affects: [hook-check paths, RE-8 design]
+```
+
+### 2026-04-28 — Sub-step 0.8 Decision K: hook-check paths default STAY-GENERIC; 5 sites STAY-WITH-LOCAL-DIALECT
+
+**Context:** Bravo's v1 ARCH-1 finding caught that the v1 plan undercounted HOME-resolution copies (4) when the actual count is 7 (2 effectiveHome dialect + 5 `?? ""` dialect — `branch-enforcement.ts:57`, `fact-force.ts:59`, `test-gate.ts:17`, `session-collision-gate.ts:49`, `presence-failure-log.ts:64`). The `?? ""` dialect is intentionally different: produces relative paths for kill-switch / log-dir checks where missing HOME means "no kill switch possible" or "log-to-cwd silent failure."
+
+**Options considered:**
+
+1. Migrate everything to `effectiveHome()` — changes behavior; HOME=undefined would now resolve to real `~/.claude/...`, racing live operator state.
+2. Catalog the 5 sites as STAY-WITH-LOCAL-DIALECT with rationale — preserves intentional semantics.
+3. Add new `effectiveHomeOrEmpty()` helper — adds primitive complexity for 5 callsites with clear different intent.
+
+**Chosen:** Option 2.
+
+**Reason:** Two semantically-different dialects warrant separate handling. Migrating kill-switch checks to `effectiveHome()` would produce real-path `~/.claude/...` for HOME=undefined — silent state racing instead of silent skip. Plan §4 catalog enumerates each site with verdict.
+
+**TS-2 inline note:** `defaultCoordinationRoots()` at `active-sessions/index.ts:138` keeps `homedir()` direct call by design (coordination roots are intentionally generic per RE-8); inline comment warns that HOME-mutation test isolation does NOT apply — tests should use `setCoordinationRootsForTesting()`.
+
+**Reversal cost:** Modest — would require classifying each `?? ""` site individually if migrated.
+
+---
+
+```yaml
+ts: 2026-04-28T00:31:30Z
+kind: scope
+severity: minor
+phase: 0
+affects: [fact-force-scopes/, config-protection-approvals/, CLI publish format]
+```
+
+### 2026-04-28 — Sub-step 0.8 Decision L: defer fact-force-scopes/ + config-protection-approvals/ migrations (rationale strengthened per Bravo ARCH-2)
+
+**Context:** Two plugin-private state directories (`~/.claude/fact-force-scopes/`, `~/.claude/config-protection-approvals/`) should eventually migrate to `~/.claude/conductor/X/`. v1 plan deferred them with weak rationale ("CLI-publish coordination cost"); Bravo ARCH-2 challenged that — both CLIs ship with the plugin in lockstep, so it's not coordination-cost.
+
+**Options considered:**
+
+1. Fold migration into 0.8 — scope creep + uncovered audit surface.
+2. Defer with strengthened rationale — clean atomic 0.8 + separate audit for store-path renames since CLI flag/help text references old path.
+
+**Chosen:** Option 2 with strengthened rationale.
+
+**Reason:** Real reason for deferral: `config-protection-cli.ts` and `fact-force-scope-cli.ts` operator-facing flag/help text references the old paths in usage messages. Renaming the storage path requires updating CLI help text in lockstep — that's its own audit surface, not a fold-in. Sub-step 0.8 stays atomic + scoped; the migration ships as its own sub-step with CLI-publish coordination plan.
+
+**Reversal cost:** N/A (deferral; nothing to reverse).
+
+---
+
+```yaml
+ts: 2026-04-28T00:32:00Z
+kind: tooling
+severity: major
+phase: 0
+affects: [scripts/check-generic-paths.sh, .github/workflows/test.yml, CI gate]
+```
+
+### 2026-04-28 — Sub-step 0.8 Decision M: bash check-generic-paths.sh + CI integration; actionlint deferred per Q1 default
+
+**Context:** Sub-step 0.8 ships static analysis to guard against `nbruzzi`/`/Users/<name>/` substrate leaks. v3 plan included actionlint folding (per Q1) but execution Q1 default chose to defer (no SHA pin supplied at execute time); shipping check-generic-paths only.
+
+**Options considered:**
+
+1. Bash script `scripts/check-generic-paths.sh` — `package.json:18` already commits to `.sh` extension; bash + `git ls-files | xargs grep` is fast (~200ms); no devDep cost.
+2. Bun TS — overengineered for two patterns; needs `bun install` before pre-commit.
+3. GHA-only workflow — no local dev parity.
+
+**Chosen:** Option 1.
+
+**Reason:** Bash 3.2+ portable per v3 fix (uses `while read -r -d ''` instead of `mapfile -d` which requires bash 4.4+). Tristate exit (0 clean / 1 violations / 2+ error) per Bravo RE-1. GHA annotations under `GITHUB_ACTIONS=true` per Bravo CLI-1. Compiler-style output `<file>:<line>:<col>: error[<P1|P2>]: <msg> — <remediation>` per Bravo CLI-2. Self-test: 5 cases via Bun.spawnSync (clean / P1 / P2 / SPDX clean / JSDoc narration suppressed).
+
+**3-layer allowlist:**
+
+- Layer 1: file-path globs via `git ls-files` pathspec excludes
+- Layer 2: SPDX header-region rule (lines 1-5 matching `/copyright|spdx-/i`) per CLI-4
+- Layer 3: JSDoc-narration filter
+
+**actionlint deferred (Q1 default):** workflow has inline TODO; ships in a follow-up sub-step when SHA pin researched.
+
+**Reversal cost:** Trivial — revert 1-2 commits + remove CI step.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_
