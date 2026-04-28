@@ -21,8 +21,9 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { todosDir } from "../shared/paths.ts";
 
 export type TodoFile = {
   handoffId: string;
@@ -31,8 +32,12 @@ export type TodoFile = {
   done: string[];
 };
 
+/** Root directory for all per-handoff todo state. Delegates to the
+ *  centralized resolver in `src/shared/paths.ts` (honors
+ *  `CLAUDE_CONDUCTOR_TODOS_DIR` then `CLAUDE_CONDUCTOR_ROOT/todos` then
+ *  `~/.claude/conductor/todos`). */
 export function resolveTodosDir(): string {
-  return process.env["TODOS_DIR"] ?? join(homedir(), ".claude", "todos");
+  return todosDir();
 }
 
 export function todoPath(handoffId: string): string {

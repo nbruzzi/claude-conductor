@@ -21,11 +21,11 @@ const SANDBOX = `/tmp/test-todos-${process.pid}`;
 function sandbox(): void {
   cleanup();
   mkdirSync(SANDBOX, { recursive: true });
-  process.env["TODOS_DIR"] = SANDBOX;
+  process.env["CLAUDE_CONDUCTOR_TODOS_DIR"] = SANDBOX;
 }
 
 function cleanup(): void {
-  delete process.env["TODOS_DIR"];
+  delete process.env["CLAUDE_CONDUCTOR_TODOS_DIR"];
   if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
 }
 
@@ -34,7 +34,7 @@ describe("todos", () => {
   afterEach(cleanup);
 
   describe("resolveTodosDir + todoPath", () => {
-    it("honours TODOS_DIR override", () => {
+    it("honours CLAUDE_CONDUCTOR_TODOS_DIR override", () => {
       expect(resolveTodosDir()).toBe(SANDBOX);
       expect(todoPath("handoff-x")).toBe(`${SANDBOX}/handoff-x.md`);
     });
