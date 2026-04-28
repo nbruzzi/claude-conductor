@@ -40,6 +40,16 @@
       "import": "./src/shared/presence-failure-log.ts",
       "default": "./src/shared/presence-failure-log.ts"
     },
+    "./channels/api": {
+      "types": "./src/channels/api.ts",
+      "import": "./src/channels/api.ts",
+      "default": "./src/channels/api.ts"
+    },
+    "./channels/identity": {
+      "types": "./src/channels/identity.ts",
+      "import": "./src/channels/identity.ts",
+      "default": "./src/channels/identity.ts"
+    },
     "./hooks/registry": {
       "types": "./src/hooks/registry.ts",
       "import": "./src/hooks/registry.ts",
