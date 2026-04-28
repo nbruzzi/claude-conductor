@@ -3,7 +3,7 @@
 
 import { join } from "node:path";
 
-import { effectiveHome } from "./home";
+import { effectiveHome } from "./home.ts";
 
 type ComponentName =
   | "channels"

@@ -938,4 +938,54 @@ Beyond ARCH-1 itself, Nick observed a 5-surface friction pattern with the conduc
 
 ---
 
+```yaml
+ts: 2026-04-28T13:30:00Z
+kind: tooling
+severity: minor
+phase: 0
+affects:
+  [
+    scripts/check-import-extensions.sh,
+    scripts/check-bundled-registrations-parity.sh,
+    .github/workflows/test.yml,
+    src/shared/paths.ts (TS-4),
+    src/memory-loader/index.ts (TS-4),
+    src/hooks/checks/config-protection-store.ts (TS-4),
+    src/hooks/checks/fact-force-scope-store.ts (TS-4),
+    dotfiles .github/workflows/test.yml (ARCH-4 TODO),
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.10 Decision O: Slice 7 cleanup — detector additions + TS-4 .ts-extension fix + ARCH-4 inline TODO
+
+**Context:** Slice 7 closes the cleanup tail of the Phase 0 audit-remediation arc. Three substantive additions: (a) explicit `.ts` extension on the 4 remaining relative imports under `src/` (TS-4 per cross-audit TS-A3), (b) two new static-analysis scripts that turn the TS-4 invariant + the dotfiles-canonical parity contract into observable CI gates, (c) inline TODO in dotfiles' `test.yml` documenting the post-0.11 plugin-ref bump (ARCH-4). Without these gates, the next regression on either invariant goes undetected in the same "false-clean" failure mode that motivated CLI-2 in Slice 1.
+
+**Options considered:**
+
+1. Skip the new scripts; TS-4 alone fixes the immediate sites and rely on convention.
+2. Add `check-import-extensions.sh` only; defer parity script to Phase 1 with the cross-repo CI checkout work.
+3. Add both scripts; make `check-bundled-registrations-parity.sh` graceful-skip when the dotfiles canonical isn't reachable (Phase 0 CI runs without sibling-checkout).
+4. Add both scripts; require dotfiles sibling-checkout in plugin CI (parity becomes hard-required everywhere).
+
+**Chosen:** Option 3.
+
+**Reason:**
+
+- Option 1 reproduces the CLI-2 failure mode — invariants without detectors silently rot. Memory `feedback-self-monitoring-is-architectural.md`.
+- Option 2 leaves the dotfiles ↔ plugin parity contract observable only by manual diff. Decision N's premise (dotfiles canonical drives plugin defaults for 6 of 8 components) is load-bearing — drift in `bundled-registrations.ts` would silently break coordination at runtime.
+- Option 4 requires the install-sh-smoke pattern (sibling-checkout step + scoped GH_PAT, per memory `feedback-ci-cross-repo-checkout.md`) for the plugin's primary CI workflow. That's a larger change than Slice 7's scope; it's filed as Phase 1 follow-up.
+- Option 3 makes the parity check authoritative locally and informational in plugin-only CI, which is the right balance for v0.1.0. The graceful skip path emits a clear hint about `CLAUDE_DOTFILES_ROOT` so dev environments without sibling-clone get the expected behavior.
+
+**Implementation:**
+
+- **TS-4** — 4 relative imports gain explicit `.ts`: `src/shared/paths.ts:6`, `src/memory-loader/index.ts:6`, `src/hooks/checks/config-protection-store.ts:27`, `src/hooks/checks/fact-force-scope-store.ts:26`. Bun + TS `moduleResolution: Bundler` already accept these; the change is convention-only and `allowImportingTsExtensions: true` in `tsconfig.json` keeps both shapes valid mid-migration.
+- **`scripts/check-import-extensions.sh`** — bash 3.2+ portable. Scans tracked `src/**/*.ts` for relative imports/exports (`./` or `../`) whose path doesn't end in `.ts` or `.json`. Reports compiler-style with optional GHA annotations.
+- **`scripts/check-bundled-registrations-parity.sh`** — bash 3.2+ portable. Pre-strips plugin's intentional differences (SPDX header, `import type { BundledCheckName }`, `RegistryBuilder<BundledCheckName>` generic), prettier-normalizes both files via plugin's config, diffs the result. Graceful skip (exit 0 + hint) when dotfiles canonical is absent. Uses `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}` per Slice 3 env-var convention.
+- **CI wiring** — `.github/workflows/test.yml` adds `Check import extensions` and `Check bundled-registrations parity (skips if dotfiles absent)` steps after `Check generic paths`.
+- **ARCH-4 inline TODO** — dotfiles `.github/workflows/test.yml` gets a comment block above `ref: phase-0-initial-scaffold` documenting the bump-at-0.11. No functional change.
+
+**Reversal cost:** Trivial. Drop two scripts + revert 4 imports + drop 2 CI steps + drop one comment block. No cross-edge or dotfiles-canonical impact.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_

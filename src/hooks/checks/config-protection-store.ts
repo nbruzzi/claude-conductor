@@ -24,7 +24,7 @@ import { realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, normalize } from "node:path";
 
-import { effectiveHome } from "../../shared/home";
+import { effectiveHome } from "../../shared/home.ts";
 
 // Re-exported for back-compat with dotfiles shims that import effectiveHome
 // from this module's old location. Canonical source is `src/shared/home.ts`;

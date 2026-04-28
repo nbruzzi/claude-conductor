@@ -15,7 +15,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "bun test",
-    "check-generic-paths": "./scripts/check-generic-paths.sh"
+    "check-generic-paths": "./scripts/check-generic-paths.sh",
+    "check-import-extensions": "./scripts/check-import-extensions.sh",
+    "check-bundled-registrations-parity": "./scripts/check-bundled-registrations-parity.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",

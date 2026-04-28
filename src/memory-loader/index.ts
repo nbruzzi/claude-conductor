@@ -3,7 +3,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { memoriesDir } from "../shared/paths";
+import { memoriesDir } from "../shared/paths.ts";
 
 type MemoryType = "feedback" | "user" | "project" | "reference";
 type Cadence = "stable" | "evolving" | "fluid";
