@@ -206,7 +206,7 @@ This is what `/handoff-resume` reads by default.
 
 ## Step 7: Write the dotfiles session summary
 
-Write a condensed 2-4 sentence version of the summary to `~/.claude-dotfiles/.session-summary`. This gets used as the git commit message body when the dotfiles Stop hook runs.
+Write a condensed 2-4 sentence version of the summary to `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/.session-summary`. This gets used as the git commit message body when the dotfiles Stop hook runs.
 
 ## Step 8: Confirm
 

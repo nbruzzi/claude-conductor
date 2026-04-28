@@ -35,7 +35,8 @@ export type TodoFile = {
 /** Root directory for all per-handoff todo state. Delegates to the
  *  centralized resolver in `src/shared/paths.ts` (honors
  *  `CLAUDE_CONDUCTOR_TODOS_DIR` then `CLAUDE_CONDUCTOR_ROOT/todos` then
- *  `~/.claude/conductor/todos`). */
+ *  `~/.claude/todos` per Decision N — shared canonical with dotfiles, not
+ *  under `conductor/`). */
 export function resolveTodosDir(): string {
   return todosDir();
 }

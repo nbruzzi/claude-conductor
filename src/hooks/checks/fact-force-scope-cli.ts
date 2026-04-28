@@ -31,6 +31,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  isScopeMarker,
   sanitizeReason,
   scopeMarkerPath,
   scopesDir,
@@ -190,10 +191,21 @@ function listScopes(): void {
   for (const file of files) {
     const target = join(dir, file);
     try {
-      const marker = JSON.parse(readFileSync(target, "utf8")) as ScopeMarker;
+      // Sub-step 0.10 Slice 7.1 RE-1: predicate-validated read replaces
+      // unchecked `as ScopeMarker` cast. Mirrors config-protection-cli.ts:140
+      // pattern. Closes TS-1 closure miss in operator-facing list verb (the
+      // hook validates via isScopeMarker; the CLI list silently accepted
+      // malformed markers — NaN files_consumed, version drift, range
+      // violations — and rendered them as "NaN files remaining").
+      const parsed = JSON.parse(readFileSync(target, "utf8")) as unknown;
+      if (!isScopeMarker(parsed)) {
+        // Corrupt or invalid shape — leave for manual inspection.
+        continue;
+      }
+      const marker = parsed;
       const expiresAt = Date.parse(marker.expires_at);
       const exhausted = marker.files_consumed >= marker.max_files;
-      if (Number.isFinite(expiresAt) && expiresAt > now && !exhausted) {
+      if (expiresAt > now && !exhausted) {
         active.push(marker);
       } else {
         unlinkSync(target);

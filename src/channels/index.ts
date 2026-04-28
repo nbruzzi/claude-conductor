@@ -84,7 +84,8 @@ export type ChannelSummary = {
 /** Root directory for all channel state. Delegates to the centralized
  *  resolver in `src/shared/paths.ts` which honors `CLAUDE_CONDUCTOR_CHANNELS_DIR`
  *  (per-component env), `CLAUDE_CONDUCTOR_ROOT` (root prefix), and falls back
- *  to `~/.claude/conductor/channels`. */
+ *  to `~/.claude/channels` (per Decision N: shared canonical with dotfiles,
+ *  not under `conductor/`). */
 export function resolveChannelsDir(): string {
   return channelsDir();
 }
@@ -232,7 +233,7 @@ function withMetadataLock<T>(id: string, fn: () => T): T {
  * the inline shape-check that lived only in `readMetadataRaw` and was bypassed
  * by the archive branch's `as ChannelMetadata` cast.
  */
-function validateChannelMetadata(
+export function validateChannelMetadata(
   parsed: unknown,
   sourceLabel: string,
 ): ChannelMetadata {

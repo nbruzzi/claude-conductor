@@ -27,6 +27,12 @@ set -e
 set -u
 set -o pipefail
 
+# --- 0. --help / -h handler ---
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  grep '^#' "$0" | grep -v '^#!' | sed 's/^# \?//'
+  exit 0
+fi
+
 # --- 1. Resolve repo root regardless of cwd ---
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "check-import-extensions: error: not in a git repo (run from inside a git checkout)" >&2

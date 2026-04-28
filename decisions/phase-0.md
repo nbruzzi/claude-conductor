@@ -988,4 +988,63 @@ affects:
 
 ---
 
+```yaml
+ts: 2026-04-28T13:55:00Z
+kind: scope
+severity: minor
+phase: 0
+affects:
+  [
+    src/hooks/checks/fact-force-scope-cli.ts (RE-1),
+    src/active-sessions/index.ts (CLI-2 JSDoc),
+    src/todos/index.ts (CLI-2 JSDoc),
+    src/channels/index.ts (CLI-2 JSDoc + validateChannelMetadata export),
+    scripts/check-generic-paths.sh (CLI-3 --help + --include-untracked text),
+    scripts/check-import-extensions.sh (CLI-3 --help),
+    scripts/check-bundled-registrations-parity.sh (CLI-3 --help),
+    commands/session/handoff.md (CLI-9),
+    test/hooks/checks/config-protection-store.test.ts (RE-4 NEW),
+    test/hooks/checks/fact-force-scope-store.test.ts (RE-4 NEW),
+    test/channels/metadata-validator.test.ts (RE-4 NEW),
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.10 Decision P: Slice 7.1 audit-remediation closure — RE-1 + CLI-2 + CLI-3 + CLI-9 + RE-4
+
+**Context:** Slice 8 fresh full-diff 4-persona audit (sibling-symmetric per plan §D6) produced aggregate 8.3/10 across TS Expert (9.0 SHIP), Architecture (8.7 SHIP-WITH-CONDITIONS, both closed inline by `800f9f7`), CLI DX (7.0 SHIP-WITH-CONDITIONS), Reliability (8.4 SHIP-WITH-CONDITIONS). Three convergences (C5/C6/C7) validated symmetric audit pattern — all already closed by Alpha's `e263adb` (Layer 3 widening for bash comments) + `800f9f7` (INDEX.md catalog refresh + KnownToolName widening). 5 still-open blockers + 1 important required Slice 7.1 closure before tag.
+
+**Options considered:**
+
+1. Defer all open findings to Phase 1, ship as-is — would tag v0.1.0 with documented gaps including a TS-1 closure miss (RE-1) on the operator-facing scope-cli list verb that lets malformed markers render to operators as "NaN files remaining."
+2. Close all 5 blockers + RE-4 in Slice 7.1 follow-up; defer RE-2/RE-3/RE-6/RE-7 + paper cuts to Phase 1 backlog.
+3. Close all findings (blockers + important + Phase 1 candidates) in one sweep — adds ~3-4 hours scope creep beyond the audit-remediation arc.
+
+**Chosen:** Option 2.
+
+**Reason:**
+
+- Option 1 contradicts `feedback-no-known-gaps.md` for the RE-1 closure miss specifically. The auditor's framing ("the hook validates correctly via isScopeMarker; the CLI list silently accepts malformed markers and renders NaN as remaining-budget to operators") is exactly the kind of CLI/hook divergence ARCH-1 was about, applied to marker shape. Tag-time discipline says close it.
+- Option 3 expands scope past the audit-remediation arc. RE-2 (extractSessionId helper API safe-by-default), RE-3 (channels module API guards), RE-6 (test-gate HOME observability), and RE-7 (channels acquireLock spin-wait) are honest defense-in-depth concerns but acceptable for v0.1.0. They're filed in `wiki/backlog.md` for Phase 1 with concrete fix sketches per memory `feedback-self-sufficient-notes.md`.
+- Option 2 is the right balance — close what matters for tag, defer what extends architecture without runtime risk.
+
+**Implementation:**
+
+- **RE-1** (`fact-force-scope-cli.ts:193`): added `isScopeMarker` to imports; replaced unchecked `as ScopeMarker` cast with predicate-validated read mirroring `config-protection-cli.ts:140-146` pattern. Slice 8 Reliability auditor caught this as TS-1 closure miss; convergence-via-divergence with Alpha's TS-Expert (her TS-N1 was about ChannelMetadata version, this was scope-cli list).
+- **CLI-2** (3 JSDoc strings): `active-sessions/index.ts:117`, `todos/index.ts:38`, `channels/index.ts:87` — replaced "falls back to `~/.claude/conductor/X`" with "falls back to `~/.claude/X`" + Decision N reference. Documentation-vs-code divergence closure.
+- **CLI-3** (detector help inconsistencies):
+  - `check-generic-paths.sh`: dropped misleading `--include-untracked` flag mention from clean-summary; replaced with accurate "untracked file(s) not scanned" + Phase 1 backlog reference.
+  - All 3 detector scripts: added `--help` / `-h` handler at top emitting the script's own header docstring.
+- **CLI-9** (`handoff.md:209`): replaced hardcoded `~/.claude-dotfiles/.session-summary` with `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/.session-summary` per Slice 3 env-var convention. Closes the 6th CLI-1 site missed in original Slice 1+3.
+- **RE-4** (negative-path tests for TS-1 predicates):
+  - `test/hooks/checks/config-protection-store.test.ts` — `isApprovalMarker` rejection axes (10 tests).
+  - `test/hooks/checks/fact-force-scope-store.test.ts` — `isScopeMarker` rejection axes including NaN-loop hazard, non-integer, range invariants (14 tests).
+  - `test/channels/metadata-validator.test.ts` — `validateChannelMetadata` rejection axes including lifecycle literal narrowing (11 tests). Required exporting `validateChannelMetadata` from `channels/index.ts` (was module-private).
+  - 35 new tests; total suite now 224/224.
+
+**Reversal cost:** Trivial per-fix. RE-1 is one import + 8-line read pattern; CLI-2 is 3 one-line edits; CLI-3 is removable; CLI-9 is one substitution; RE-4 tests can be deleted. The export of `validateChannelMetadata` is the only structural change and is additive (no consumer regression).
+
+**Phase 1 backlog (filed in `wiki/backlog.md`):** RE-2 helper API safe-by-default, RE-3 channels module API guards, RE-6 test-gate HOME observability, RE-7 acquireLock spin-wait, CLI-3 dynamic-import detection, CLI-3 `--include-untracked` implementation, plus Alpha's TS-N1/N2/N3 (ChannelMetadata version field, dispatcher unknown-tool console.warn, KNOWN_TOOL_NAMES exhaustiveness anchor). All with concrete fix sketches.
+
+---
+
 _(Additional entries land here as Phase 0 progresses.)_

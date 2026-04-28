@@ -39,6 +39,12 @@ set -e
 set -u
 set -o pipefail
 
+# --- 0. --help / -h handler ---
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  grep '^#' "$0" | grep -v '^#!' | sed 's/^# \?//'
+  exit 0
+fi
+
 # --- 1. Resolve repo root regardless of cwd ---
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "check-generic-paths: error: not in a git repo (run from inside a git checkout)" >&2
@@ -207,7 +213,11 @@ UNTRACKED_COUNT=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l |
 if [[ -z "$FILTERED_HITS" ]]; then
   msg="check-generic-paths: clean (0 violations across ${TRACKED_COUNT} tracked files"
   if [[ "$UNTRACKED_COUNT" != "0" ]]; then
-    msg="${msg}; ${UNTRACKED_COUNT} untracked file(s) skipped — run with --include-untracked to scan"
+    # Untracked files are not currently scanned (Phase 1 backlog item).
+    # Tracked-only is intentional for v0.1.0; once code is staged it lands
+    # in the gate. Future `--include-untracked` flag deferred per Slice 7.1
+    # CLI-3 follow-up.
+    msg="${msg}; ${UNTRACKED_COUNT} untracked file(s) not scanned"
   fi
   msg="${msg})"
   echo "$msg"
