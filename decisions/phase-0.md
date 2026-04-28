@@ -773,6 +773,7 @@ ts: 2026-04-28T00:30:30Z
 kind: architectural
 severity: major
 phase: 0
+superseded_by: N
 affects:
   [
     channels/index.ts,
@@ -784,6 +785,8 @@ affects:
 ```
 
 ### 2026-04-28 — Sub-step 0.8 Decision J: 3-module migration to paths.ts with env-var rename (clean break)
+
+> **SUPERSEDED by Decision N (2026-04-28 sub-step 0.10 audit gate).** The "no public consumers" premise was wrong — dotfiles is a consumer via the 19-shim chain. The locked isolation convention `~/.claude/conductor/X/` created a torn substrate where dotfiles canonical writes went to `~/.claude/X/` but plugin-shimmed reads targeted `~/.claude/conductor/X/`. Decision N reverts the conductor namespace as default for 6 components (channels, todos, identity, active-sessions, handoffs, memories) while keeping it for the 2 plugin-internal components (audits, decision-logs). Env-var rename (Option 1, clean break) PRESERVED — the rename was correct in the abstract; only the path-default decision was wrong.
 
 **Context:** Three core modules (`channels/`, `todos/`, `active-sessions/`) shipped the dotfiles-era resolver shape: non-namespaced env vars (`CHANNELS_DIR`, `TODOS_DIR`, `CLAUDE_ACTIVE_SESSIONS_DIR`), non-isolated default paths (`~/.claude/X/`), direct `homedir()` calls. `paths.ts` already implemented the locked isolation convention (`~/.claude/conductor/X/` per parent plan ARCH-1) but was an orphan with one consumer.
 
@@ -887,6 +890,51 @@ affects: [scripts/check-generic-paths.sh, .github/workflows/test.yml, CI gate]
 **actionlint deferred (Q1 default):** workflow has inline TODO; ships in a follow-up sub-step when SHA pin researched.
 
 **Reversal cost:** Trivial — revert 1-2 commits + remove CI step.
+
+---
+
+```yaml
+ts: 2026-04-28T11:30:00Z
+kind: architectural
+severity: critical
+phase: 0
+supersedes: J
+affects:
+  [
+    src/shared/paths.ts,
+    test/shared/paths.test.ts,
+    decisions/phase-0.md (Decision J frontmatter),
+    19 dotfiles shims (no functional change — namespace alignment),
+  ]
+```
+
+### 2026-04-28 — Sub-step 0.10 Decision N: revert conductor namespace as DEFAULT for 6 of 8 components (post-mortem on Decision J)
+
+**Context:** Sub-step 0.10 4-persona terminal audit surfaced ARCH-1 critical: storage-namespace split severs runtime data flow across the dotfiles ↔ plugin shim boundary. Plugin's `paths.ts:54` defaulted `FALLBACK_ROOT_SUFFIX = join(".claude", "conductor")`. Dotfiles canonical (`channels/index.ts:81`, `todos/index.ts:26`, `active-sessions/index.ts:113`) defaulted to `~/.claude/X/`. 19 dotfiles shims re-export from `claude-conductor/hooks/checks/*` — those shimmed checks read paths via plugin's resolver, hitting the empty conductor namespace while the dotfiles canonical CLI writes to plain `~/.claude/X/`.
+
+Disk-truth verification: `~/.claude/active-sessions/` had 6 active artifact dirs (dotfiles writes), `~/.claude/conductor/active-sessions/` had 1 unrelated test fixture. Channel `2026-04-28_01-50` lived at `~/.claude/channels/2026-04-28_01-50/` while the shimmed `active-channels-load` SessionStart hook read from `~/.claude/conductor/channels/` (which doesn't exist). Coordination silently degraded; only worked because (a) dotfiles canonical channel CLI bypasses the hook, (b) Nick directs sessions to specific channels manually.
+
+Decision J's "no public consumers" premise was wrong: dotfiles IS a consumer via the shim chain. The clean break created the torn substrate.
+
+Beyond ARCH-1 itself, Nick observed a 5-surface friction pattern with the conductor namespace (ARCH-1 + ARCH-3 11/18 plugin checks bypass paths.ts + 0.8 smoke needed non-default verification + cross-edge-via-shim env-var trap memory + CLI-2 detector blind to \*.md). The conductor isolation was aspirational but never load-bearing in dual-install (dotfiles + plugin) — production reality is shared `~/.claude/X/`.
+
+**Options considered:**
+
+1. Revert all 8 components to `~/.claude/X/` — pollutes `~/.claude/` with new top-level `decisions/` and writes to existing `~/.claude/audits/` (different schema).
+2. Keep all 8 in `~/.claude/conductor/X/` — perpetuates ARCH-1 silent split, breaks coordination at runtime.
+3. Revert 6 components to `~/.claude/X/` matching dotfiles canonical; keep `audits` + `decision-logs` (plugin-internal, no dotfiles parity) embedded in `conductor/` via per-component `defaultSuffix` override.
+
+**Chosen:** Option 3.
+
+**Reason:** Six components (channels, todos, identity, active-sessions, handoffs, memories) have dotfiles canonical equivalents — the production namespace IS `~/.claude/X/`, plugin should match. Two components (audits, decision-logs) are plugin-internal artifacts with no dotfiles canonical — embedding `conductor/` in their default suffix avoids polluting `~/.claude/decisions/` (doesn't exist) or colliding with `~/.claude/audits/` (exists with different schema, per ARCH-A2). `CLAUDE_CONDUCTOR_*_DIR` per-component env vars and `CLAUDE_CONDUCTOR_ROOT` remain as opt-in for plugin-fresh installs that genuinely want isolation.
+
+**Implementation:** `paths.ts:54` `FALLBACK_ROOT_SUFFIX = ".claude"`. Component `defaultSuffix` for `audits` → `"conductor/audits"`, `decision-logs` → `"conductor/decisions"`. Layer-1 (per-component env) and layer-2 (`CLAUDE_CONDUCTOR_ROOT/<defaultSuffix>`) semantics preserved.
+
+**Test rename mapping:** `paths.test.ts:30` `FALLBACK_ROOT = join(homedir(), ".claude")` (was `…, ".claude", "conductor")`. Layer-3 fallback assertions for the 6 shared components drop the `conductor` segment; assertions for `audits` + `decision-logs` add it via the suffix.
+
+**Memory crystallized this cycle:** `feedback-arm-symmetric-monitor-at-resume.md` (channel JSONL Monitor at parallel-session resume), `feedback-direct-bravo-autonomously.md` (peer Claude direction is Alpha's job, not Nick's middleman role).
+
+**Reversal cost:** Trivial — single line revert in `paths.ts` + 4 test-assertion reverts. But the production-parity verification cycle would have to repeat.
 
 ---
 

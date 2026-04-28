@@ -38,11 +38,17 @@ const COMPONENT_SPECS: { readonly [K in ComponentName]: ComponentSpec } = {
     defaultSuffix: "active-sessions",
     envVar: "CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR",
   },
+  // Plugin-internal artifacts (no dotfiles canonical) — keep conductor namespace
+  // in the layer-3 fallback to avoid colliding with shared ~/.claude/ state.
+  // Per Decision N (post-mortem on Decision J — namespace revert for v0.1.0).
   "decision-logs": {
-    defaultSuffix: "decisions",
+    defaultSuffix: "conductor/decisions",
     envVar: "CLAUDE_CONDUCTOR_DECISION_LOGS_DIR",
   },
-  audits: { defaultSuffix: "audits", envVar: "CLAUDE_CONDUCTOR_AUDITS_DIR" },
+  audits: {
+    defaultSuffix: "conductor/audits",
+    envVar: "CLAUDE_CONDUCTOR_AUDITS_DIR",
+  },
   memories: {
     defaultSuffix: "memories",
     envVar: "CLAUDE_CONDUCTOR_MEMORIES_DIR",
@@ -50,7 +56,12 @@ const COMPONENT_SPECS: { readonly [K in ComponentName]: ComponentSpec } = {
 };
 
 const ROOT_ENV_VAR = "CLAUDE_CONDUCTOR_ROOT";
-const FALLBACK_ROOT_SUFFIX = join(".claude", "conductor");
+// Layer-3 fallback root — defaults to ~/.claude/ matching dotfiles canonical
+// for the 6 components that have a dotfiles counterpart (channels, todos,
+// identity, active-sessions, handoffs, memories). The 2 plugin-internal
+// components (audits, decision-logs) embed `conductor/` in their defaultSuffix
+// so they remain isolated even at this layer. Per Decision N.
+const FALLBACK_ROOT_SUFFIX = ".claude";
 
 function fallbackRoot(): string {
   return join(effectiveHome(), FALLBACK_ROOT_SUFFIX);

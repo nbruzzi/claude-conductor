@@ -27,7 +27,7 @@ const ENV_KEYS = [
   "CLAUDE_CONDUCTOR_MEMORIES_DIR",
 ] as const;
 
-const FALLBACK_ROOT = join(homedir(), ".claude", "conductor");
+const FALLBACK_ROOT = join(homedir(), ".claude");
 
 function snapshotEnv(): Map<string, string | undefined> {
   const snapshot = new Map<string, string | undefined>();
@@ -77,7 +77,7 @@ describe("paths — precedence rules (per RE-8)", () => {
     expect(channelsDir()).toBe("/opt/plugin/channels");
   });
 
-  test("channelsDir returns ~/.claude/conductor/channels when neither env set (layer 3)", () => {
+  test("channelsDir returns ~/.claude/channels when neither env set (layer 3)", () => {
     expect(channelsDir()).toBe(join(FALLBACK_ROOT, "channels"));
   });
 
@@ -93,7 +93,7 @@ describe("paths — precedence rules (per RE-8)", () => {
     expect(memoriesDir()).toBe("/opt/plugin/memories");
   });
 
-  test("memoriesDir returns ~/.claude/conductor/memories when neither env set (layer 3)", () => {
+  test("memoriesDir returns ~/.claude/memories when neither env set (layer 3)", () => {
     expect(memoriesDir()).toBe(join(FALLBACK_ROOT, "memories"));
   });
 
@@ -104,13 +104,15 @@ describe("paths — precedence rules (per RE-8)", () => {
     expect(decisionLogsDir()).toBe("/audit/decisions");
   });
 
-  test("decisionLogsDir returns $CLAUDE_CONDUCTOR_ROOT/decisions when only root env set (layer 2)", () => {
+  test("decisionLogsDir returns $CLAUDE_CONDUCTOR_ROOT/conductor/decisions when only root env set (layer 2 — plugin-internal)", () => {
     process.env["CLAUDE_CONDUCTOR_ROOT"] = "/opt/plugin";
-    expect(decisionLogsDir()).toBe("/opt/plugin/decisions");
+    expect(decisionLogsDir()).toBe("/opt/plugin/conductor/decisions");
   });
 
-  test("decisionLogsDir returns ~/.claude/conductor/decisions when neither env set (layer 3)", () => {
-    expect(decisionLogsDir()).toBe(join(FALLBACK_ROOT, "decisions"));
+  test("decisionLogsDir returns ~/.claude/conductor/decisions when neither env set (layer 3 — plugin-internal)", () => {
+    expect(decisionLogsDir()).toBe(
+      join(FALLBACK_ROOT, "conductor", "decisions"),
+    );
   });
 });
 
@@ -166,7 +168,7 @@ describe("paths — coverage smoke tests for remaining resolvers", () => {
     expect(activeSessionsDir()).toBe(join(FALLBACK_ROOT, "active-sessions"));
   });
 
-  test("auditsDir resolves with default suffix 'audits'", () => {
-    expect(auditsDir()).toBe(join(FALLBACK_ROOT, "audits"));
+  test("auditsDir resolves with conductor-namespaced suffix 'conductor/audits' (plugin-internal)", () => {
+    expect(auditsDir()).toBe(join(FALLBACK_ROOT, "conductor", "audits"));
   });
 });
