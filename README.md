@@ -5,7 +5,7 @@ Copyright 2026 nbruzzi
 
 # claude-conductor
 
-**Status:** v0.0.0 — Active development, not yet public-released. Phase 0 (extraction at ceiling standard) in progress.
+**Status:** v0.1.0 — Phase 0 scaffold complete. Active development, not yet public-released.
 
 ## Value proposition
 
@@ -19,21 +19,27 @@ Differentiation in the ecosystem (full comparison table ships in Phase 4):
 - **MCP Agent Mail** provides provider-agnostic coordination infrastructure — identities, threads, file reservations — but doesn't integrate with Claude Code's hooks or surface ceiling-standard discipline.
 - **claude-conductor** does NOT compete with either. It extends them.
 
-## Dev install (in-scope phases)
+## Dev install (Phase 0)
 
-Plugin-marketplace install ships in deferred Phase 4. For active development:
+Plugin-marketplace install ships in deferred Phase 4. There is no `claude-conductor` binary in v0.1.0 — Phase 1 introduces the CLI verb surface. For active development today:
 
 ```bash
 git clone https://github.com/nbruzzi/claude-conductor.git
 cd claude-conductor
 bun install
-./scripts/dev-link.sh   # symlinks bin/claude-conductor into ~/.claude/conductor/bin/
-claude-conductor --help
+bun test                    # 185/185 tests
+bash scripts/check-generic-paths.sh   # static path-leak detector
 ```
 
-## CLI verbs preview (Phase 1)
+The plugin's hook checks, registry, paths resolver, memory loader, channels module, todos module, active-sessions module, and bundled skills/agents/commands are all consumable today via the `package.json` `exports` map (see `INDEX.md` for the catalog). Cross-repo consumers link via `file:../claude-conductor`.
 
-| Verb                           | Purpose                                                   |
+> **Slash commands and CLI verbs:** the bundled `commands/session/{handoff,channel,presence,handoff-resume}.md` activate inside Claude Code today via dotfiles' substrate. A standalone `claude-conductor` CLI bin with stable verb contracts (`whoami`, `set-role`, `join`, `send`, `read`) ships in **Phase 1**, not v0.1.0.
+
+## CLI verbs (deferred to Phase 1)
+
+The CLI verb surface below is the **Phase 1 design target**, not the v0.1.0 contract. None of these verbs exist as a standalone binary in v0.1.0 — coordination today happens via the bundled slash commands inside Claude Code, which delegate to `src/channels/cli.ts` (consumed via cross-repo `file:..` link from dotfiles).
+
+| Verb                           | Purpose (Phase 1)                                         |
 | ------------------------------ | --------------------------------------------------------- |
 | `whoami <channel-id>`          | Print this session's identity + role in the channel.      |
 | `set-role <channel-id> <role>` | Flip role posture: `pen` / `queue` / `out`.               |
@@ -41,7 +47,7 @@ claude-conductor --help
 | `send <channel-id> <kind>`     | Send a message (identity + role attached automatically).  |
 | `read <channel-id>`            | Read messages, rendered as `<identity> (<role>): <body>`. |
 
-Full per-verb contracts live in `docs/api/cli-contracts.md` (Phase 1 deliverable). Error codes catalogued in `docs/api/error-codes.md`.
+Full per-verb contracts will live in `docs/api/cli-contracts.md` (Phase 1 deliverable). Error codes catalogued in `docs/api/error-codes.md`.
 
 ## Decision-log convention
 
@@ -56,14 +62,14 @@ These phases of work are NOT yet executing. They activate when (and if) a public
 
 ## Status line
 
-| Field             | Value                                           |
-| ----------------- | ----------------------------------------------- |
-| Version           | v0.0.0                                          |
-| Last phase merged | (none yet — Phase 0 in progress)                |
-| Next phase queued | Phase 0 — extraction + scaffold + test pipeline |
-| License           | Apache-2.0                                      |
-| Distribution      | Private/closed for now                          |
-| Audit gate state  | Plan audited 2026-04-25; Phase 0 entry-ready    |
+| Field             | Value                                                                 |
+| ----------------- | --------------------------------------------------------------------- |
+| Version           | v0.1.0                                                                |
+| Last phase merged | Phase 0 (sub-steps 0.1–0.10 — initial scaffold + audit-remediation)   |
+| Next phase queued | Phase 1 — CLI verb surface (`whoami`, `set-role`, `join`, `send`, …)  |
+| License           | Apache-2.0                                                            |
+| Distribution      | Private/closed for now                                                |
+| Audit gate state  | Sub-step 0.10 4-persona terminal audit + remediation arc (2026-04-28) |
 
 ## License
 

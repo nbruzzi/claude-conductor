@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Disciplined multi-agent coordination for Claude Code — Apache-2.0",
   "license": "Apache-2.0",
   "private": true,
@@ -27,6 +27,11 @@
   },
   "dependencies": {},
   "exports": {
+    "./shared/home": {
+      "types": "./src/shared/home.ts",
+      "import": "./src/shared/home.ts",
+      "default": "./src/shared/home.ts"
+    },
     "./shared/presence-failure-log": {
       "types": "./src/shared/presence-failure-log.ts",
       "import": "./src/shared/presence-failure-log.ts",
