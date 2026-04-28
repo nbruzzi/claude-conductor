@@ -20,8 +20,25 @@ set -euo pipefail
 # via npm/bun the binary is symlinked at node_modules/.bin/claude-conductor
 # pointing at ../<package>/bin/claude-conductor; we need the latter's
 # directory to find src/cli/dispatcher.ts.
+#
+# Cycle protection: a self-referential symlink (or any loop) would otherwise
+# spin this loop forever. The kernel catches most cycles via ELOOP at
+# posix_spawn (typically ~16 hops on macOS, ~40 on Linux), but a buggy or
+# stale kernel — or a chain just under the kernel limit that's still
+# nonsensical — would otherwise hang. We bound the resolver at MAX_DEPTH
+# levels. POSIX SYMLOOP_MAX guarantees at least 8; any realistic install
+# chain is 1-2 hops, so 8 leaves headroom while failing fast. Per Wave 1
+# RE-W1-6.
 SCRIPT="$0"
+DEPTH=0
+MAX_DEPTH=8
 while [ -L "$SCRIPT" ]; do
+  DEPTH=$((DEPTH + 1))
+  if [ "$DEPTH" -gt "$MAX_DEPTH" ]; then
+    echo "claude-conductor: error: symlink chain too deep (>$MAX_DEPTH levels) — possible cycle at '$SCRIPT'" >&2
+    echo "  fix: inspect the symlink chain pointing at this binary and remove cyclic or excessive links" >&2
+    exit 1
+  fi
   DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
   SCRIPT="$(readlink "$SCRIPT")"
   case "$SCRIPT" in

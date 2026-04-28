@@ -148,137 +148,148 @@ async function main(): Promise<void> {
   // to thread the flag through.
   const { positional: rest, flags } = parseFlags(rawRest);
   outputJson = flags.json;
-  switch (cmd) {
-    case "from-handoff": {
-      const path = requireArg(rest, 0, "handoff-path");
-      process.stdout.write(`${channelIdFromHandoff(path)}\n`);
-      return;
-    }
-    case "create": {
-      const channelId = requireChannelId(rest, 0);
-      const handoffId = requireArg(rest, 1, "handoff-id");
-      printJson(
-        await createChannel({ channelId, handoffId, sessionId: sid() }),
-      );
-      return;
-    }
-    case "join": {
-      const channelId = requireChannelId(rest, 0);
-      printJson(await joinChannel({ channelId, sessionId: sid() }));
-      return;
-    }
-    case "close": {
-      const channelId = requireChannelId(rest, 0);
-      printJson(await closeChannel({ channelId, sessionId: sid() }));
-      return;
-    }
-    case "send": {
-      const channelId = requireChannelId(rest, 0);
-      const kind = requireArg(rest, 1, "kind");
-      if (!VALID_KINDS.includes(kind as ChannelKind)) {
-        die(
-          `invalid kind "${kind}" — must be one of ${VALID_KINDS.join(", ")}`,
-          { category: "VALIDATION" },
-        );
+  // try/catch funnels uncaught throws (sid()/readMetadata/spawned-IO
+  // failures, etc.) through die() with a stable category so operators see
+  // structured output under --json instead of an unhandled rejection. The
+  // verb cases below already call die() explicitly for known error
+  // shapes — process.exit() in die() short-circuits before reaching this
+  // catch, so it only fires on genuinely thrown errors.
+  try {
+    switch (cmd) {
+      case "from-handoff": {
+        const path = requireArg(rest, 0, "handoff-path");
+        process.stdout.write(`${channelIdFromHandoff(path)}\n`);
+        return;
       }
-      const body = (await readStdin()).trim();
-      if (body.length === 0)
-        die("empty body — send requires a non-empty message on stdin", {
-          category: "VALIDATION",
-          remediation:
-            "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
-        });
-      const message: ChannelMessage = {
-        ts: new Date().toISOString(),
-        from: sid(),
-        kind: kind as ChannelKind,
-        body,
-      };
-      printJson(appendMessage({ channelId, message }));
-      return;
-    }
-    case "read": {
-      const channelId = requireChannelId(rest, 0);
-      const resolved = readMessages(channelId).map((m) => {
-        if (m.body_ref && !m.body) {
-          const body = readBodyFile(channelId, m.body_ref);
-          return body !== null ? { ...m, body } : m;
+      case "create": {
+        const channelId = requireChannelId(rest, 0);
+        const handoffId = requireArg(rest, 1, "handoff-id");
+        printJson(
+          await createChannel({ channelId, handoffId, sessionId: sid() }),
+        );
+        return;
+      }
+      case "join": {
+        const channelId = requireChannelId(rest, 0);
+        printJson(await joinChannel({ channelId, sessionId: sid() }));
+        return;
+      }
+      case "close": {
+        const channelId = requireChannelId(rest, 0);
+        printJson(await closeChannel({ channelId, sessionId: sid() }));
+        return;
+      }
+      case "send": {
+        const channelId = requireChannelId(rest, 0);
+        const kind = requireArg(rest, 1, "kind");
+        if (!VALID_KINDS.includes(kind as ChannelKind)) {
+          die(
+            `invalid kind "${kind}" — must be one of ${VALID_KINDS.join(", ")}`,
+            { category: "VALIDATION" },
+          );
         }
-        return m;
-      });
-      printJson(resolved);
-      return;
-    }
-    case "list": {
-      const includeArchived = rest.includes("--include-archived");
-      printJson(listChannels({ includeArchived }));
-      return;
-    }
-    case "meta": {
-      const channelId = requireChannelId(rest, 0);
-      printJson(readMetadata(channelId));
-      return;
-    }
-    case "heartbeat": {
-      const channelId = requireChannelId(rest, 0);
-      touchHeartbeat(channelId, sid());
-      return;
-    }
-    case "peers": {
-      const channelId = requireChannelId(rest, 0);
-      const meta = readMetadata(channelId);
-      const self = sid();
-      const now = Date.now();
-      const peers = meta.participants
-        .filter((p) => p !== self)
-        .map((p) => {
-          const m = heartbeatMtime(channelId, p);
-          const ageMs = m === null ? null : now - m;
-          return {
-            session_id: p,
-            last_seen_ms: m,
-            age_ms: ageMs,
-            status: liveness(ageMs),
-          };
+        const body = (await readStdin()).trim();
+        if (body.length === 0)
+          die("empty body — send requires a non-empty message on stdin", {
+            category: "VALIDATION",
+            remediation:
+              "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
+          });
+        const message: ChannelMessage = {
+          ts: new Date().toISOString(),
+          from: sid(),
+          kind: kind as ChannelKind,
+          body,
+        };
+        printJson(appendMessage({ channelId, message }));
+        return;
+      }
+      case "read": {
+        const channelId = requireChannelId(rest, 0);
+        const resolved = readMessages(channelId).map((m) => {
+          if (m.body_ref && !m.body) {
+            const body = readBodyFile(channelId, m.body_ref);
+            return body !== null ? { ...m, body } : m;
+          }
+          return m;
         });
-      printJson({
-        self,
-        peers,
-        newest_heartbeat_ms: newestHeartbeatMtime(channelId),
-      });
-      return;
-    }
-    case "body": {
-      const channelId = requireChannelId(rest, 0);
-      const ref = requireArg(rest, 1, "body-ref");
-      const body = readBodyFile(channelId, ref);
-      if (body === null)
-        die(`body ${ref} not found for channel ${channelId}`, {
-          code: 2,
-          category: "NOT_FOUND",
-          remediation: `verify the body-ref via 'channels read ${channelId}' and confirm the message has body_ref set`,
+        printJson(resolved);
+        return;
+      }
+      case "list": {
+        const includeArchived = rest.includes("--include-archived");
+        printJson(listChannels({ includeArchived }));
+        return;
+      }
+      case "meta": {
+        const channelId = requireChannelId(rest, 0);
+        printJson(readMetadata(channelId));
+        return;
+      }
+      case "heartbeat": {
+        const channelId = requireChannelId(rest, 0);
+        touchHeartbeat(channelId, sid());
+        return;
+      }
+      case "peers": {
+        const channelId = requireChannelId(rest, 0);
+        const meta = readMetadata(channelId);
+        const self = sid();
+        const now = Date.now();
+        const peers = meta.participants
+          .filter((p) => p !== self)
+          .map((p) => {
+            const m = heartbeatMtime(channelId, p);
+            const ageMs = m === null ? null : now - m;
+            return {
+              session_id: p,
+              last_seen_ms: m,
+              age_ms: ageMs,
+              status: liveness(ageMs),
+            };
+          });
+        printJson({
+          self,
+          peers,
+          newest_heartbeat_ms: newestHeartbeatMtime(channelId),
         });
-      process.stdout.write(body);
-      return;
+        return;
+      }
+      case "body": {
+        const channelId = requireChannelId(rest, 0);
+        const ref = requireArg(rest, 1, "body-ref");
+        const body = readBodyFile(channelId, ref);
+        if (body === null)
+          die(`body ${ref} not found for channel ${channelId}`, {
+            code: 2,
+            category: "NOT_FOUND",
+            remediation: `verify the body-ref via 'channels read ${channelId}' and confirm the message has body_ref set`,
+          });
+        process.stdout.write(body);
+        return;
+      }
+      case undefined:
+      case "help":
+      case "--help":
+      case "-h": {
+        process.stdout.write(
+          [
+            "channels CLI — see src/channels/cli.ts header for full usage.",
+            "",
+            "Subcommands: from-handoff | create | join | close | send | read | list | meta | heartbeat | peers | body",
+          ].join("\n") + "\n",
+        );
+        return;
+      }
+      default:
+        die(`unknown subcommand: ${cmd}`, {
+          category: "ARGS",
+          remediation: "Run 'channels help' to list valid subcommands",
+        });
     }
-    case undefined:
-    case "help":
-    case "--help":
-    case "-h": {
-      process.stdout.write(
-        [
-          "channels CLI — see src/channels/cli.ts header for full usage.",
-          "",
-          "Subcommands: from-handoff | create | join | close | send | read | list | meta | heartbeat | peers | body",
-        ].join("\n") + "\n",
-      );
-      return;
-    }
-    default:
-      die(`unknown subcommand: ${cmd}`, {
-        category: "ARGS",
-        remediation: "Run 'channels help' to list valid subcommands",
-      });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    die(message, { category: "UNCAUGHT" });
   }
 }
 

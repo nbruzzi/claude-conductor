@@ -65,8 +65,39 @@ function printUnknown(subcommand: string): void {
   );
 }
 
-const argv = process.argv.slice(2);
-const subcommand = argv[0];
+// Flags that propagate to the spawned subcommand regardless of where the
+// operator types them. Pulling them out of pre-verb position (then re-
+// appending to subArgs) means `claude-conductor --json channels meta x`
+// and `claude-conductor channels meta x --json` both reach the verb's
+// parseFlags with --json present. Position-insensitivity matters because
+// every per-domain CLI's structured-output mode hangs off these flags.
+const PROPAGATED_FLAGS = new Set(["--json", "--quiet"]);
+
+function partitionPreVerbFlags(argv: readonly string[]): {
+  propagated: readonly string[];
+  remaining: readonly string[];
+} {
+  const propagated: string[] = [];
+  const remaining: string[] = [];
+  let foundCmd = false;
+  for (const arg of argv) {
+    if (foundCmd) {
+      remaining.push(arg);
+      continue;
+    }
+    if (PROPAGATED_FLAGS.has(arg)) {
+      propagated.push(arg);
+      continue;
+    }
+    remaining.push(arg);
+    foundCmd = true;
+  }
+  return { propagated, remaining };
+}
+
+const rawArgv = process.argv.slice(2);
+const { propagated, remaining } = partitionPreVerbFlags(rawArgv);
+const subcommand = remaining[0];
 
 if (
   subcommand === undefined ||
@@ -84,7 +115,7 @@ if (!isSubcommand(subcommand)) {
 }
 
 const targetScript = SUBCOMMANDS[subcommand];
-const subArgs = argv.slice(1);
+const subArgs = [...remaining.slice(1), ...propagated];
 
 const result = Bun.spawnSync({
   cmd: ["bun", targetScript, ...subArgs],
