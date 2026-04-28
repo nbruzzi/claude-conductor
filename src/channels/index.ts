@@ -58,12 +58,32 @@ export type ChannelLifecycle = "parallel";
 
 export type ChannelKind = "note" | "question" | "handoff" | "status";
 
+/** Role posture per parent plan §266-271. `pen` = actively writing;
+ *  `queue` = ready to take pen; `out` = observing only (sends blocked). */
+export type ChannelRole = "pen" | "queue" | "out";
+
 export type ChannelMessage = {
   ts: string;
   from: string;
   kind: ChannelKind;
   body?: string;
   body_ref?: string;
+  /** NATO identity letter (e.g., "Alpha", "Bravo") — Phase 1 structured
+   *  field. Absent on legacy messages; renders as `<unknown>` per the
+   *  display matrix at parent plan §311-321 row 5. */
+  identity?: string;
+  /** Role at write time. Absent on legacy messages. */
+  role?: ChannelRole;
+  /** Forward-compat marker. Phase 1 messages omit this; future schema
+   *  evolutions may set explicit version values. */
+  version?: 1;
+};
+
+/** Per-identity claim record stored under metadata.identities[<letter>]. */
+export type IdentityClaim = {
+  session_id: string;
+  role: ChannelRole;
+  joined_at: string;
 };
 
 export type ChannelMetadata = {
@@ -72,6 +92,9 @@ export type ChannelMetadata = {
   handoff_id: string;
   participants: string[];
   closed_at?: string;
+  /** NATO identity claims keyed by letter (e.g., "Alpha", "Bravo"). Absent
+   *  on legacy channels; populated lazily on first `claimIdentity` call. */
+  identities?: Record<string, IdentityClaim>;
 };
 
 export type ChannelSummary = {
@@ -167,7 +190,15 @@ function heartbeatPath(id: string, sessionId: string): string {
 
 // ─── Metadata RMW (O_EXCL lock + temp+rename) ───────────────────
 
-function acquireLock(lockPath: string): number {
+/**
+ * Acquire an O_EXCL lockfile with jittered exponential backoff. Async to
+ * avoid blocking the event loop during retry — Wave 0 RE-CRIT-2 surfaced
+ * that the prior sync spin-wait deadlocks in-process Promise.all fuzz
+ * tests (every waiter holds the loop, no waiters can release).
+ *
+ * Stale-lock detection at LOCK_STALE_MS (30s); steals + retries.
+ */
+async function acquireLock(lockPath: string): Promise<number> {
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
     try {
@@ -188,10 +219,7 @@ function acquireLock(lockPath: string): number {
       }
       const jitter = Math.floor(Math.random() * LOCK_BASE_DELAY_MS);
       const delay = LOCK_BASE_DELAY_MS * (attempt + 1) + jitter;
-      const until = Date.now() + delay;
-      while (Date.now() < until) {
-        /* spin-wait — lock holds are tens of ms */
-      }
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
   }
   throw new Error(
@@ -212,12 +240,15 @@ function releaseLock(fd: number, lockPath: string): void {
   }
 }
 
-function withMetadataLock<T>(id: string, fn: () => T): T {
+async function withMetadataLock<T>(
+  id: string,
+  fn: () => T | Promise<T>,
+): Promise<T> {
   mkdirSync(channelDir(id), { recursive: true });
   const lockPath = metadataLockPath(id);
-  const fd = acquireLock(lockPath);
+  const fd = await acquireLock(lockPath);
   try {
-    return fn();
+    return await fn();
   } finally {
     releaseLock(fd, lockPath);
   }
@@ -264,6 +295,47 @@ export function validateChannelMetadata(
   };
   const closed_at = obj["closed_at"];
   if (typeof closed_at === "string") meta.closed_at = closed_at;
+
+  // Phase 1 additive field: validate `identities?` shape if present, ignore absence.
+  // Legacy channels (pre-Phase-1) have no `identities` field — read-with-default `?? {}`.
+  const identities = obj["identities"];
+  if (identities !== undefined) {
+    if (
+      typeof identities !== "object" ||
+      identities === null ||
+      Array.isArray(identities)
+    ) {
+      throw new Error(
+        `[channels] metadata for ${sourceLabel} has invalid 'identities' shape (expected object)`,
+      );
+    }
+    const validated: Record<string, IdentityClaim> = {};
+    for (const [letter, claim] of Object.entries(
+      identities as Record<string, unknown>,
+    )) {
+      if (typeof claim !== "object" || claim === null) {
+        throw new Error(
+          `[channels] metadata for ${sourceLabel} has invalid 'identities[${letter}]' (not an object)`,
+        );
+      }
+      const c = claim as Record<string, unknown>;
+      const session_id = c["session_id"];
+      const role = c["role"];
+      const joined_at = c["joined_at"];
+      if (
+        typeof session_id !== "string" ||
+        (role !== "pen" && role !== "queue" && role !== "out") ||
+        typeof joined_at !== "string"
+      ) {
+        throw new Error(
+          `[channels] metadata for ${sourceLabel} has invalid 'identities[${letter}]' fields`,
+        );
+      }
+      validated[letter] = { session_id, role, joined_at };
+    }
+    meta.identities = validated;
+  }
+
   return meta;
 }
 
@@ -318,6 +390,11 @@ function serializeLine(msg: ChannelMessage): string {
   };
   if (msg.body !== undefined) obj["body"] = msg.body;
   if (msg.body_ref !== undefined) obj["body_ref"] = msg.body_ref;
+  // Phase 1 structured fields: write only when defined; preserves existing
+  // line shape on legacy messages (forward-compat with pre-Phase-1 readers).
+  if (msg.identity !== undefined) obj["identity"] = msg.identity;
+  if (msg.role !== undefined) obj["role"] = msg.role;
+  if (msg.version !== undefined) obj["version"] = msg.version;
   return `${JSON.stringify(obj)}\n`;
 }
 
@@ -361,11 +438,11 @@ export function readBodyFile(id: string, ref: string): string | null {
 // ─── Public API ─────────────────────────────────────────────────
 
 /** Create a new channel. Throws if one already exists at this id. */
-export function createChannel(args: {
+export async function createChannel(args: {
   channelId: string;
   handoffId: string;
   sessionId: string;
-}): ChannelMetadata {
+}): Promise<ChannelMetadata> {
   const { channelId, handoffId, sessionId } = args;
   return withMetadataLock(channelId, () => {
     if (existsSync(metadataPath(channelId))) {
@@ -384,10 +461,10 @@ export function createChannel(args: {
 }
 
 /** Join an existing channel. Idempotent. */
-export function joinChannel(args: {
+export async function joinChannel(args: {
   channelId: string;
   sessionId: string;
-}): ChannelMetadata {
+}): Promise<ChannelMetadata> {
   const { channelId, sessionId } = args;
   return withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
@@ -406,10 +483,10 @@ export function joinChannel(args: {
 }
 
 /** Close a channel. Idempotent. Prevents new messages. */
-export function closeChannel(args: {
+export async function closeChannel(args: {
   channelId: string;
   sessionId: string;
-}): ChannelMetadata {
+}): Promise<ChannelMetadata> {
   const { channelId, sessionId } = args;
   return withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
@@ -499,6 +576,14 @@ function isChannelMessage(v: unknown): v is ChannelMessage {
   if (o["body"] !== undefined && typeof o["body"] !== "string") return false;
   if (o["body_ref"] !== undefined && typeof o["body_ref"] !== "string")
     return false;
+  // Phase 1 additive optional fields: validate shape if present, ignore absence.
+  if (o["identity"] !== undefined && typeof o["identity"] !== "string")
+    return false;
+  if (o["role"] !== undefined) {
+    const role = o["role"];
+    if (role !== "pen" && role !== "queue" && role !== "out") return false;
+  }
+  if (o["version"] !== undefined && o["version"] !== 1) return false;
   return true;
 }
 

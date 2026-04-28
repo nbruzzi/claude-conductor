@@ -64,13 +64,13 @@ describe("channels", () => {
   afterEach(cleanup);
 
   describe("channelIdFromHandoff", () => {
-    it("strips HANDOFF_ prefix and .md suffix", () => {
+    it("strips HANDOFF_ prefix and .md suffix", async () => {
       expect(channelIdFromHandoff("HANDOFF_2026-04-19_11-30.md")).toBe(
         "2026-04-19_11-30",
       );
     });
 
-    it("accepts a full path", () => {
+    it("accepts a full path", async () => {
       expect(
         channelIdFromHandoff(
           join(homedir(), ".claude", "handoffs", "HANDOFF_2026-04-19_11-30.md"),
@@ -78,43 +78,43 @@ describe("channels", () => {
       ).toBe("2026-04-19_11-30");
     });
 
-    it("throws when filename does not start with HANDOFF_", () => {
+    it("throws when filename does not start with HANDOFF_", async () => {
       expect(() => channelIdFromHandoff("LATEST.md")).toThrow();
       expect(() => channelIdFromHandoff("/some/path/other.md")).toThrow();
     });
 
-    it("throws on empty id after stripping", () => {
+    it("throws on empty id after stripping", async () => {
       expect(() => channelIdFromHandoff("HANDOFF_.md")).toThrow();
     });
   });
 
   describe("resolveSessionId", () => {
-    it("prefers CLAUDE_SESSION_ID env", () => {
+    it("prefers CLAUDE_SESSION_ID env", async () => {
       process.env["CLAUDE_SESSION_ID"] = "env-session";
       expect(resolveSessionId({ session_id: "raw-session" })).toBe(
         "env-session",
       );
     });
 
-    it("falls back to hook input session_id", () => {
+    it("falls back to hook input session_id", async () => {
       expect(resolveSessionId({ session_id: "raw-session" })).toBe(
         "raw-session",
       );
     });
 
-    it("throws when neither source yields an id", () => {
+    it("throws when neither source yields an id", async () => {
       expect(() => resolveSessionId({})).toThrow();
       expect(() => resolveSessionId(undefined)).toThrow();
     });
 
-    it("ignores empty session_id string", () => {
+    it("ignores empty session_id string", async () => {
       expect(() => resolveSessionId({ session_id: "" })).toThrow();
     });
   });
 
   describe("create / join / close", () => {
-    it("creates a channel with the creator as sole participant", () => {
-      const meta = createChannel({
+    it("creates a channel with the creator as sole participant", async () => {
+      const meta = await createChannel({
         channelId: "c-1",
         handoffId: "c-1",
         sessionId: SESSION,
@@ -125,64 +125,76 @@ describe("channels", () => {
       expect(heartbeatMtime("c-1", SESSION)).not.toBeNull();
     });
 
-    it("refuses duplicate create", () => {
-      createChannel({
+    it("refuses duplicate create", async () => {
+      await createChannel({
         channelId: "c-dup",
         handoffId: "c-dup",
         sessionId: SESSION,
       });
-      expect(() =>
+      await expect(
         createChannel({
           channelId: "c-dup",
           handoffId: "c-dup",
           sessionId: "other",
         }),
-      ).toThrow(/already exists/u);
+      ).rejects.toThrow(/already exists/u);
     });
 
-    it("join adds a participant idempotently", () => {
-      createChannel({ channelId: "c-j", handoffId: "c-j", sessionId: SESSION });
-      const m1 = joinChannel({ channelId: "c-j", sessionId: "peer-1" });
+    it("join adds a participant idempotently", async () => {
+      await createChannel({
+        channelId: "c-j",
+        handoffId: "c-j",
+        sessionId: SESSION,
+      });
+      const m1 = await joinChannel({ channelId: "c-j", sessionId: "peer-1" });
       expect(m1.participants).toEqual([SESSION, "peer-1"]);
-      const m2 = joinChannel({ channelId: "c-j", sessionId: "peer-1" });
+      const m2 = await joinChannel({ channelId: "c-j", sessionId: "peer-1" });
       expect(m2.participants).toEqual([SESSION, "peer-1"]);
     });
 
-    it("close sets closed_at and refuses subsequent appends", () => {
-      createChannel({ channelId: "c-c", handoffId: "c-c", sessionId: SESSION });
-      closeChannel({ channelId: "c-c", sessionId: SESSION });
+    it("close sets closed_at and refuses subsequent appends", async () => {
+      await createChannel({
+        channelId: "c-c",
+        handoffId: "c-c",
+        sessionId: SESSION,
+      });
+      await closeChannel({ channelId: "c-c", sessionId: SESSION });
       expect(() => appendMessage({ channelId: "c-c", message: msg() })).toThrow(
         /closed/u,
       );
     });
 
-    it("close is idempotent", () => {
-      createChannel({
+    it("close is idempotent", async () => {
+      await createChannel({
         channelId: "c-cc",
         handoffId: "c-cc",
         sessionId: SESSION,
       });
-      const a = closeChannel({ channelId: "c-cc", sessionId: SESSION });
-      const b = closeChannel({ channelId: "c-cc", sessionId: SESSION });
+      const a = await closeChannel({ channelId: "c-cc", sessionId: SESSION });
+      const b = await closeChannel({ channelId: "c-cc", sessionId: SESSION });
       expect(b.closed_at).toBe(a.closed_at);
     });
 
-    it("join refuses to re-open a closed channel", () => {
-      createChannel({
+    it("join refuses to re-open a closed channel", async () => {
+      await createChannel({
         channelId: "c-cj",
         handoffId: "c-cj",
         sessionId: SESSION,
       });
-      closeChannel({ channelId: "c-cj", sessionId: SESSION });
-      expect(() =>
+      await closeChannel({ channelId: "c-cj", sessionId: SESSION });
+      await expect(
         joinChannel({ channelId: "c-cj", sessionId: "peer" }),
-      ).toThrow(/closed/u);
+      ).rejects.toThrow(/closed/u);
     });
   });
 
   describe("appendMessage + readMessages", () => {
-    it("round-trips a small message inline", () => {
-      createChannel({ channelId: "c-m", handoffId: "c-m", sessionId: SESSION });
+    it("round-trips a small message inline", async () => {
+      await createChannel({
+        channelId: "c-m",
+        handoffId: "c-m",
+        sessionId: SESSION,
+      });
       appendMessage({ channelId: "c-m", message: msg({ body: "hello" }) });
       const msgs = readMessages("c-m");
       expect(msgs).toHaveLength(1);
@@ -190,8 +202,8 @@ describe("channels", () => {
       expect(msgs[0]?.body_ref).toBeUndefined();
     });
 
-    it("redirects oversized bodies to sidecar and reads them back", () => {
-      createChannel({
+    it("redirects oversized bodies to sidecar and reads them back", async () => {
+      await createChannel({
         channelId: "c-big",
         handoffId: "c-big",
         sessionId: SESSION,
@@ -210,8 +222,8 @@ describe("channels", () => {
       expect(readBodyFile("c-big", appended.body_ref)).toBe(big);
     });
 
-    it("skips corrupt lines without throwing", () => {
-      createChannel({
+    it("skips corrupt lines without throwing", async () => {
+      await createChannel({
         channelId: "c-corrupt",
         handoffId: "c-corrupt",
         sessionId: SESSION,
@@ -234,8 +246,12 @@ describe("channels", () => {
       expect(msgs.map((m) => m.body)).toEqual(["good-1", "good-2"]);
     });
 
-    it("refuses messages with invalid kind", () => {
-      createChannel({ channelId: "c-k", handoffId: "c-k", sessionId: SESSION });
+    it("refuses messages with invalid kind", async () => {
+      await createChannel({
+        channelId: "c-k",
+        handoffId: "c-k",
+        sessionId: SESSION,
+      });
       const path = join(resolveChannelsDir(), "c-k", "messages.jsonl");
       writeFileSync(
         path,
@@ -248,8 +264,8 @@ describe("channels", () => {
   });
 
   describe("heartbeat", () => {
-    it("newestHeartbeatMtime returns the max across participants", () => {
-      createChannel({
+    it("newestHeartbeatMtime returns the max across participants", async () => {
+      await createChannel({
         channelId: "c-hb",
         handoffId: "c-hb",
         sessionId: SESSION,
@@ -264,8 +280,8 @@ describe("channels", () => {
       expect(newest).toBeGreaterThanOrEqual(before - 1);
     });
 
-    it("returns null for unknown session", () => {
-      createChannel({
+    it("returns null for unknown session", async () => {
+      await createChannel({
         channelId: "c-hb-2",
         handoffId: "c-hb-2",
         sessionId: SESSION,
@@ -275,9 +291,17 @@ describe("channels", () => {
   });
 
   describe("listChannels + readMetadata", () => {
-    it("lists non-archived channels by default", () => {
-      createChannel({ channelId: "c-a", handoffId: "c-a", sessionId: SESSION });
-      createChannel({ channelId: "c-b", handoffId: "c-b", sessionId: SESSION });
+    it("lists non-archived channels by default", async () => {
+      await createChannel({
+        channelId: "c-a",
+        handoffId: "c-a",
+        sessionId: SESSION,
+      });
+      await createChannel({
+        channelId: "c-b",
+        handoffId: "c-b",
+        sessionId: SESSION,
+      });
       archiveChannel("c-b");
       const live = listChannels();
       expect(live.map((c) => c.id).sort()).toEqual(["c-a"]);
@@ -286,8 +310,8 @@ describe("channels", () => {
       expect(all.find((c) => c.id === "c-b")?.archived).toBe(true);
     });
 
-    it("readMetadata returns a parsed ChannelMetadata", () => {
-      createChannel({
+    it("readMetadata returns a parsed ChannelMetadata", async () => {
+      await createChannel({
         channelId: "c-meta",
         handoffId: "c-meta",
         sessionId: SESSION,
@@ -297,8 +321,8 @@ describe("channels", () => {
       expect(meta.handoff_id).toBe("c-meta");
     });
 
-    it("listChannels skips malformed channel dirs", () => {
-      createChannel({
+    it("listChannels skips malformed channel dirs", async () => {
+      await createChannel({
         channelId: "c-ok",
         handoffId: "c-ok",
         sessionId: SESSION,
@@ -314,8 +338,8 @@ describe("channels", () => {
   });
 
   describe("pruneArchive", () => {
-    it("purges entries older than retention", () => {
-      createChannel({
+    it("purges entries older than retention", async () => {
+      await createChannel({
         channelId: "c-old",
         handoffId: "c-old",
         sessionId: SESSION,
@@ -330,12 +354,16 @@ describe("channels", () => {
       expect(existsSync(oldPath)).toBe(false);
     });
 
-    it("caps archive at maxEntries, oldest-first", () => {
+    it("caps archive at maxEntries, oldest-first", async () => {
       const archive = resolveArchiveDir();
       mkdirSync(archive, { recursive: true });
       for (let i = 0; i < 5; i++) {
         const id = `c-${i}`;
-        createChannel({ channelId: id, handoffId: id, sessionId: SESSION });
+        await createChannel({
+          channelId: id,
+          handoffId: id,
+          sessionId: SESSION,
+        });
         archiveChannel(id);
         const mtime = new Date(Date.now() - (10 - i) * 1000);
         utimesSync(join(archive, id), mtime, mtime);
@@ -349,7 +377,7 @@ describe("channels", () => {
       ).toEqual(["c-2", "c-3", "c-4"]);
     });
 
-    it("returns empty array when archive does not exist", () => {
+    it("returns empty array when archive does not exist", async () => {
       expect(pruneArchive({ retentionDays: 30, maxEntries: 100 })).toEqual([]);
     });
   });

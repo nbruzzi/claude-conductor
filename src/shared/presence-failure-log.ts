@@ -42,7 +42,8 @@ export type PresenceFailureSource =
   | "session-collision-gate"
   | "session-presence-register"
   | "session-presence-unregister"
-  | "active-sessions-registry";
+  | "active-sessions-registry"
+  | "channels-identity";
 
 export type PresenceFailureKind =
   | "lock-timeout"
