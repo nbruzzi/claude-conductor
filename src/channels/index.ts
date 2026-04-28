@@ -39,9 +39,9 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { extractSessionId } from "../hooks/session-id.ts";
+import { channelsDir } from "../shared/paths.ts";
 
 /** Conservative atomic-append threshold. POSIX guarantees PIPE_BUF (512 on
  *  macOS); Linux regular-file O_APPEND is typically safe up to 4096. We
@@ -80,9 +80,12 @@ export type ChannelSummary = {
   archived: boolean;
 };
 
-/** Root directory for all channel state. Tests override via `CHANNELS_DIR`. */
+/** Root directory for all channel state. Delegates to the centralized
+ *  resolver in `src/shared/paths.ts` which honors `CLAUDE_CONDUCTOR_CHANNELS_DIR`
+ *  (per-component env), `CLAUDE_CONDUCTOR_ROOT` (root prefix), and falls back
+ *  to `~/.claude/conductor/channels`. */
 export function resolveChannelsDir(): string {
-  return process.env["CHANNELS_DIR"] ?? join(homedir(), ".claude", "channels");
+  return channelsDir();
 }
 
 /** Archive subdirectory. Never synced. */

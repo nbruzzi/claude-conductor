@@ -10,6 +10,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -39,11 +40,11 @@ const SESSION = "sess-test";
 function sandbox(): void {
   cleanup();
   mkdirSync(SANDBOX, { recursive: true });
-  process.env["CHANNELS_DIR"] = SANDBOX;
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
 }
 
 function cleanup(): void {
-  delete process.env["CHANNELS_DIR"];
+  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
   delete process.env["CLAUDE_SESSION_ID"];
   if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
 }
@@ -72,7 +73,7 @@ describe("channels", () => {
     it("accepts a full path", () => {
       expect(
         channelIdFromHandoff(
-          "/Users/test/.claude/handoffs/HANDOFF_2026-04-19_11-30.md",
+          join(homedir(), ".claude", "handoffs", "HANDOFF_2026-04-19_11-30.md"),
         ),
       ).toBe("2026-04-19_11-30");
     });
