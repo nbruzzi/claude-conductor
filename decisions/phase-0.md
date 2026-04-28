@@ -1081,14 +1081,32 @@ affects: [.github/workflows/test.yml, decisions/phase-0.md]
     level: error
 ```
 
-`fail_on_error: true` makes actionlint findings block the PR. `reporter: github-check` uses the Checks API (read-only on PRs); the original `github-pr-review` reporter was rejected because it requires `pull-requests: write` and the workflow's `permissions:` block grants only `contents: read` (narrow-by-default per the SHA-pin operations runbook below). Findings surface in the Checks tab + workflow log; PR-inline comments deferred unless permissions are explicitly widened. `level: error` filters to actionable findings (drops style/warn noise).
+`fail_on_error: true` makes actionlint findings block the PR. `reporter: github-check` uses the Checks API (read-only on PRs); the original `github-pr-review` reporter was rejected because it requires `pull-requests: write` and the workflow's `permissions:` block grants only `contents: read` (narrow-by-default per the SHA-pin operations runbook below).
+
+**Where actionlint findings appear (CLI-5 explicitness):** with `reporter: github-check` the action emits Checks API annotations bound to file+line. They surface in two places:
+
+1. The PR's **Files Changed** tab — annotations render inline on the affected line in the diff view.
+2. The Actions run summary — open the CI run from the **Actions** tab (or the PR's Checks tab → click into the failing check) and the **Annotations** panel lists each finding with file:line + message.
+
+Findings do NOT post to the PR conversation timeline (that path requires `pull-requests: write` + `github-pr-review` reporter). If inline PR-conversation comments are wanted in the future, widen permissions explicitly + flip the reporter.
+
+`level: error` filters to actionable findings (drops style/warn noise). **Trade-off (CLI-6):** workflow style hints and deprecation notices never surface anywhere — not even informationally — so workflow style drift is invisible until someone audits manually. The trade-off is "green CI vs yellow CI" — we accept losing actionlint's style hints for clarity. If style drift becomes visible enough to matter, revisit by setting `level: warning` and using the run summary annotations rather than failing CI.
+
+**Value scaling (CLI-8):** at present the repo has a single workflow file, so actionlint catches inline drift on each PR that touches it. Value scales with workflow count — as additional workflows land (release, codeql, dependency-update, etc.), the lint catches cross-file regressions that would otherwise require eyeballing each YAML against the others. Installing the gate now is cheaper than retrofitting it after a regression.
 
 **SHA-pin operations runbook (per TODO directive):**
 
 - Pinning convention: every third-party action that runs in CI MUST be SHA-pinned with a trailing `# vX.Y.Z` comment naming the released tag for human readability. Example: `uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6`.
 - Bumping convention: when bumping a SHA, also update the trailing `# vX.Y.Z` comment to reflect the new tag. Diffing both lines makes review-time intent clear.
-- SHA derivation: tags can be annotated (return tag-object SHA via `gh api /repos/<O>/<R>/git/refs/tags/<T>`) which then resolves to commit SHA via `gh api /repos/<O>/<R>/git/tags/<TAG-OBJECT-SHA>`. Always pin the COMMIT SHA, not the tag-object SHA — the latter is mutable if a maintainer force-pushes the tag.
-- Quarterly review: every quarter, audit `.github/workflows/*.yml` for outdated SHA pins. If a major release drops critical functionality (e.g., GHA runtime version bumps), update SHA + tag comment. Document the bump in `decisions/phase-1+.md` (or wherever the active phase log lives).
+- SHA derivation (CLI-3 corrected): use a single command that handles both annotated and lightweight tags:
+
+  ```
+  gh api repos/<O>/<R>/commits/<TAG> --jq .sha
+  ```
+
+  This dereferences the tag (annotated or lightweight) to the underlying commit SHA in one call. Pin the value as the `uses: <O>/<R>@<SHA>` argument. The earlier writeup of this runbook conflated "tag-object SHA" with "commit SHA" via a two-step `gh api git/refs/tags/<T>` → `gh api git/tags/<TAG-OBJECT-SHA>` flow that 404s on lightweight tags (which don't have a tag-object). The corrected single-command form is what other CI-pinning guides use and what we standardize on here. **Always pin the resolved commit SHA, never a tag ref or tag-object SHA** — tag refs are mutable (a maintainer can force-tag), and a future force-tag would silently swap the action under you if you'd pinned the ref.
+
+- Quarterly review: every quarter, audit `.github/workflows/*.yml` for outdated SHA pins. If a major release drops critical functionality (e.g., GHA runtime version bumps), update SHA + tag comment. Document the bump in the current phase's decision log (`decisions/phase-<N>.md` per the convention named in `CONTRIBUTING.md` §Decision-log discipline — a bump landing during Phase 1 lives in `decisions/phase-1.md`, not in a `phase-1+.md` that doesn't exist).
 
 **Reversal cost:** Trivial. Drop one workflow step + revert. The actionlint step doesn't affect any other step's success; CI without it is functionally equivalent (just loses the workflow-lint gate).
 
