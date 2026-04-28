@@ -31,6 +31,7 @@
  */
 
 import { isValidArtifactId } from "../active-sessions/index.ts";
+import { parseFlags } from "../cli/flags.ts";
 import {
   appendMessage,
   channelIdFromHandoff,
@@ -58,14 +59,43 @@ const VALID_KINDS: readonly ChannelKind[] = [
 const LIVE_WINDOW_MS = 30 * 60 * 1000;
 const ONLINE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-function die(msg: string, code = 1): never {
-  process.stderr.write(`${msg}\n`);
+// die() output mode — set once in main() after flag parse. Plain stderr
+// is the default; --json emits structured payload per parent plan §247-249.
+let outputJson = false;
+
+type DieOptions = {
+  /** Exit code (default 1). */
+  readonly code?: number;
+  /** Coarse error class for structured output (e.g. ARGS / VALIDATION / NOT_FOUND). */
+  readonly category?: string;
+  /** Operator-facing fix hint shown after the message. */
+  readonly remediation?: string;
+};
+
+function die(message: string, opts: DieOptions = {}): never {
+  const code = opts.code ?? 1;
+  const category = opts.category ?? "GENERAL";
+  if (outputJson) {
+    const payload: {
+      code: number;
+      category: string;
+      message: string;
+      remediation?: string;
+    } = { code, category, message };
+    if (opts.remediation !== undefined) payload.remediation = opts.remediation;
+    process.stderr.write(`${JSON.stringify(payload)}\n`);
+  } else {
+    process.stderr.write(`${message}\n`);
+    if (opts.remediation !== undefined) {
+      process.stderr.write(`  ${opts.remediation}\n`);
+    }
+  }
   process.exit(code);
 }
 
-function requireArg(argv: string[], i: number, name: string): string {
+function requireArg(argv: readonly string[], i: number, name: string): string {
   const v = argv[i];
-  if (!v) die(`missing argument: ${name}`);
+  if (!v) die(`missing argument: ${name}`, { category: "ARGS" });
   return v;
 }
 
@@ -73,11 +103,12 @@ function requireArg(argv: string[], i: number, name: string): string {
 // heartbeatPath → bodyDir path joins. Without this gate, an argv value like
 // "../../etc" would escape the channels root. Symmetric with isValidSessionId
 // gating in active-sessions/index.ts:302. Sub-step 0.10 RE-2.
-function requireChannelId(argv: string[], i: number): string {
+function requireChannelId(argv: readonly string[], i: number): string {
   const v = requireArg(argv, i, "channel-id");
   if (!isValidArtifactId(v)) {
     die(
       `invalid channel-id: "${v}" — must match /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/`,
+      { category: "VALIDATION" },
     );
   }
   return v;
@@ -109,7 +140,14 @@ function liveness(
 }
 
 async function main(): Promise<void> {
-  const [, , cmd, ...rest] = process.argv;
+  const [, , cmd, ...rawRest] = process.argv;
+  // Pull the standard CLI flags out of the verb-arg tail so positional
+  // indices (`requireArg(rest, 0, ...)`, etc.) skip past --json/--quiet/-h.
+  // outputJson is a module-level toggle consumed by die(); writing it once
+  // here means error paths emit structured JSON without needing each verb
+  // to thread the flag through.
+  const { positional: rest, flags } = parseFlags(rawRest);
+  outputJson = flags.json;
   switch (cmd) {
     case "from-handoff": {
       const path = requireArg(rest, 0, "handoff-path");
@@ -140,11 +178,16 @@ async function main(): Promise<void> {
       if (!VALID_KINDS.includes(kind as ChannelKind)) {
         die(
           `invalid kind "${kind}" — must be one of ${VALID_KINDS.join(", ")}`,
+          { category: "VALIDATION" },
         );
       }
       const body = (await readStdin()).trim();
       if (body.length === 0)
-        die("empty body — send requires a non-empty message on stdin");
+        die("empty body — send requires a non-empty message on stdin", {
+          category: "VALIDATION",
+          remediation:
+            "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
+        });
       const message: ChannelMessage = {
         ts: new Date().toISOString(),
         from: sid(),
@@ -210,7 +253,11 @@ async function main(): Promise<void> {
       const ref = requireArg(rest, 1, "body-ref");
       const body = readBodyFile(channelId, ref);
       if (body === null)
-        die(`body ${ref} not found for channel ${channelId}`, 2);
+        die(`body ${ref} not found for channel ${channelId}`, {
+          code: 2,
+          category: "NOT_FOUND",
+          remediation: `verify the body-ref via 'channels read ${channelId}' and confirm the message has body_ref set`,
+        });
       process.stdout.write(body);
       return;
     }
@@ -228,7 +275,10 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      die(`unknown subcommand: ${cmd}`);
+      die(`unknown subcommand: ${cmd}`, {
+        category: "ARGS",
+        remediation: "Run 'channels help' to list valid subcommands",
+      });
   }
 }
 
