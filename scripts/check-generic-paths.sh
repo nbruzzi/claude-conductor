@@ -63,8 +63,11 @@ if [[ ${#FILES[@]} -eq 0 ]]; then
 fi
 
 # --- 5. Run grep with tristate exit handling ---
+# Pass files directly to grep (NOT via xargs) — GNU xargs exits 123 when
+# any grep invocation returns 1 (no-match), which our `>= 2` test would
+# misclassify as error. Direct grep returns 0 (matches), 1 (clean), 2+ (error).
 GREP_EXIT=0
-RAW_HITS=$(printf '%s\0' "${FILES[@]}" | xargs -0 grep -HnIE -e "$P1_REGEX" -e "$P2_REGEX" 2>&1) || GREP_EXIT=$?
+RAW_HITS=$(grep -HnIE -e "$P1_REGEX" -e "$P2_REGEX" "${FILES[@]}" 2>&1) || GREP_EXIT=$?
 
 if [[ $GREP_EXIT -ge 2 ]]; then
   echo "check-generic-paths: error: grep failed (exit $GREP_EXIT)" >&2
