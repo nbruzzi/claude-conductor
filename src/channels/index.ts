@@ -40,6 +40,7 @@ import {
   writeSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { isValidSessionId } from "../active-sessions/index.ts";
 import { extractSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 
@@ -124,12 +125,18 @@ export function channelIdFromHandoff(handoffPath: string): string {
 export function resolveSessionId(
   raw: Record<string, unknown> | undefined,
 ): string {
+  // Defense-in-depth: every session-id consumed here flows into filesystem
+  // paths (channelDir, heartbeatPath, body file names). isValidSessionId
+  // gates against `..`/`/`/empty/etc. — symmetric with session-id.ts:42 and
+  // active-sessions/index.ts:302. Sub-step 0.10 RE-2.
   const envOverride = process.env["CLAUDE_SESSION_ID"];
-  if (envOverride && envOverride.length > 0) return envOverride;
+  if (envOverride && envOverride.length > 0 && isValidSessionId(envOverride)) {
+    return envOverride;
+  }
   const fromInput = raw ? extractSessionId(raw) : undefined;
-  if (fromInput) return fromInput;
+  if (fromInput && isValidSessionId(fromInput)) return fromInput;
   throw new Error(
-    "[channels] session_id not found — pass hook input with raw.session_id or set CLAUDE_SESSION_ID",
+    "[channels] session_id not found or invalid — pass hook input with raw.session_id (matching isValidSessionId) or set CLAUDE_SESSION_ID",
   );
 }
 
