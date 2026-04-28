@@ -110,6 +110,62 @@ affects: [src/cli/dispatcher.ts, bin/claude-conductor]
 
 ---
 
+## 2026-04-29 — Decision D: claimIdentity reconcile-on-rejoin closes sentinel/metadata torn-write window
+
+```yaml
+---
+ts: 2026-04-29T03:50:00Z
+kind: architectural
+severity: minor
+phase: 1
+affects: [src/channels/identity.ts]
+---
+```
+
+**Context:** Slice 2.1 closure verification round (RE-NEW-1) surfaced a torn-write window between `linkSync(tmp, sentinel)` and `commitIdentityClaim`. If a process dies between the two, the sentinel claims the letter but `metadata.identities` remains empty. Slice 5 verbs (`whoami`, `peers`, `read` rendering) read from `metadata.identities` and would see `{}` for that letter indefinitely until the Phase 2 GC reaper runs.
+
+**Options considered:**
+
+- (a) **Wait for Phase 2 GC reaper** — accept the window; Phase 2 hook reconciles. Pros: no Phase 1 work. Cons: Slice 5 verbs see stale data until Phase 2 ships, possibly weeks/months.
+- (b) **Reconcile in `findExistingClaim` positive branch** — when a session re-joins and finds its sentinel, idempotently re-commit `metadata.identities[letter] = claim` before returning. Best-effort (failures logged via `appendPresenceFailure`, don't block the rejoin path). Pros: ~10 LOC, closes the window, idempotent. Cons: every rejoin pays one metadata write.
+- (c) **Fall back to scanning sentinels in Slice 5 verbs** — when `whoami`/`peers`/`read` see `metadata.identities[letter] === undefined`, scan the sentinel directory directly. Pros: no eager write. Cons: every read pays a `readdirSync` + N file reads; Slice 5 verbs become more complex.
+
+**Chosen:** (b) — reconcile-on-rejoin in `findExistingClaim`'s positive branch.
+
+**Reason:** (a) leaves a stale-data window through Slice 5/6/7/8 — operator-visible failure in the headline `whoami` happy path. (c) makes every read pay for every claim's reconciliation hazard, which inverts the cost. (b) pays the reconciliation cost ONCE per session per channel, and only on the rejoin path; the happy initial-claim path is unchanged. Idempotency is provided by `commitIdentityClaim` (re-writing the same claim is a no-op). Failures don't block the rejoin (logged + continued) — same fail-soft discipline as the rest of the channels module.
+
+**Supersedes:** None.
+
+---
+
+## 2026-04-29 — Decision E: commitIdentityClaim public-surface boundary validation
+
+```yaml
+---
+ts: 2026-04-29T03:55:00Z
+kind: api-shape
+severity: minor
+phase: 1
+affects: [src/channels/index.ts]
+---
+```
+
+**Context:** Slice 2.1 closure verification round (RE-NEW-2) surfaced that `commitIdentityClaim` is exported from `./channels` (and therefore reachable via the package's public surface) but had no `isValidArtifactId` boundary gate. `claimIdentity` validates upstream, but a direct caller (e.g., a Phase 2 hook reconciling stale claims) would bypass the gate. Decision Q4 explicitly enables direct primitive import for Phase 2 hooks.
+
+**Options considered:**
+
+- (a) **Mark internal-only** — remove from exports; only `claimIdentity` calls it. Pros: single boundary. Cons: Phase 2 GC reaper hooks need to call it directly to fix orphans.
+- (b) **Add `isValidArtifactId` boundary gate** — defense-in-depth at the function entry. Pros: every caller protected; sibling-parity with `claimIdentity`'s own gate. Cons: ~3 LOC duplication.
+
+**Chosen:** (b) — add boundary gate.
+
+**Reason:** Sibling-parity discipline says every public-surface entry that takes path-shaped input gets validated. `claimIdentity` already follows this (Slice 2.1 closure RE-W1-2 fix); `commitIdentityClaim` should match. Phase 2 hook reconcilers will benefit. The 3 LOC are justified by the security posture.
+
+**Supersedes:** None.
+
+---
+
 ## Pending decisions (Phase 1 audit cycle)
 
-- None at this time. Wave 0 + Wave 1 audits both complete; Slice 2.1 closure addresses critical findings inline. Wave 2 (post-Slice-6, before Slice 8 tag) may surface additional decisions.
+- **Async signature cascade across cross-edge consumers** — `claimIdentity` is now `async` (Slice 2.1 closure). Slice 3a must thread the `Promise<...>` return type through any `api.ts` re-export; Slice 3b shim must `await` `claimIdentity` rather than treating it sync. Forward-reference for Lane D execution.
+- **`commitIdentityClaim` non-re-export rationale** — when Slice 3a widens `api.ts`, add a one-line comment noting that `commitIdentityClaim` is intentionally NOT re-exported via the curated public surface (it's an internal-flow primitive of `claimIdentity` that only Phase 2 GC hooks would call directly, and those import from `./channels` directly per Decision Q4). Per ARCH-NEW-2 closure verification.

@@ -40,7 +40,10 @@ import {
   writeSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { isValidSessionId } from "../active-sessions/index.ts";
+import {
+  isValidArtifactId,
+  isValidSessionId,
+} from "../active-sessions/index.ts";
 import { extractSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 
@@ -518,6 +521,16 @@ export async function commitIdentityClaim(args: {
   claim: IdentityClaim;
 }): Promise<void> {
   const { channelId, identity, claim } = args;
+  // Defense-in-depth: this function is exported on the public surface
+  // (Decision Q4 enables direct primitive import for Phase 2 hooks).
+  // claimIdentity already validates upstream, but a direct caller
+  // wouldn't. Sibling-parity with claimIdentity's own boundary gate.
+  // Slice 2.2 verification round RE-NEW-2.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] commitIdentityClaim: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   await withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
     const identities = { ...(meta.identities ?? {}), [identity]: claim };

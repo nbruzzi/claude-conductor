@@ -166,8 +166,31 @@ export async function claimIdentity(args: {
   mkdirSync(dir, { recursive: true });
 
   // Idempotent rejoin: scan sentinels for an existing claim by this session.
+  // Reconcile the materialized cache before returning — handles the
+  // sentinel/metadata torn-write window (Slice 2.2 verification round
+  // RE-NEW-1). If a prior claimIdentity died after linkSync but before
+  // commitIdentityClaim, the sentinel exists but metadata.identities
+  // doesn't. Best-effort idempotent re-commit closes the gap before
+  // Slice 5 verbs read the materialized cache.
   const existing = findExistingClaim(channelId, sessionId);
   if (existing !== null) {
+    try {
+      await commitIdentityClaim({
+        channelId,
+        identity: existing.identity,
+        claim: existing.claim,
+      });
+    } catch (err: unknown) {
+      // Reconcile is best-effort; log but don't block the rejoin path.
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        source: "channels-identity",
+        kind: "write-failed",
+        sessionId,
+        artifactPath: identitySentinelPath(channelId, existing.identity),
+        detail: `reconcile-on-rejoin commitIdentityClaim failed: ${(err as Error).message}`,
+      });
+    }
     return {
       identity: existing.identity,
       session_id: sessionId,
