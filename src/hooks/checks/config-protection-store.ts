@@ -26,6 +26,11 @@ import { join, normalize } from "node:path";
 
 import { effectiveHome } from "../../shared/home";
 
+// Re-exported for back-compat with dotfiles shims that import effectiveHome
+// from this module's old location. Canonical source is `src/shared/home.ts`;
+// new consumers should import from there. Cleanup tracked in vault backlog.
+export { effectiveHome };
+
 const APPROVALS_DIR_NAME = "config-protection-approvals";
 const HASH_PREFIX_LENGTH = 16;
 const MAX_REASON_LENGTH = 200;

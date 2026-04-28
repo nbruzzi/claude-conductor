@@ -25,6 +25,11 @@ import { join } from "node:path";
 
 import { effectiveHome } from "../../shared/home";
 
+// Re-exported for back-compat with dotfiles shims that import effectiveHome
+// from this module's old location. Canonical source is `src/shared/home.ts`;
+// new consumers should import from there. Cleanup tracked in vault backlog.
+export { effectiveHome };
+
 const SCOPES_DIR_NAME = "fact-force-scopes";
 const MAX_REASON_LENGTH = 200;
 
