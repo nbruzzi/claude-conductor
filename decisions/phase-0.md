@@ -1073,7 +1073,7 @@ affects: [.github/workflows/test.yml, decisions/phase-0.md]
 **Implementation:** added one step before `Typecheck` in `.github/workflows/test.yml`:
 
 ```yaml
-- name: Lint workflow files (actionlint via reviewdog/action-actionlint)
+- name: Lint workflows
   uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
   with:
     fail_on_error: true
