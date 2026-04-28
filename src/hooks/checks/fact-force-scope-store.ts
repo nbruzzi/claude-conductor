@@ -21,8 +21,9 @@
  * This matches fact-force's own per-session sharding.
  */
 
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { effectiveHome } from "../../shared/home";
 
 const SCOPES_DIR_NAME = "fact-force-scopes";
 const MAX_REASON_LENGTH = 200;
@@ -38,18 +39,6 @@ export type ScopeMarker = {
   /** Files consumed so far. Updated by store helpers via writeScopeMarker. */
   readonly files_consumed: number;
 };
-
-/**
- * Resolve the home directory honoring $HOME first, then os.homedir(). Tests
- * mutate $HOME for isolation; os.homedir() is cached at process start and
- * does NOT pick up later mutations on macOS/Linux. Same shape as
- * config-protection-store.ts.
- */
-export function effectiveHome(): string {
-  const env = process.env["HOME"];
-  if (env !== undefined && env.length > 0) return env;
-  return homedir();
-}
 
 export function scopesDir(): string {
   return join(effectiveHome(), ".claude", SCOPES_DIR_NAME);

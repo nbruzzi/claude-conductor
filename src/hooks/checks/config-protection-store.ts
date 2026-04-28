@@ -22,8 +22,9 @@
 
 import { realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
 import { join, normalize } from "node:path";
+
+import { effectiveHome } from "../../shared/home";
 
 const APPROVALS_DIR_NAME = "config-protection-approvals";
 const HASH_PREFIX_LENGTH = 16;
@@ -36,17 +37,6 @@ export type ApprovalMarker = {
   readonly expires_at: string;
   readonly reason: string;
 };
-
-/**
- * Resolve the home directory honoring $HOME first, then os.homedir(). Tests
- * mutate $HOME for isolation; os.homedir() is cached at process start and
- * does NOT pick up later mutations on macOS/Linux.
- */
-export function effectiveHome(): string {
-  const env = process.env["HOME"];
-  if (env !== undefined && env.length > 0) return env;
-  return homedir();
-}
 
 export function approvalsDir(): string {
   return join(effectiveHome(), ".claude", APPROVALS_DIR_NAME);

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 nbruzzi
 
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { effectiveHome } from "./home";
 
 type ComponentName =
   | "channels"
@@ -52,7 +53,7 @@ const ROOT_ENV_VAR = "CLAUDE_CONDUCTOR_ROOT";
 const FALLBACK_ROOT_SUFFIX = join(".claude", "conductor");
 
 function fallbackRoot(): string {
-  return join(homedir(), FALLBACK_ROOT_SUFFIX);
+  return join(effectiveHome(), FALLBACK_ROOT_SUFFIX);
 }
 
 function resolveComponent(component: ComponentName): string {
