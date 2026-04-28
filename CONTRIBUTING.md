@@ -60,7 +60,19 @@ Multi-persona audit dispatches and verification rounds are captured at `audits/p
 
 ## Generic-paths discipline
 
-No `nbruzzi`-specific paths in code outside CONTRIBUTING/CHANGELOG/decisions/audits. CI grep check enforces. Per-component env vars (`CLAUDE_CONDUCTOR_CHANNELS_DIR`, etc.) override the `$CLAUDE_CONDUCTOR_ROOT` default-prefix; `$CLAUDE_CONDUCTOR_ROOT` itself defaults to `~/.claude/conductor` when unset.
+No `nbruzzi`-specific paths in code outside CONTRIBUTING/CHANGELOG/decisions/audits. CI grep check (`scripts/check-generic-paths.sh`) enforces three rules:
+
+- **P1** — hardcoded `nbruzzi` substrate identifier
+- **P2** — hardcoded `/Users/<name>/` absolute paths
+- **P3** — `\.claude/` literal under `src/` outside the explicit bypasser allowlist (Decision N: 16 files use `\.claude/` legitimately — kill switches, log dirs, the resolver itself, sensitive-file matchers — new code joins via `paths.ts` resolvers OR adds itself to the allowlist with rationale)
+
+### Path resolution
+
+Plugin path resolvers live in `src/shared/paths.ts`. Per-component env vars (`CLAUDE_CONDUCTOR_CHANNELS_DIR`, `CLAUDE_CONDUCTOR_TODOS_DIR`, etc.) override the `$CLAUDE_CONDUCTOR_ROOT` default-prefix. Six components (channels, todos, identity, active-sessions, handoffs, memories) default to `~/.claude/X/` matching dotfiles canonical (Decision N — sub-step 0.10 ARCH-1 fix); two plugin-internal components (audits, decision-logs) default to `~/.claude/conductor/X/` to avoid collision. `$CLAUDE_CONDUCTOR_ROOT` itself defaults to `~/.claude` when unset.
+
+### Slash-command path convention
+
+The bundled session slash commands (`commands/session/*.md`) shell out to dotfiles' channel/todos/active-sessions CLI via `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}`. Default works for the sibling-clone install layout (`~/claude-conductor` and `~/.claude-dotfiles` as siblings). Non-default installs export `CLAUDE_DOTFILES_ROOT` once. CLI-1 (sub-step 0.10) — see Decision N.
 
 ## Branching
 

@@ -137,7 +137,7 @@ Build a `TodoFile` JSON payload from the final TaskList state at end-of-session:
 Write it via the CLI (atomic temp+rename under the hood):
 
 ```bash
-cd /Users/nbruzzi/.claude-dotfiles
+cd "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
 echo "$JSON_PAYLOAD" | bun run src/todos/cli.ts write "<handoff-id>"
 ```
 
