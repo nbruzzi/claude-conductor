@@ -71,3 +71,201 @@ const NATO_SET: ReadonlySet<string> = new Set(NATO_POOL);
 export function isValidIdentity(s: unknown): s is NatoIdentity {
   return typeof s === "string" && NATO_SET.has(s);
 }
+
+// ─── claimIdentity primitive ────────────────────────────────────
+
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
+import { channelsDir } from "../shared/paths.ts";
+import type { ChannelRole, IdentityClaim } from "./index.ts";
+
+/**
+ * Thrown when all 26 NATO letters are claimed and the channel is full.
+ * Per parent plan §287, the recovery hint points at the `close-peer` verb
+ * (implemented in Slice 5) for manual remediation.
+ */
+export class NatoExhaustedError extends Error {
+  constructor(channelId: string) {
+    super(
+      `[channels-identity] channel '${channelId}' has assigned all 26 NATO ` +
+        `identities. Recovery: close idle peers via 'claude-conductor channels ` +
+        `close-peer ${channelId} <identity>'.`,
+    );
+    this.name = "NatoExhaustedError";
+  }
+}
+
+/** Per-channel directory holding per-identity sentinel files. The
+ *  sentinel is the atomic create-only marker (linkSync EEXIST primitive);
+ *  metadata.identities is the materialized cache. */
+function identitiesDir(channelId: string): string {
+  return join(channelsDir(), channelId, "identities");
+}
+
+function identitySentinelPath(channelId: string, letter: NatoIdentity): string {
+  return join(identitiesDir(channelId), letter);
+}
+
+/**
+ * Atomically claim a NATO identity letter for `sessionId` on `channelId`.
+ * Race-free via `linkSync(tmp, sentinel)` create-only POSIX EEXIST
+ * primitive — sibling pattern of `active-sessions/index.ts:writeMetaIfMissing`
+ * (lines 335-360). Per Wave 0 RE-CRIT-3 + ARCH-CRIT-3, the prior plan's
+ * "withMetadataLock + writeMetadataRaw is linkSync-equivalent" claim was
+ * false (renameSync unconditionally clobbers under stale-lock-steal); the
+ * per-letter sentinel + linkSync gives true mutual exclusion regardless
+ * of the channels metadata lock state.
+ *
+ * Idempotent rejoin: if a sentinel exists for `sessionId`, returns the
+ * existing claim without reassignment.
+ *
+ * Throws `NatoExhaustedError` after all 26 letters are claimed.
+ *
+ * Plan: ~/.claude/plans/generic-floating-hanrahan.md (Phase 1 v2 Slice 2).
+ */
+export function claimIdentity(args: {
+  channelId: string;
+  sessionId: string;
+  defaultRole?: ChannelRole;
+}): IdentityClaim & { identity: NatoIdentity; is_new_participant: boolean } {
+  const { channelId, sessionId } = args;
+  const defaultRole: ChannelRole = args.defaultRole ?? "queue";
+
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    throw new Error("[channels-identity] sessionId must be a non-empty string");
+  }
+
+  const dir = identitiesDir(channelId);
+  mkdirSync(dir, { recursive: true });
+
+  // Idempotent rejoin: scan sentinels for an existing claim by this session.
+  const existing = findExistingClaim(channelId, sessionId);
+  if (existing !== null) {
+    return {
+      identity: existing.identity,
+      session_id: sessionId,
+      role: existing.claim.role,
+      joined_at: existing.claim.joined_at,
+      is_new_participant: false,
+    };
+  }
+
+  // Try each letter in NATO order. linkSync is the atomic decision point.
+  const joinedAt = new Date().toISOString();
+  const claim: IdentityClaim = {
+    session_id: sessionId,
+    role: defaultRole,
+    joined_at: joinedAt,
+  };
+  const tmpPath = join(
+    dir,
+    `.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}`,
+  );
+  writeFileSync(tmpPath, `${JSON.stringify(claim)}\n`, "utf-8");
+
+  try {
+    for (const letter of NATO_POOL) {
+      const sentinel = identitySentinelPath(channelId, letter);
+      try {
+        linkSync(tmpPath, sentinel);
+        // Won the race for this letter.
+        return {
+          identity: letter,
+          session_id: sessionId,
+          role: defaultRole,
+          joined_at: joinedAt,
+          is_new_participant: true,
+        };
+      } catch (err: unknown) {
+        // EEXIST = another session owns this letter; try next.
+        const code = (err as NodeJS.ErrnoException | undefined)?.code;
+        if (code === "EEXIST") continue;
+        // Non-EEXIST errors are write failures.
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          source: "channels-identity",
+          kind: "write-failed",
+          sessionId,
+          artifactPath: sentinel,
+          detail: `linkSync failed: ${(err as Error).message}`,
+        });
+        throw err;
+      }
+    }
+    // All 26 letters taken.
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "registry-contention",
+      sessionId,
+      artifactPath: dir,
+      detail: `NATO pool exhausted (26/26 claimed)`,
+    });
+    throw new NatoExhaustedError(channelId);
+  } finally {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // tmp already gone (linkSync may have moved it); ignore.
+    }
+  }
+}
+
+/**
+ * Scan the identities/ directory for an existing claim by `sessionId`.
+ * Returns the {identity, claim} pair on first match, or null. Used for
+ * idempotent rejoin in `claimIdentity`.
+ */
+function findExistingClaim(
+  channelId: string,
+  sessionId: string,
+): { identity: NatoIdentity; claim: IdentityClaim } | null {
+  const dir = identitiesDir(channelId);
+  if (!existsSync(dir)) return null;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!isValidIdentity(entry)) continue;
+    const path = identitySentinelPath(channelId, entry);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    } catch {
+      continue;
+    }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      (parsed as { session_id?: unknown }).session_id !== sessionId
+    ) {
+      continue;
+    }
+    const c = parsed as Record<string, unknown>;
+    const role = c["role"];
+    const joined_at = c["joined_at"];
+    if (
+      (role !== "pen" && role !== "queue" && role !== "out") ||
+      typeof joined_at !== "string"
+    ) {
+      continue;
+    }
+    return {
+      identity: entry,
+      claim: { session_id: sessionId, role, joined_at },
+    };
+  }
+  return null;
+}

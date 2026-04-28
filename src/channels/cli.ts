@@ -119,17 +119,19 @@ async function main(): Promise<void> {
     case "create": {
       const channelId = requireChannelId(rest, 0);
       const handoffId = requireArg(rest, 1, "handoff-id");
-      printJson(createChannel({ channelId, handoffId, sessionId: sid() }));
+      printJson(
+        await createChannel({ channelId, handoffId, sessionId: sid() }),
+      );
       return;
     }
     case "join": {
       const channelId = requireChannelId(rest, 0);
-      printJson(joinChannel({ channelId, sessionId: sid() }));
+      printJson(await joinChannel({ channelId, sessionId: sid() }));
       return;
     }
     case "close": {
       const channelId = requireChannelId(rest, 0);
-      printJson(closeChannel({ channelId, sessionId: sid() }));
+      printJson(await closeChannel({ channelId, sessionId: sid() }));
       return;
     }
     case "send": {

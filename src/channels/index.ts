@@ -190,7 +190,15 @@ function heartbeatPath(id: string, sessionId: string): string {
 
 // ─── Metadata RMW (O_EXCL lock + temp+rename) ───────────────────
 
-function acquireLock(lockPath: string): number {
+/**
+ * Acquire an O_EXCL lockfile with jittered exponential backoff. Async to
+ * avoid blocking the event loop during retry — Wave 0 RE-CRIT-2 surfaced
+ * that the prior sync spin-wait deadlocks in-process Promise.all fuzz
+ * tests (every waiter holds the loop, no waiters can release).
+ *
+ * Stale-lock detection at LOCK_STALE_MS (30s); steals + retries.
+ */
+async function acquireLock(lockPath: string): Promise<number> {
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
     try {
@@ -211,10 +219,7 @@ function acquireLock(lockPath: string): number {
       }
       const jitter = Math.floor(Math.random() * LOCK_BASE_DELAY_MS);
       const delay = LOCK_BASE_DELAY_MS * (attempt + 1) + jitter;
-      const until = Date.now() + delay;
-      while (Date.now() < until) {
-        /* spin-wait — lock holds are tens of ms */
-      }
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
   }
   throw new Error(
@@ -235,12 +240,15 @@ function releaseLock(fd: number, lockPath: string): void {
   }
 }
 
-function withMetadataLock<T>(id: string, fn: () => T): T {
+async function withMetadataLock<T>(
+  id: string,
+  fn: () => T | Promise<T>,
+): Promise<T> {
   mkdirSync(channelDir(id), { recursive: true });
   const lockPath = metadataLockPath(id);
-  const fd = acquireLock(lockPath);
+  const fd = await acquireLock(lockPath);
   try {
-    return fn();
+    return await fn();
   } finally {
     releaseLock(fd, lockPath);
   }
@@ -430,11 +438,11 @@ export function readBodyFile(id: string, ref: string): string | null {
 // ─── Public API ─────────────────────────────────────────────────
 
 /** Create a new channel. Throws if one already exists at this id. */
-export function createChannel(args: {
+export async function createChannel(args: {
   channelId: string;
   handoffId: string;
   sessionId: string;
-}): ChannelMetadata {
+}): Promise<ChannelMetadata> {
   const { channelId, handoffId, sessionId } = args;
   return withMetadataLock(channelId, () => {
     if (existsSync(metadataPath(channelId))) {
@@ -453,10 +461,10 @@ export function createChannel(args: {
 }
 
 /** Join an existing channel. Idempotent. */
-export function joinChannel(args: {
+export async function joinChannel(args: {
   channelId: string;
   sessionId: string;
-}): ChannelMetadata {
+}): Promise<ChannelMetadata> {
   const { channelId, sessionId } = args;
   return withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
@@ -475,10 +483,10 @@ export function joinChannel(args: {
 }
 
 /** Close a channel. Idempotent. Prevents new messages. */
-export function closeChannel(args: {
+export async function closeChannel(args: {
   channelId: string;
   sessionId: string;
-}): ChannelMetadata {
+}): Promise<ChannelMetadata> {
   const { channelId, sessionId } = args;
   return withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
