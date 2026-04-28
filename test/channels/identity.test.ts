@@ -31,14 +31,14 @@ describe("identity", () => {
   afterEach(cleanup);
 
   describe("NATO_POOL + isValidIdentity", () => {
-    it("contains 26 letters Alpha through Zulu", () => {
+    it("contains 26 letters Alpha through Zulu", async () => {
       expect(NATO_POOL).toHaveLength(26);
       expect(NATO_POOL[0]).toBe("Alpha");
       expect(NATO_POOL[1]).toBe("Bravo");
       expect(NATO_POOL[25]).toBe("Zulu");
     });
 
-    it("isValidIdentity accepts NATO members and rejects non-members", () => {
+    it("isValidIdentity accepts NATO members and rejects non-members", async () => {
       expect(isValidIdentity("Alpha")).toBe(true);
       expect(isValidIdentity("Zulu")).toBe(true);
       expect(isValidIdentity("alpha")).toBe(false);
@@ -56,7 +56,7 @@ describe("identity", () => {
         handoffId: "c-claim-1",
         sessionId: SESSION,
       });
-      const result = claimIdentity({
+      const result = await claimIdentity({
         channelId: "c-claim-1",
         sessionId: SESSION,
       });
@@ -73,11 +73,11 @@ describe("identity", () => {
         handoffId: "c-claim-2",
         sessionId: SESSION,
       });
-      const first = claimIdentity({
+      const first = await claimIdentity({
         channelId: "c-claim-2",
         sessionId: SESSION,
       });
-      const second = claimIdentity({
+      const second = await claimIdentity({
         channelId: "c-claim-2",
         sessionId: SESSION,
       });
@@ -93,8 +93,14 @@ describe("identity", () => {
         handoffId: "c-claim-3",
         sessionId: "sess-a",
       });
-      const a = claimIdentity({ channelId: "c-claim-3", sessionId: "sess-a" });
-      const b = claimIdentity({ channelId: "c-claim-3", sessionId: "sess-b" });
+      const a = await claimIdentity({
+        channelId: "c-claim-3",
+        sessionId: "sess-a",
+      });
+      const b = await claimIdentity({
+        channelId: "c-claim-3",
+        sessionId: "sess-b",
+      });
       expect(a.identity).toBe("Alpha");
       expect(b.identity).toBe("Bravo");
       expect(a.session_id).not.toBe(b.session_id);
@@ -108,7 +114,7 @@ describe("identity", () => {
       });
       // Claim all 26 letters with 26 distinct sessions.
       for (let i = 0; i < 26; i++) {
-        const result = claimIdentity({
+        const result = await claimIdentity({
           channelId: "c-exhaust",
           sessionId: `sess-${i}`,
         });
@@ -117,9 +123,9 @@ describe("identity", () => {
         expect(result.identity).toBe(expected);
       }
       // 27th attempt should throw.
-      expect(() =>
+      await expect(
         claimIdentity({ channelId: "c-exhaust", sessionId: "sess-27" }),
-      ).toThrow(NatoExhaustedError);
+      ).rejects.toThrow(NatoExhaustedError);
     });
 
     it("respects defaultRole arg", async () => {
@@ -128,7 +134,7 @@ describe("identity", () => {
         handoffId: "c-role",
         sessionId: SESSION,
       });
-      const result = claimIdentity({
+      const result = await claimIdentity({
         channelId: "c-role",
         sessionId: SESSION,
         defaultRole: "pen",

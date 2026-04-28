@@ -235,7 +235,8 @@ function isPresenceFailureSource(s: string): s is PresenceFailureSource {
     s === "session-collision-gate" ||
     s === "session-presence-register" ||
     s === "session-presence-unregister" ||
-    s === "active-sessions-registry"
+    s === "active-sessions-registry" ||
+    s === "channels-identity"
   );
 }
 

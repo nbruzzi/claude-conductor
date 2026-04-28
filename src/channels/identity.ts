@@ -84,9 +84,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isValidArtifactId } from "../active-sessions/index.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import { channelsDir } from "../shared/paths.ts";
-import type { ChannelRole, IdentityClaim } from "./index.ts";
+import {
+  commitIdentityClaim,
+  type ChannelRole,
+  type IdentityClaim,
+} from "./index.ts";
 
 /**
  * Thrown when all 26 NATO letters are claimed and the channel is full.
@@ -132,13 +137,26 @@ function identitySentinelPath(channelId: string, letter: NatoIdentity): string {
  *
  * Plan: ~/.claude/plans/generic-floating-hanrahan.md (Phase 1 v2 Slice 2).
  */
-export function claimIdentity(args: {
+export async function claimIdentity(args: {
   channelId: string;
   sessionId: string;
   defaultRole?: ChannelRole;
-}): IdentityClaim & { identity: NatoIdentity; is_new_participant: boolean } {
+}): Promise<
+  IdentityClaim & { identity: NatoIdentity; is_new_participant: boolean }
+> {
   const { channelId, sessionId } = args;
   const defaultRole: ChannelRole = args.defaultRole ?? "queue";
+
+  // Defense-in-depth boundary validation per Wave 1 RE-W1-2. claimIdentity
+  // is exported via `./channels/identity` for direct Phase 2 hook consumers
+  // (Decision Q4); an attacker-controlled `channelId="../etc"` would
+  // otherwise escape the channels root via the `identitiesDir` join.
+  // Mirrors the active-sessions:isValidArtifactId boundary discipline.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels-identity] invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
 
   if (typeof sessionId !== "string" || sessionId.length === 0) {
     throw new Error("[channels-identity] sessionId must be a non-empty string");
@@ -148,8 +166,31 @@ export function claimIdentity(args: {
   mkdirSync(dir, { recursive: true });
 
   // Idempotent rejoin: scan sentinels for an existing claim by this session.
+  // Reconcile the materialized cache before returning — handles the
+  // sentinel/metadata torn-write window (Slice 2.2 verification round
+  // RE-NEW-1). If a prior claimIdentity died after linkSync but before
+  // commitIdentityClaim, the sentinel exists but metadata.identities
+  // doesn't. Best-effort idempotent re-commit closes the gap before
+  // Slice 5 verbs read the materialized cache.
   const existing = findExistingClaim(channelId, sessionId);
   if (existing !== null) {
+    try {
+      await commitIdentityClaim({
+        channelId,
+        identity: existing.identity,
+        claim: existing.claim,
+      });
+    } catch (err: unknown) {
+      // Reconcile is best-effort; log but don't block the rejoin path.
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        source: "channels-identity",
+        kind: "write-failed",
+        sessionId,
+        artifactPath: identitySentinelPath(channelId, existing.identity),
+        detail: `reconcile-on-rejoin commitIdentityClaim failed: ${(err as Error).message}`,
+      });
+    }
     return {
       identity: existing.identity,
       session_id: sessionId,
@@ -170,14 +211,30 @@ export function claimIdentity(args: {
     dir,
     `.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}`,
   );
-  writeFileSync(tmpPath, `${JSON.stringify(claim)}\n`, "utf-8");
+  // wx flag (O_CREAT|O_EXCL) per Wave 1 RE-W1-4 — sibling pattern of
+  // active-sessions/index.ts:writeMetaIfMissing. EEXIST on tmp collision
+  // is near-zero in practice (pid+timestamp+random) but the stronger
+  // primitive matches review-proven correctness.
+  writeFileSync(tmpPath, `${JSON.stringify(claim)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
 
   try {
     for (const letter of NATO_POOL) {
       const sentinel = identitySentinelPath(channelId, letter);
       try {
         linkSync(tmpPath, sentinel);
-        // Won the race for this letter.
+        // Won the race for this letter. Now commit-after-claim per plan
+        // §122: write the materialized cache to metadata.identities so
+        // downstream verbs (whoami, set-role, peers, read render) can
+        // observe the claim. Sentinel = canonical; metadata = cache.
+        // Wave 1 ARCH-1 fix.
+        await commitIdentityClaim({
+          channelId,
+          identity: letter,
+          claim,
+        });
         return {
           identity: letter,
           session_id: sessionId,

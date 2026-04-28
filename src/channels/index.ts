@@ -40,7 +40,10 @@ import {
   writeSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { isValidSessionId } from "../active-sessions/index.ts";
+import {
+  isValidArtifactId,
+  isValidSessionId,
+} from "../active-sessions/index.ts";
 import { extractSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 
@@ -495,6 +498,44 @@ export async function closeChannel(args: {
       writeMetadataRaw(channelId, meta, sessionId);
     }
     return meta;
+  });
+}
+
+/**
+ * Commit an identity claim to `metadata.identities` after a successful
+ * sentinel-file linkSync. Phase 1 v2 §122 commit-after-claim ordering:
+ * the per-letter sentinel file (atomic via linkSync EEXIST) is the
+ * canonical claim; the metadata.identities map is a materialized cache
+ * that downstream verbs (whoami / set-role / peers / read render) read
+ * from. Without this commit, those verbs see `{}` after successful
+ * claims (Wave 1 ARCH-1 finding).
+ *
+ * Used by `claimIdentity` (src/channels/identity.ts). Idempotent: writing
+ * the same claim twice is a no-op semantically (overwrites with identical
+ * content). Called under `withMetadataLock` for atomicity against
+ * concurrent `joinChannel` / `closeChannel` mutations.
+ */
+export async function commitIdentityClaim(args: {
+  channelId: string;
+  identity: string;
+  claim: IdentityClaim;
+}): Promise<void> {
+  const { channelId, identity, claim } = args;
+  // Defense-in-depth: this function is exported on the public surface
+  // (Decision Q4 enables direct primitive import for Phase 2 hooks).
+  // claimIdentity already validates upstream, but a direct caller
+  // wouldn't. Sibling-parity with claimIdentity's own boundary gate.
+  // Slice 2.2 verification round RE-NEW-2.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] commitIdentityClaim: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const identities = { ...(meta.identities ?? {}), [identity]: claim };
+    const next: ChannelMetadata = { ...meta, identities };
+    writeMetadataRaw(channelId, next, claim.session_id);
   });
 }
 
