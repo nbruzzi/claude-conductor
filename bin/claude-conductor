@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 nbruzzi
+#
+# Top-level claude-conductor binary. Bash dispatcher that routes to the TS
+# subcommand resolver via Bun. Installed via package.json "bin" field; ends
+# up as a symlink at <consumer>/node_modules/.bin/claude-conductor.
+#
+# Per Phase 1 plan v2 §Slice 0 (Phase 0 gap surfaced by Wave 0 audit
+# CLI-DX-CRIT-2 — recovery hints in error messages reference a binary that
+# didn't exist).
+#
+# Usage: claude-conductor <subcommand> [args...]
+#        claude-conductor --help | -h
+
+set -euo pipefail
+
+# Resolve the real script path through any symlink chain so the package
+# root can be found regardless of how the script is invoked. When installed
+# via npm/bun the binary is symlinked at node_modules/.bin/claude-conductor
+# pointing at ../<package>/bin/claude-conductor; we need the latter's
+# directory to find src/cli/dispatcher.ts.
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
+  SCRIPT="$(readlink "$SCRIPT")"
+  case "$SCRIPT" in
+    /*) ;;
+    *) SCRIPT="$DIR/$SCRIPT" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
+PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "claude-conductor: error: bun not on PATH (required runtime)" >&2
+  echo "  install: https://bun.com/docs/installation" >&2
+  exit 127
+fi
+
+exec bun "$PACKAGE_ROOT/src/cli/dispatcher.ts" "$@"
