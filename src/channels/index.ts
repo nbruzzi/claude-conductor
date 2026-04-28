@@ -498,6 +498,34 @@ export async function closeChannel(args: {
   });
 }
 
+/**
+ * Commit an identity claim to `metadata.identities` after a successful
+ * sentinel-file linkSync. Phase 1 v2 §122 commit-after-claim ordering:
+ * the per-letter sentinel file (atomic via linkSync EEXIST) is the
+ * canonical claim; the metadata.identities map is a materialized cache
+ * that downstream verbs (whoami / set-role / peers / read render) read
+ * from. Without this commit, those verbs see `{}` after successful
+ * claims (Wave 1 ARCH-1 finding).
+ *
+ * Used by `claimIdentity` (src/channels/identity.ts). Idempotent: writing
+ * the same claim twice is a no-op semantically (overwrites with identical
+ * content). Called under `withMetadataLock` for atomicity against
+ * concurrent `joinChannel` / `closeChannel` mutations.
+ */
+export async function commitIdentityClaim(args: {
+  channelId: string;
+  identity: string;
+  claim: IdentityClaim;
+}): Promise<void> {
+  const { channelId, identity, claim } = args;
+  await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const identities = { ...(meta.identities ?? {}), [identity]: claim };
+    const next: ChannelMetadata = { ...meta, identities };
+    writeMetadataRaw(channelId, next, claim.session_id);
+  });
+}
+
 /** Append a message. Large bodies are redirected to a sidecar file. */
 export function appendMessage(args: {
   channelId: string;

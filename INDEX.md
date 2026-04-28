@@ -121,8 +121,10 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ### Channels (`src/channels/`)
 
-- [src/channels/index.ts](src/channels/index.ts) — channel CRUD + metadata RMW + heartbeat + appendMessage; routes via `channelsDir()` resolver. Path-parameterized validator split (Slice 4 TS-1 / TS-A6).
-- [src/channels/cli.ts](src/channels/cli.ts) — channel CLI bin: from-handoff, create, join, close, send, read, list, meta, heartbeat, peers, body. `requireChannelId()` defense-in-depth via `isValidArtifactId` (Slice 5 RE-2).
+- [src/channels/index.ts](src/channels/index.ts) — channel CRUD + metadata RMW + heartbeat + appendMessage; routes via `channelsDir()` resolver. Path-parameterized validator split (Phase 0 Slice 4 TS-1 / TS-A6). Phase 1 Slice 1: `ChannelRole` + `IdentityClaim` types added; `ChannelMessage` gains optional `identity?` / `role?` / `version?` fields; `ChannelMetadata` gains optional `identities?` map. Slice 2: `acquireLock` + `withMetadataLock` + public CRUD converted sync→async. Slice 2.1: `commitIdentityClaim` exported for materialized-cache write-after-claim ordering (plan v2 §122).
+- [src/channels/cli.ts](src/channels/cli.ts) — channel CLI bin: from-handoff, create, join, close, send, read, list, meta, heartbeat, peers, body. `requireChannelId()` defense-in-depth via `isValidArtifactId` (Phase 0 Slice 5 RE-2).
+- [src/channels/identity.ts](src/channels/identity.ts) — Phase 1 Slice 2 NATO identity primitive. `NATO_POOL` (26 letters Alpha…Zulu) + `NatoIdentity` literal-union + `isValidIdentity` validator + `claimIdentity` race-free assignment via `linkSync`-on-tmp create-only EEXIST primitive (sibling pattern of `active-sessions/index.ts:writeMetaIfMissing`). Slice 2.1 closure adds `isValidArtifactId` boundary gate (Wave 1 RE-W1-2), `writeFileSync` `{flag: "wx"}` for tmp creation (Wave 1 RE-W1-4), and commit-after-claim metadata write via `commitIdentityClaim` (Wave 1 ARCH-1).
+- [src/channels/api.ts](src/channels/api.ts) — Phase 1 Slice 1 curated public API surface for Phase 2+ hook consumers (per plan v2 §Q4). Re-exports types + functions; internal helpers stay private. Flat `./channels` root dropped per Wave 0 ARCH-MAJ-4.
 
 ### Active sessions (`src/active-sessions/`)
 
