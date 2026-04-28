@@ -45,6 +45,49 @@ export type ScopeMarker = {
   readonly files_consumed: number;
 };
 
+/** ISO-8601-ish date string check — rejects empty, garbage, and NaN-producing inputs. */
+function isIsoString(v: unknown): v is string {
+  return typeof v === "string" && Number.isFinite(Date.parse(v));
+}
+
+/**
+ * Type predicate for unmarshalled `ScopeMarker` JSON. Validates shape +
+ * runtime invariants `tryConsumeScope` assumes:
+ *   - `version === 1` literal (future-version safety)
+ *   - `sessionId` and `reason` are strings
+ *   - `approved_at` and `expires_at` parse as finite-ms timestamps
+ *   - `max_files` and `files_consumed` are non-negative integers (NaN /
+ *     Infinity / negative values would break the budget-exhaustion comparison
+ *     `files_consumed >= max_files` — `NaN >= NaN` is false, looping forever)
+ *   - `files_consumed <= max_files` (already-exhausted markers fail-closed)
+ *
+ * Sub-step 0.10 TS-1 — replaces the `as ScopeMarker` cast at fact-force.ts:302
+ * that accepted any JSON object shape. Closes the NaN-loop risk in
+ * `tryConsumeScope` per adversarial-audit TS-A1.
+ */
+export function isScopeMarker(v: unknown): v is ScopeMarker {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  if (o["version"] !== 1) return false;
+  if (typeof o["sessionId"] !== "string") return false;
+  if (typeof o["reason"] !== "string") return false;
+  if (!isIsoString(o["approved_at"])) return false;
+  if (!isIsoString(o["expires_at"])) return false;
+  const max = o["max_files"];
+  const consumed = o["files_consumed"];
+  if (typeof max !== "number" || !Number.isInteger(max) || max < 0)
+    return false;
+  if (
+    typeof consumed !== "number" ||
+    !Number.isInteger(consumed) ||
+    consumed < 0
+  ) {
+    return false;
+  }
+  if (consumed > max) return false;
+  return true;
+}
+
 export function scopesDir(): string {
   return join(effectiveHome(), ".claude", SCOPES_DIR_NAME);
 }

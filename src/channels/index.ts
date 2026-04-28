@@ -222,11 +222,22 @@ function withMetadataLock<T>(id: string, fn: () => T): T {
   }
 }
 
-function readMetadataRaw(id: string): ChannelMetadata {
-  const text = readFileSync(metadataPath(id), "utf-8");
-  const parsed = JSON.parse(text) as unknown;
+/**
+ * Pure validator for unmarshalled `ChannelMetadata` JSON. No filesystem
+ * touches; throws with a path-agnostic `sourceLabel` so the same validator
+ * works for both the active-channel branch (label = channel id) and the
+ * archive branch (label = archived entry name).
+ *
+ * Sub-step 0.10 TS-1 + cross-audit TS-A6 — path-parameterized split. Replaces
+ * the inline shape-check that lived only in `readMetadataRaw` and was bypassed
+ * by the archive branch's `as ChannelMetadata` cast.
+ */
+function validateChannelMetadata(
+  parsed: unknown,
+  sourceLabel: string,
+): ChannelMetadata {
   if (typeof parsed !== "object" || parsed === null) {
-    throw new Error(`[channels] metadata for ${id} is not an object`);
+    throw new Error(`[channels] metadata for ${sourceLabel} is not an object`);
   }
   const obj = parsed as Record<string, unknown>;
   const created_at = obj["created_at"];
@@ -240,7 +251,9 @@ function readMetadataRaw(id: string): ChannelMetadata {
     !Array.isArray(participants) ||
     !participants.every((p): p is string => typeof p === "string")
   ) {
-    throw new Error(`[channels] metadata for ${id} has an invalid shape`);
+    throw new Error(
+      `[channels] metadata for ${sourceLabel} has an invalid shape`,
+    );
   }
   const meta: ChannelMetadata = {
     created_at,
@@ -251,6 +264,24 @@ function readMetadataRaw(id: string): ChannelMetadata {
   const closed_at = obj["closed_at"];
   if (typeof closed_at === "string") meta.closed_at = closed_at;
   return meta;
+}
+
+/**
+ * FS + validate. Both call sites (active-channel `readMetadataRaw` and
+ * archive-branch listChannels iteration) flow through here so the validator
+ * is impossible to bypass via the path-shape choice.
+ */
+function readAndValidateMetadata(
+  path: string,
+  sourceLabel: string,
+): ChannelMetadata {
+  const text = readFileSync(path, "utf-8");
+  const parsed = JSON.parse(text) as unknown;
+  return validateChannelMetadata(parsed, sourceLabel);
+}
+
+function readMetadataRaw(id: string): ChannelMetadata {
+  return readAndValidateMetadata(metadataPath(id), id);
 }
 
 function writeMetadataRaw(
@@ -541,11 +572,15 @@ export function listChannels(opts?: {
     if (existsSync(archive)) {
       for (const entry of readdirSync(archive)) {
         try {
-          const text = readFileSync(
+          // Sub-step 0.10 TS-1 + TS-A6: archive branch routed through the
+          // same validator as the active-channel branch via the
+          // path-parameterized `readAndValidateMetadata`. Replaces the
+          // unchecked `as ChannelMetadata` cast that previously trusted
+          // archive metadata shape.
+          const meta = readAndValidateMetadata(
             join(archive, entry, "metadata.json"),
-            "utf-8",
+            entry,
           );
-          const meta = JSON.parse(text) as ChannelMetadata;
           out.push({
             id: entry,
             metadata: meta,
