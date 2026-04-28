@@ -89,6 +89,20 @@ The eight components split into two **defaultSuffix** classes:
 
 The bundled session slash commands (`commands/session/*.md`) shell out to dotfiles' channel/todos/active-sessions CLI via `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}`. Default works for the sibling-clone install layout (`~/claude-conductor` and `~/.claude-dotfiles` as siblings). Non-default installs export `CLAUDE_DOTFILES_ROOT` once. CLI-1 (sub-step 0.10) — see Decision N.
 
+### Local actionlint
+
+CI runs `actionlint` via `reviewdog/action-actionlint` (SHA-pinned per Decision Q). To run the same check locally before pushing:
+
+```bash
+brew install actionlint   # macOS — Homebrew
+# OR
+go install github.com/rhysd/actionlint/cmd/actionlint@latest   # any platform with Go
+
+bun run lint:workflows
+```
+
+The `lint:workflows` script in `package.json` calls `actionlint` directly; the CI workflow uses the reviewdog wrapper for inline reporter integration. Both run the same underlying tool; local invocation surfaces violations as compiler-style stderr output, no GitHub-side annotation.
+
 ## Branching
 
 Cut a feature branch before touching code: `git checkout -b <feature-name>`. CLAUDE.md branching rule (>3 files OR plan-mode-entered) is enforced by the `branch-enforcement` PreToolUse hook on the dotfiles substrate; this repo inherits the discipline. Phase boundaries map to branches: `phase-0-<name>`, `phase-1-<name>`, etc.

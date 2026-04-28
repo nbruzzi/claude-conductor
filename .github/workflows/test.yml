@@ -17,13 +17,17 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # TODO(post-0.8): add `rhysd/actionlint@<SHA> # v<N>` step before this
-      # comment block. Deferred from sub-step 0.7 step 3 (originally per
-      # Decision D) and again at sub-step 0.8 commit 7 (per Q1 default at
-      # execute time — no SHA pin supplied). When SHA pin is researched, fold
-      # in via a separate sub-step. RE-3 standard (SHA-pinned third-party
-      # actions) applies; commit must include `decisions/phase-0.md` SHA-pin
-      # operations runbook entry per v2 plan Q6 + R13.
+      - name: Lint workflows
+        uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
+        with:
+          fail_on_error: true
+          # github-check reporter uses the Checks API (read-only on PRs);
+          # github-pr-review needs `pull-requests: write` which we don't grant
+          # at workflow scope (Decision Q SHA-pin operations runbook =>
+          # narrow permissions). Findings appear in the Checks tab + workflow
+          # log; PR-inline comments deferred unless we widen permissions.
+          reporter: github-check
+          level: error
 
       - name: Typecheck
         run: bun run typecheck

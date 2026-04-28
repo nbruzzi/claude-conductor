@@ -198,4 +198,4 @@ Static-analysis CI gates. All bash 3.2+ portable, compiler-style `<file>:<line>:
 
 ## CI / GitHub Actions (`.github/workflows/`)
 
-- [.github/workflows/test.yml](.github/workflows/test.yml) — CI workflow per sub-step 0.7 Decision D shape. SHA-pinned actions, `bun install --frozen-lockfile`, `permissions: contents: read`, `timeout-minutes: 10`. Sequential typecheck → format:check → lint → test → 3 detector scripts (`check-generic-paths`, `check-import-extensions`, `check-bundled-registrations-parity`). actionlint deferred (Q1 default; backlog).
+- [.github/workflows/test.yml](.github/workflows/test.yml) — CI workflow per sub-step 0.7 Decision D shape. SHA-pinned actions, `bun install --frozen-lockfile`, `permissions: contents: read`, `timeout-minutes: 10`. Sequential typecheck → format:check → lint → test → 3 detector scripts (`check-generic-paths`, `check-import-extensions`, `check-bundled-registrations-parity`) → actionlint via `reviewdog/action-actionlint` SHA-pinned (Decision Q in `decisions/phase-0.md` documents the SHA-pin operations runbook + reviewdog wrapper rationale). Local equivalent: `bun run lint:workflows` (see CONTRIBUTING.md).

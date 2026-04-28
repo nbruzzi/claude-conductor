@@ -17,7 +17,8 @@
     "test": "bun test",
     "check-generic-paths": "./scripts/check-generic-paths.sh",
     "check-import-extensions": "./scripts/check-import-extensions.sh",
-    "check-bundled-registrations-parity": "./scripts/check-bundled-registrations-parity.sh"
+    "check-bundled-registrations-parity": "./scripts/check-bundled-registrations-parity.sh",
+    "lint:workflows": "actionlint"
   },
   "devDependencies": {
     "@types/bun": "latest",
