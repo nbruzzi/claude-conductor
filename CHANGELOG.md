@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-phase-1] — 2026-04-29
+
 ### Phase 1 — Agent Teams identity + cross-edge plugin boundary
 
 Phase 1 ships the identity + role + display layer that lets multiple Claude sessions co-inhabit a channel without role-collision, plus the cross-edge boundary that splits the canonical channels implementation between dotfiles (consumer shim) and plugin (source of truth). 12 implementation slices, 31 commits, 6,429 net insertions, 405 tests passing. Five audit cycles (Wave 0 + Slice 2 inner + Wave 1 + Slice 3 Lane D inner + Wave 2 + Bravo verification round).
@@ -79,6 +81,7 @@ Phase 1 ships the identity + role + display layer that lets multiple Claude sess
 - Initial repo creation. License (Apache-2.0), README skeleton with the 6 MUST-contains sections, CHANGELOG (this file), CONTRIBUTING, INDEX (master catalog), SECURITY, .gitignore, package.json with `engines` pinning Claude Code minimum version, tsconfig.json with strict mode and lint config, decisions/phase-0.md (first decision-log entry), audits/ directory scaffolded, docs/ tree (architecture/conventions/operations/api), memories/ directory scaffolded, dependencies-rationale.md, ADR-001 documenting the extraction strategy.
 - Phase 0 starts here. Subsequent commits ship the extraction-manifest, generic-paths primitives, file extraction with refactor, test scaffolding, plugin-managed memory loader, dotfiles-side `claude-conductor-extraction` feature branch updates, and CI gates.
 
-[Unreleased]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-0...HEAD
+[Unreleased]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1...HEAD
+[0.1.0-phase-1]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-0...v0.1.0-phase-1
 [0.1.0-phase-0]: https://github.com/nbruzzi/claude-conductor/compare/v0.0.0...v0.1.0-phase-0
 [0.0.0]: https://github.com/nbruzzi/claude-conductor/releases/tag/v0.0.0
