@@ -157,80 +157,93 @@ describe("--body-file: denylist prefixes (9)", () => {
     expect(result.stderr).toMatch(/refusing/);
   });
 
-  it("rejects /private/* paths", () => {
-    if (!existsSync("/private/etc")) return; // non-macOS: skip
+  it.skipIf(!existsSync("/private/etc"))("rejects /private/* paths", () => {
     const result = runSend("/private/etc/hosts");
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("/private");
   });
 
-  it("/tmp on macOS is denied via /private chain (not denied directly on Linux)", () => {
-    if (process.platform !== "darwin") return; // /tmp on Linux IS user tmpdir
-    const tmpFile = join("/tmp", `body-file-test-${Date.now()}`);
-    writeFileSync(tmpFile, "content");
-    try {
-      const result = runSend(tmpFile);
+  it.skipIf(process.platform !== "darwin")(
+    "/tmp on macOS is denied via /private chain (not denied directly on Linux)",
+    () => {
+      const tmpFile = join("/tmp", `body-file-test-${Date.now()}`);
+      writeFileSync(tmpFile, "content");
+      try {
+        const result = runSend(tmpFile);
+        expect(result.status).toBe(2);
+        expect(result.stderr).toContain("/private");
+      } finally {
+        rmSync(tmpFile, { force: true });
+      }
+    },
+  );
+
+  it.skipIf(!existsSync("/Volumes"))(
+    "rejects /Volumes/* paths (when present)",
+    () => {
+      const result = runSend("/Volumes");
       expect(result.status).toBe(2);
-      expect(result.stderr).toContain("/private");
-    } finally {
-      rmSync(tmpFile, { force: true });
-    }
-  });
+      expect(result.stderr).toContain("/Volumes");
+    },
+  );
 
-  it("rejects /Volumes/* paths (when present)", () => {
-    if (!existsSync("/Volumes")) return; // non-macOS: skip
-    const result = runSend("/Volumes");
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("/Volumes");
-  });
+  it.skipIf(!existsSync(join(REAL_HOME, ".ssh")))(
+    "rejects ${realHome}/.ssh/* paths",
+    () => {
+      const sshDir = join(REAL_HOME, ".ssh");
+      const result = runSend(sshDir);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(".ssh");
+    },
+  );
 
-  it("rejects ${realHome}/.ssh/* paths", () => {
-    const sshDir = join(REAL_HOME, ".ssh");
-    if (!existsSync(sshDir)) return;
-    const result = runSend(sshDir);
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain(".ssh");
-  });
+  it.skipIf(!existsSync(join(REAL_HOME, ".aws")))(
+    "rejects ${realHome}/.aws/* paths",
+    () => {
+      const awsDir = join(REAL_HOME, ".aws");
+      const result = runSend(awsDir);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(".aws");
+    },
+  );
 
-  it("rejects ${realHome}/.aws/* paths", () => {
-    const awsDir = join(REAL_HOME, ".aws");
-    if (!existsSync(awsDir)) return;
-    const result = runSend(awsDir);
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain(".aws");
-  });
+  it.skipIf(!existsSync(join(REAL_HOME, "Library", "Application Support")))(
+    "rejects ${realHome}/Library/Application Support/* paths",
+    () => {
+      const appSupport = join(REAL_HOME, "Library", "Application Support");
+      const result = runSend(appSupport);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Application Support");
+    },
+  );
 
-  it("rejects ${realHome}/Library/Application Support/* paths", () => {
-    const appSupport = join(REAL_HOME, "Library", "Application Support");
-    if (!existsSync(appSupport)) return;
-    const result = runSend(appSupport);
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Application Support");
-  });
-
-  it("rejects ${realHome}/Library/Keychains/* paths", () => {
-    const keychains = join(REAL_HOME, "Library", "Keychains");
-    if (!existsSync(keychains)) return;
-    const result = runSend(keychains);
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Keychains");
-  });
+  it.skipIf(!existsSync(join(REAL_HOME, "Library", "Keychains")))(
+    "rejects ${realHome}/Library/Keychains/* paths",
+    () => {
+      const keychains = join(REAL_HOME, "Library", "Keychains");
+      const result = runSend(keychains);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Keychains");
+    },
+  );
 });
 
 // ─── Realpath denylist ──────────────────────────────────────────────
 
 describe("--body-file: realpath denylist (TA-7 SIP-aware fix)", () => {
-  it("symlink-chain into /private/etc resolves and is denied (macOS only)", () => {
-    if (!existsSync("/private/etc/hosts")) return; // non-macOS: skip
-    const trapPath = join(tmpRoot, "denylist-trap");
-    symlinkSync("/private/etc/hosts", trapPath);
-    const result = runSend(trapPath);
-    expect(result.status).toBe(2);
-    // Symlink rejection fires FIRST (lstat sees the symlink); accept either.
-    expect(result.stderr).toMatch(
-      /refusing symlink|refusing path under "(\/etc|\/private)"/,
-    );
-  });
+  it.skipIf(!existsSync("/private/etc/hosts"))(
+    "symlink-chain into /private/etc resolves and is denied (macOS only)",
+    () => {
+      const trapPath = join(tmpRoot, "denylist-trap");
+      symlinkSync("/private/etc/hosts", trapPath);
+      const result = runSend(trapPath);
+      expect(result.status).toBe(2);
+      // Symlink rejection fires FIRST (lstat sees the symlink); accept either.
+      expect(result.stderr).toMatch(
+        /refusing symlink|refusing path under "(\/etc|\/private)"/,
+      );
+    },
+  );
 });
 
 // ─── Size cap ───────────────────────────────────────────────────────

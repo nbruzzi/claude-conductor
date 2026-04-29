@@ -53,6 +53,11 @@
       "import": "./src/channels/api.ts",
       "default": "./src/channels/api.ts"
     },
+    "./channels/cli": {
+      "types": "./src/channels/cli.ts",
+      "import": "./src/channels/cli.ts",
+      "default": "./src/channels/cli.ts"
+    },
     "./channels/identity": {
       "types": "./src/channels/identity.ts",
       "import": "./src/channels/identity.ts",
