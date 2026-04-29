@@ -93,3 +93,97 @@ describe("cli-import-safety (atomic-wiring sentinel)", () => {
     expect(result.stdout).toContain("Subcommands:");
   });
 });
+
+/**
+ * Phase 2 Slice 0 RE-W2-3 closure — DieContext per-invocation output mode.
+ *
+ * The bug being prevented: prior to Slice 0, `outputJson` was a module-
+ * level toggle set at the top of `runChannelsCli`. In-process callers
+ * (Phase 2 hooks) calling `runChannelsCli(['--json', ...])` then
+ * `runChannelsCli([...])` would silently inherit the `--json` mode on
+ * the second call because the module-level toggle was never reset.
+ *
+ * Subprocess tests (the existing CLI-A / CLI-B tests in cli.test.ts +
+ * dispatcher.test.ts) couldn't catch this — each spawn is a fresh
+ * process with fresh module state. The leak only manifests in-process,
+ * which is exactly the surface Phase 2 hooks are about to consume.
+ *
+ * The matrix below mocks `process.exit` + `process.stderr.write` and
+ * calls `runChannelsCli` twice — once with `--json`, once without —
+ * asserting that the SECOND call's stderr is plain text, NOT structured
+ * JSON inherited from the first call. The DieContext refactor (REQUIRED
+ * ctx parameter on `die()`) is what makes this leak impossible.
+ */
+describe("cli DieContext per-invocation isolation (RE-W2-3)", () => {
+  it("Matrix: --json then plain — second call emits plain stderr (no leak)", async () => {
+    const cli = await import("../../src/channels/cli.ts");
+
+    const originalExit = process.exit;
+    const originalStderr = process.stderr.write.bind(process.stderr);
+    let stderr = "";
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      stderr +=
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
+      return true;
+    }) as typeof process.stderr.write;
+    // Mock process.exit so die() returns instead of terminating the
+    // test runner. die()'s body ends with process.exit; after the mock
+    // returns, the function returns undefined (TypeScript permits via
+    // the `as never` cast in production code).
+    process.exit = (() => undefined) as typeof process.exit;
+
+    try {
+      // First call: --json mode → stderr should be a structured JSON line.
+      // Note: --json is post-verb. runChannelsCli's parseFlags only sees
+      // flags AFTER the cmd; pre-verb position-insensitivity is handled by
+      // the bash dispatcher (bin/claude-conductor) when invoked end-to-end.
+      stderr = "";
+      await cli.runChannelsCli([
+        "meta",
+        "definitely-no-such-channel-1",
+        "--json",
+      ]);
+      const firstStderr = stderr;
+      const firstFirstLine = firstStderr.trim().split("\n")[0] ?? "";
+      let firstParsed: Record<string, unknown> | null = null;
+      try {
+        firstParsed = JSON.parse(firstFirstLine) as Record<string, unknown>;
+      } catch {
+        firstParsed = null;
+      }
+      expect(firstParsed).not.toBeNull();
+      expect(firstParsed?.["category"]).toBe("UNCAUGHT");
+
+      // Second call: plain mode → stderr should be a bare error string,
+      // NOT structured JSON. Pre-Slice-0 this would still be JSON because
+      // `outputJson = true` from the first call leaked through the
+      // module-level toggle. Post-Slice-0 the per-call DieContext makes
+      // this impossible.
+      stderr = "";
+      await cli.runChannelsCli(["meta", "definitely-no-such-channel-2"]);
+      const secondStderr = stderr;
+      const secondFirstLine = secondStderr.trim().split("\n")[0] ?? "";
+      let secondParsed: Record<string, unknown> | null = null;
+      try {
+        secondParsed = JSON.parse(secondFirstLine) as Record<string, unknown>;
+      } catch {
+        secondParsed = null;
+      }
+      // The load-bearing assertion: second call's stderr is plain text
+      // (JSON.parse fails OR the parsed object lacks the structured
+      // category/message fields the first call had). With the leak,
+      // secondParsed would have been a valid JSON object with
+      // category=UNCAUGHT — same as firstParsed.
+      const looksStructured =
+        secondParsed !== null &&
+        typeof secondParsed["category"] === "string" &&
+        typeof secondParsed["message"] === "string";
+      expect(looksStructured).toBe(false);
+      // Sanity: the second call DID produce stderr (we hit die path).
+      expect(secondStderr.length).toBeGreaterThan(0);
+    } finally {
+      process.exit = originalExit;
+      process.stderr.write = originalStderr;
+    }
+  });
+});

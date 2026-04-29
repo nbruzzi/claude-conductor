@@ -138,9 +138,26 @@ const BODY_FILE_MAX_BYTES = 256 * 1024;
  *  --body-file content crosses this threshold. */
 const BODY_REF_SHUNT_THRESHOLD_BYTES = 3 * 1024;
 
-// die() output mode — set once in main() after flag parse. Plain stderr
-// is the default; --json emits structured payload per parent plan §247-249.
-let outputJson = false;
+/**
+ * Per-invocation output-mode context for `die()`. Phase 2 Slice 0 fix for
+ * RE-W2-3 (module-state outputJson leak across in-process runChannelsCli
+ * calls). Phase 2 hook consumers call `runChannelsCli` programmatically
+ * — without per-call context, a `--json`-mode invocation would leak its
+ * mode into the next bare-mode invocation through a module-level toggle.
+ *
+ * Threaded through `runChannelsCli` → helpers (`requireArg`,
+ * `requireChannelId`, `readBodyFromFile`, `parseBodyFileFlag`) → every
+ * `die()` call site as a REQUIRED first parameter. TypeScript refuses
+ * any `die()` invocation that omits the context, providing a compile-
+ * time guarantee that no future call site silently inherits global mode.
+ *
+ * Per parent plan prismatic-orbiting-mesh §Slice 0 (REV 2.1).
+ */
+type DieContext = {
+  /** When true, die() emits a structured JSON payload to stderr;
+   *  otherwise plain text. Driven by `--json` flag in `runChannelsCli`. */
+  readonly outputJson: boolean;
+};
 
 type DieOptions = {
   /** Exit code (default 1). */
@@ -151,10 +168,10 @@ type DieOptions = {
   readonly remediation?: string;
 };
 
-function die(message: string, opts: DieOptions = {}): never {
+function die(ctx: DieContext, message: string, opts: DieOptions = {}): never {
   const code = opts.code ?? 1;
   const category = opts.category ?? "GENERAL";
-  if (outputJson) {
+  if (ctx.outputJson) {
     const payload: {
       code: number;
       category: string;
@@ -172,9 +189,14 @@ function die(message: string, opts: DieOptions = {}): never {
   process.exit(code);
 }
 
-function requireArg(argv: readonly string[], i: number, name: string): string {
+function requireArg(
+  ctx: DieContext,
+  argv: readonly string[],
+  i: number,
+  name: string,
+): string {
   const v = argv[i];
-  if (!v) die(`missing argument: ${name}`, { category: "ARGS" });
+  if (!v) die(ctx, `missing argument: ${name}`, { category: "ARGS" });
   return v;
 }
 
@@ -182,10 +204,15 @@ function requireArg(argv: readonly string[], i: number, name: string): string {
 // heartbeatPath → bodyDir path joins. Without this gate, an argv value like
 // "../../etc" would escape the channels root. Symmetric with isValidSessionId
 // gating in active-sessions/index.ts:302. Sub-step 0.10 RE-2.
-function requireChannelId(argv: readonly string[], i: number): string {
-  const v = requireArg(argv, i, "channel-id");
+function requireChannelId(
+  ctx: DieContext,
+  argv: readonly string[],
+  i: number,
+): string {
+  const v = requireArg(ctx, argv, i, "channel-id");
   if (!isValidArtifactId(v)) {
     die(
+      ctx,
       `invalid channel-id: "${v}" — must match /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/`,
       { category: "VALIDATION" },
     );
@@ -243,18 +270,19 @@ function liveness(
  *
  * Returns the body string. Dies with a clear message on any rejection.
  */
-function readBodyFromFile(path: string): string {
+function readBodyFromFile(ctx: DieContext, path: string): string {
   let lstat;
   try {
     lstat = lstatSync(path);
   } catch (err) {
-    die(`--body-file: cannot lstat "${path}": ${(err as Error).message}`, {
+    die(ctx, `--body-file: cannot lstat "${path}": ${(err as Error).message}`, {
       code: 2,
       category: "VALIDATION",
     });
   }
   if (lstat.isSymbolicLink()) {
     die(
+      ctx,
       `--body-file: refusing symlink "${path}" — pass the target file directly`,
       { code: 2, category: "VALIDATION" },
     );
@@ -267,10 +295,14 @@ function readBodyFromFile(path: string): string {
   try {
     resolved = realpathSync(path);
   } catch (err) {
-    die(`--body-file: cannot resolve "${path}": ${(err as Error).message}`, {
-      code: 2,
-      category: "VALIDATION",
-    });
+    die(
+      ctx,
+      `--body-file: cannot resolve "${path}": ${(err as Error).message}`,
+      {
+        code: 2,
+        category: "VALIDATION",
+      },
+    );
   }
 
   const realHome = realpathSync(homedir());
@@ -299,10 +331,14 @@ function readBodyFromFile(path: string): string {
     ];
     for (const root of denied) {
       if (resolved === root || resolved.startsWith(`${root}/`)) {
-        die(`--body-file: refusing path under "${root}" — sensitive location`, {
-          code: 2,
-          category: "VALIDATION",
-        });
+        die(
+          ctx,
+          `--body-file: refusing path under "${root}" — sensitive location`,
+          {
+            code: 2,
+            category: "VALIDATION",
+          },
+        );
       }
     }
   }
@@ -311,7 +347,7 @@ function readBodyFromFile(path: string): string {
   try {
     fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   } catch (err) {
-    die(`--body-file: cannot open "${path}": ${(err as Error).message}`, {
+    die(ctx, `--body-file: cannot open "${path}": ${(err as Error).message}`, {
       code: 2,
       category: "VALIDATION",
     });
@@ -321,6 +357,7 @@ function readBodyFromFile(path: string): string {
     const stat = fstatSync(fd);
     if (stat.size > BODY_FILE_MAX_BYTES) {
       die(
+        ctx,
         `--body-file: "${path}" is ${stat.size} bytes; exceeds ${BODY_FILE_MAX_BYTES} cap`,
         { code: 2, category: "VALIDATION" },
       );
@@ -349,12 +386,15 @@ function readBodyFromFile(path: string): string {
 }
 
 /** Extract `--body-file <path>` from an argv tail. Returns null when absent. */
-function parseBodyFileFlag(args: readonly string[]): string | null {
+function parseBodyFileFlag(
+  ctx: DieContext,
+  args: readonly string[],
+): string | null {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--body-file") {
       const path = args[i + 1];
       if (path === undefined || path.length === 0) {
-        die(`--body-file requires a path argument`, {
+        die(ctx, `--body-file requires a path argument`, {
           code: 2,
           category: "ARGS",
         });
@@ -384,12 +424,16 @@ export async function runChannelsCli(
 ): Promise<void> {
   const [cmd, ...rawRest] = argv;
   // Pull the standard CLI flags out of the verb-arg tail so positional
-  // indices (`requireArg(rest, 0, ...)`, etc.) skip past --json/--quiet/-h.
+  // indices (`requireArg(ctx, rest, 0, ...)`, etc.) skip past --json/--quiet/-h.
   // outputJson is a module-level toggle consumed by die(); writing it once
   // here means error paths emit structured JSON without needing each verb
   // to thread the flag through.
   const { positional: rest, flags } = parseFlags([...rawRest]);
-  outputJson = flags.json;
+  // Phase 2 Slice 0 RE-W2-3 fix: per-invocation DieContext replaces the
+  // prior module-level `outputJson` toggle. Threaded through every die()
+  // call site so in-process callers (Phase 2 hooks) get isolated output
+  // mode without state leak across invocations.
+  const ctx: DieContext = { outputJson: flags.json };
   // Slice 5 RE-7 / RE-W1-3 closure — per-verb `--help` is POSIX-routed
   // (stdout, exit 0). When `cmd === undefined`, the switch's existing
   // no-cmd/help/--help/-h case prints top-level help. When `cmd` is a
@@ -410,20 +454,20 @@ export async function runChannelsCli(
   try {
     switch (cmd) {
       case "from-handoff": {
-        const path = requireArg(rest, 0, "handoff-path");
+        const path = requireArg(ctx, rest, 0, "handoff-path");
         process.stdout.write(`${channelIdFromHandoff(path)}\n`);
         return;
       }
       case "create": {
-        const channelId = requireChannelId(rest, 0);
-        const handoffId = requireArg(rest, 1, "handoff-id");
+        const channelId = requireChannelId(ctx, rest, 0);
+        const handoffId = requireArg(ctx, rest, 1, "handoff-id");
         printJson(
           await createChannel({ channelId, handoffId, sessionId: sid() }),
         );
         return;
       }
       case "join": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         const sessionId = sid();
         // Slice 5: post-metadata-join, atomically claim the next
         // available NATO identity. Idempotent rejoin returns the
@@ -444,15 +488,16 @@ export async function runChannelsCli(
         return;
       }
       case "close": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         printJson(await closeChannel({ channelId, sessionId: sid() }));
         return;
       }
       case "send": {
-        const channelId = requireChannelId(rest, 0);
-        const kind = requireArg(rest, 1, "kind");
+        const channelId = requireChannelId(ctx, rest, 0);
+        const kind = requireArg(ctx, rest, 1, "kind");
         if (!VALID_KINDS.includes(kind as ChannelKind)) {
           die(
+            ctx,
             `invalid kind "${kind}" — must be one of ${VALID_KINDS.join(", ")}`,
             { category: "VALIDATION" },
           );
@@ -466,7 +511,7 @@ export async function runChannelsCli(
         // merge-time integration test `cli-send-merged.test.ts` (added by
         // the second-merging lane) locks the ordering: --body-file with
         // role==='out' must die with the DENYLIST die, NOT the role-die.
-        const bodyFilePath = parseBodyFileFlag(rest);
+        const bodyFilePath = parseBodyFileFlag(ctx, rest);
         // Mutex with stdin: documented as caller-responsibility for now.
         // Bun's `process.stdin.isTTY` is `undefined` for both piped and
         // closed/ignored stdin (verified empirically), so there is no
@@ -478,9 +523,10 @@ export async function runChannelsCli(
 
         let body: string;
         if (bodyFilePath !== null) {
-          body = readBodyFromFile(bodyFilePath).trim();
+          body = readBodyFromFile(ctx, bodyFilePath).trim();
           if (body.length === 0) {
             die(
+              ctx,
               `--body-file: "${bodyFilePath}" produced empty body after trim — file is empty or whitespace-only`,
               { code: 2, category: "VALIDATION" },
             );
@@ -488,11 +534,15 @@ export async function runChannelsCli(
         } else {
           body = (await readStdin()).trim();
           if (body.length === 0) {
-            die("empty body — send requires a non-empty message on stdin", {
-              category: "VALIDATION",
-              remediation:
-                "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
-            });
+            die(
+              ctx,
+              "empty body — send requires a non-empty message on stdin",
+              {
+                category: "VALIDATION",
+                remediation:
+                  "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
+              },
+            );
           }
         }
 
@@ -511,6 +561,7 @@ export async function runChannelsCli(
         const claim = await getIdentityForSession(channelId, sid());
         if (claim?.role === "out") {
           die(
+            ctx,
             `[send] role 'out' blocks send for identity '${claim.identity}' on channel '${channelId}' — transition to 'pen' or 'queue' first`,
             {
               code: 4,
@@ -535,7 +586,7 @@ export async function runChannelsCli(
         return;
       }
       case "read": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         const resolved = readMessages(channelId).map((m) => {
           if (m.body_ref && !m.body) {
             const body = readBodyFile(channelId, m.body_ref);
@@ -562,17 +613,17 @@ export async function runChannelsCli(
         return;
       }
       case "meta": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         printJson(readMetadata(channelId));
         return;
       }
       case "heartbeat": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         touchHeartbeat(channelId, sid());
         return;
       }
       case "peers": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         const meta = readMetadata(channelId);
         const self = sid();
         const now = Date.now();
@@ -596,11 +647,11 @@ export async function runChannelsCli(
         return;
       }
       case "body": {
-        const channelId = requireChannelId(rest, 0);
-        const ref = requireArg(rest, 1, "body-ref");
+        const channelId = requireChannelId(ctx, rest, 0);
+        const ref = requireArg(ctx, rest, 1, "body-ref");
         const body = readBodyFile(channelId, ref);
         if (body === null)
-          die(`body ${ref} not found for channel ${channelId}`, {
+          die(ctx, `body ${ref} not found for channel ${channelId}`, {
             code: 2,
             category: "NOT_FOUND",
             remediation: `verify the body-ref via 'claude-conductor channels read ${channelId}' and confirm the message has body_ref set`,
@@ -609,7 +660,7 @@ export async function runChannelsCli(
         return;
       }
       case "whoami": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         const sessionId = sid();
         const claim = await getIdentityForSession(channelId, sessionId);
         if (claim === null) {
@@ -626,22 +677,23 @@ export async function runChannelsCli(
         return;
       }
       case "set-role": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         const roleIdx = rest.indexOf("--role");
         if (roleIdx === -1) {
-          die("missing --role <pen|queue|out>", {
+          die(ctx, "missing --role <pen|queue|out>", {
             category: "ARGS",
             remediation: "set-role <channel-id> --role <pen|queue|out>",
           });
         }
         const roleArg = rest[roleIdx + 1];
         if (roleArg === undefined) {
-          die("--role flag requires a value (pen|queue|out)", {
+          die(ctx, "--role flag requires a value (pen|queue|out)", {
             category: "ARGS",
           });
         }
         if (!VALID_ROLES.includes(roleArg as ChannelRole)) {
           die(
+            ctx,
             `invalid role "${roleArg}" — must be one of ${VALID_ROLES.join(", ")}`,
             { category: "VALIDATION" },
           );
@@ -656,6 +708,7 @@ export async function runChannelsCli(
         const myClaim = await getIdentityForSession(channelId, sessionId);
         if (myClaim === null) {
           die(
+            ctx,
             `[set-role] this session has no identity claim on channel '${channelId}'`,
             {
               code: 5,
@@ -671,6 +724,7 @@ export async function runChannelsCli(
             // Race: identity was released between get and set. Per
             // RE-6, surface as exit 5 — don't silently retry or claim.
             die(
+              ctx,
               `[set-role] identity '${myClaim.identity}' is no longer held (released between read and update)`,
               { code: 5, category: "NOT_HELD" },
             );
@@ -685,10 +739,10 @@ export async function runChannelsCli(
         return;
       }
       case "close-peer": {
-        const channelId = requireChannelId(rest, 0);
+        const channelId = requireChannelId(ctx, rest, 0);
         const peerIdx = rest.indexOf("--peer");
         if (peerIdx === -1) {
-          die("missing --peer <Identity>", {
+          die(ctx, "missing --peer <Identity>", {
             category: "ARGS",
             remediation:
               "close-peer <channel-id> --peer <NATO-identity> [--force]",
@@ -696,12 +750,13 @@ export async function runChannelsCli(
         }
         const peerArg = rest[peerIdx + 1];
         if (peerArg === undefined) {
-          die("--peer flag requires a NATO identity value", {
+          die(ctx, "--peer flag requires a NATO identity value", {
             category: "ARGS",
           });
         }
         if (!isValidIdentity(peerArg)) {
           die(
+            ctx,
             `invalid peer identity "${peerArg}" — must be a NATO letter (Alpha, Bravo, ..., Zulu)`,
             { category: "VALIDATION" },
           );
@@ -744,6 +799,7 @@ export async function runChannelsCli(
         }
         if (result.kind === "still-active") {
           die(
+            ctx,
             `[close-peer] peer '${peer}' is still active (heartbeat age ${result.ageMs ?? "unknown"} ms < ${STALE_THRESHOLD_MS} ms threshold)`,
             {
               code: 6,
@@ -753,10 +809,14 @@ export async function runChannelsCli(
           );
         }
         // result.kind === "not-held" (TS narrows by elimination).
-        die(`[close-peer] no identity '${peer}' on channel '${channelId}'`, {
-          code: 5,
-          category: "NOT_HELD",
-        });
+        die(
+          ctx,
+          `[close-peer] no identity '${peer}' on channel '${channelId}'`,
+          {
+            code: 5,
+            category: "NOT_HELD",
+          },
+        );
       }
       case undefined:
       case "help":
@@ -766,7 +826,7 @@ export async function runChannelsCli(
         return;
       }
       default:
-        die(`unknown subcommand: ${cmd}`, {
+        die(ctx, `unknown subcommand: ${cmd}`, {
           category: "ARGS",
           remediation:
             "Run 'claude-conductor channels --help' to list valid subcommands",
@@ -774,7 +834,7 @@ export async function runChannelsCli(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    die(message, { category: "UNCAUGHT" });
+    die(ctx, message, { category: "UNCAUGHT" });
   }
 }
 
