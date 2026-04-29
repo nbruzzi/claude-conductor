@@ -799,11 +799,19 @@ export async function runChannelsCli(
           force,
         });
         if (result.kind === "released") {
-          unlinkIdentitySentinelOrLogOrphan(
+          // Slice 3 RE-W2-4: capture discriminated unlink result so we
+          // can surface orphan_sentinel state in the JSON response. A
+          // true orphan is `ok: false` with a non-ENOENT code (the
+          // sentinel is still on disk, recoverable on next claim).
+          // ENOENT means "race-cleared" — sentinel was already gone, no
+          // orphan exists; we treat it as non-orphan in the response.
+          const unlinkResult = unlinkIdentitySentinelOrLogOrphan(
             channelId,
             peer,
             result.releasedClaim,
           );
+          const orphanSentinel =
+            unlinkResult.ok === false && unlinkResult.code !== "ENOENT";
           // Audit-trail status message so other peers observing the
           // channel see the close. Posted by THIS session (the operator
           // who invoked close-peer), referencing the released session.
@@ -811,14 +819,28 @@ export async function runChannelsCli(
             ts: new Date().toISOString(),
             from: sid(),
             kind: "status",
-            body: `peer-closed: identity ${peer} (session ${result.releasedClaim.session_id}) released by ${sid()}${force ? " (--force)" : ""}`,
+            body: `peer-closed: identity ${peer} (session ${result.releasedClaim.session_id}) released by ${sid()}${force ? " (--force)" : ""}${orphanSentinel ? " (orphan-sentinel)" : ""}`,
           };
           await appendMessage({ channelId, message: peerClosedMessage });
-          printJson({
+          const responseBody: {
+            kind: "released";
+            identity: string;
+            previous_session_id: string;
+            orphan_sentinel: boolean;
+            sentinel_error?: { code: string; detail: string };
+          } = {
             kind: "released",
             identity: peer,
             previous_session_id: result.releasedClaim.session_id,
-          });
+            orphan_sentinel: orphanSentinel,
+          };
+          if (orphanSentinel && unlinkResult.ok === false) {
+            responseBody.sentinel_error = {
+              code: unlinkResult.code,
+              detail: unlinkResult.detail,
+            };
+          }
+          printJson(responseBody);
           return;
         }
         if (result.kind === "still-active") {
