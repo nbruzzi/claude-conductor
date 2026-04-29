@@ -12,12 +12,16 @@ import type { HookInput, HookResult } from "../types.ts";
 import { block, pass, warn } from "../types.ts";
 
 const SOURCE = "pre-commit";
-// Per-script timeout. Bumped from 30_000 to 60_000 in 2026-04-28 followup
-// after dotfiles' test suite grew past the 30s budget (1245 tests now run
-// in ~35-40s on dev hardware). The aggregate cap below remains the outer
-// brake at 120s for the whole pre-commit pipeline.
-const SCRIPT_TIMEOUT_MS = 60_000;
-const AGGREGATE_TIMEOUT_MS = 120_000;
+// Per-script timeout. Bumped from 30_000 → 60_000 in 2026-04-28 (dotfiles
+// test suite grew past 30s budget); bumped again 60_000 → 180_000 in
+// 2026-04-29 (Phase 2 Slice 7 substrate-gap fix per
+// `feedback-self-monitoring-failures-are-architectural`) after plugin's
+// test suite grew to ~99s on dev hardware (35 files / 461 tests). Tests
+// growing past the budget made the gate fire on time-out regardless of
+// test correctness — broken self-monitoring. Aggregate cap bumped 120_000
+// → 240_000 to keep the same 4× headroom-over-script ratio.
+const SCRIPT_TIMEOUT_MS = 180_000;
+const AGGREGATE_TIMEOUT_MS = 240_000;
 
 /**
  * Match `git commit` with optional interposed global flags.

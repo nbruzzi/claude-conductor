@@ -2,11 +2,11 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Source-of-truth for the 19 generic discipline-as-code checks the plugin
+ * Source-of-truth for the 22 generic discipline-as-code checks the plugin
  * bundles, organized by hook event.
  *
  * Two derived shapes:
- * - `BundledCheckName` — closed string-literal union of all 18 names.
+ * - `BundledCheckName` — closed string-literal union of all 22 names.
  * - `BUNDLED_CHECK_NAMES` — flat readonly array (use `Object.values`-flat
  *   over `BUNDLED_CHECKS_BY_EVENT` so the array stays in sync with the map
  *   automatically).
@@ -14,7 +14,7 @@
  * Anti-drift discipline: `test/hooks/bundled-registrations.test.ts` builds a
  * fresh `RegistryBuilder<BundledCheckName>`, calls `registerBundled`, seals,
  * and asserts (event, name) tuple-equality + duplicate-detection +
- * length-pinned (=19) + bidirectional set-equality between this map and the
+ * length-pinned (=22) + bidirectional set-equality between this map and the
  * sealed-registry contents. A typo'd registration name fails at compile time
  * via the generic narrowing in `RegistryBuilder<BundledCheckName>` — no
  * runtime check needed for that class. The meta-test catches event-bucket
@@ -24,8 +24,8 @@
  * Cross-repo drift: plugin's `bundled-registrations.ts` is currently a copy
  * (canonical lives in dotfiles per the deferred-shim cross-edge to
  * `active-sessions/index.ts` — see TODO(0.8 / batch-5-closure) tags in the
- * meta-test). The 19 names here pin the plugin copy; if dotfiles canonical
- * adds a 20th bundled check before batch-5 closure, the plugin copy stays
+ * meta-test). The 22 names here pin the plugin copy; if dotfiles canonical
+ * adds a 23rd bundled check before batch-5 closure, the plugin copy stays
  * self-consistent but diverges from production. Closure unblocks at sub-step
  * 0.6-followup when active-sessions/index.ts is shimmed.
  *
@@ -59,7 +59,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "session-presence-register",
     "identity-injector",
   ],
-  "user-prompt-submit": [],
+  "user-prompt-submit": ["teammate-idle-reminder"],
 } as const satisfies Record<HookEvent, readonly string[]>;
 
 export type BundledCheckName =

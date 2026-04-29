@@ -213,6 +213,11 @@
       "import": "./src/hooks/checks/task-coordinator.ts",
       "default": "./src/hooks/checks/task-coordinator.ts"
     },
+    "./hooks/checks/teammate-idle-reminder": {
+      "types": "./src/hooks/checks/teammate-idle-reminder.ts",
+      "import": "./src/hooks/checks/teammate-idle-reminder.ts",
+      "default": "./src/hooks/checks/teammate-idle-reminder.ts"
+    },
     "./hooks/checks/test-gate": {
       "types": "./src/hooks/checks/test-gate.ts",
       "import": "./src/hooks/checks/test-gate.ts",

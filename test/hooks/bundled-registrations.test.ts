@@ -49,10 +49,10 @@ import { registerBundled } from "../../src/hooks/checks/bundled-registrations.ts
 import { pass } from "../../src/hooks/types.ts";
 import type { HookEvent } from "../../src/hooks/types.ts";
 
-const EXPECTED_COUNT = 21;
+const EXPECTED_COUNT = 22;
 
 describe("bundled-registrations meta-test", () => {
-  it("BUNDLED_CHECK_NAMES has exactly 21 entries", () => {
+  it("BUNDLED_CHECK_NAMES has exactly 22 entries", () => {
     expect(BUNDLED_CHECK_NAMES.length).toBe(EXPECTED_COUNT);
   });
 

@@ -35,7 +35,6 @@ import {
   rmSync,
   statSync,
   unlinkSync,
-  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -919,16 +918,26 @@ function isChannelMessage(v: unknown): v is ChannelMessage {
 
 // ─── Heartbeat ──────────────────────────────────────────────────
 
-/** Touch the heartbeat marker for (channel, session). Signals liveness. */
+/**
+ * Touch the heartbeat marker for (channel, session). Signals liveness.
+ *
+ * Phase 2 Slice 7 schema extension: writes `Date.now()` (peer's user-space
+ * wall-clock) into the file body. Pairs with `readHeartbeatBody` so peers
+ * can detect clock-skew between this peer's user-space clock and the
+ * filesystem-mtime stamp set by the kernel at the same write instant.
+ *
+ * Backwards-compat: legacy heartbeats with empty bodies still resolve via
+ * mtime (`heartbeatMtime` is unchanged); body content is purely additive.
+ * `writeFileSync` updates mtime as a side effect, so no separate
+ * `utimesSync` is needed.
+ */
 export function touchHeartbeat(channelId: string, sessionId: string): void {
   mkdirSync(heartbeatDir(channelId), { recursive: true });
-  const path = heartbeatPath(channelId, sessionId);
-  const now = new Date();
-  if (!existsSync(path)) {
-    writeFileSync(path, "", "utf-8");
-  } else {
-    utimesSync(path, now, now);
-  }
+  writeFileSync(
+    heartbeatPath(channelId, sessionId),
+    String(Date.now()),
+    "utf-8",
+  );
 }
 
 /** mtimeMs of the heartbeat marker, or null if none exists. */
@@ -941,6 +950,33 @@ export function heartbeatMtime(
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse the heartbeat file body as the peer's `Date.now()` ms timestamp.
+ *
+ * Phase 2 Slice 7 reader: pairs with `touchHeartbeat`'s body-write to
+ * support clock-skew detection. Returns `null` for missing/empty/corrupt
+ * bodies (legacy peers, IO errors, malformed content). Strict parser —
+ * only non-negative finite integer ms values are accepted.
+ */
+export function readHeartbeatBody(
+  channelId: string,
+  sessionId: string,
+): number | null {
+  let raw: string;
+  try {
+    raw = readFileSync(heartbeatPath(channelId, sessionId), "utf-8");
+  } catch {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return null;
+  if (!Number.isInteger(n)) return null;
+  if (n < 0) return null;
+  return n;
 }
 
 /** Newest heartbeat mtime across all participants. Null if no heartbeats. */

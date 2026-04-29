@@ -184,6 +184,21 @@ describe("presence-failure-log", () => {
     expect(readPresenceFailures()).toEqual([]);
   });
 
+  it("round-trips kind=clock-skew (Phase 2 Slice 7 substrate extension)", () => {
+    const ev = sampleEvent({
+      source: "channels-identity",
+      kind: "clock-skew",
+      detail:
+        "teammate-idle-reminder: peer Bravo body_ts=1700000000000 mtime=1700000400000 delta=400000ms",
+    });
+    appendPresenceFailure(ev);
+
+    const events = readPresenceFailures();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.kind).toBe("clock-skew");
+    expect(events[0]?.source).toBe("channels-identity");
+  });
+
   it("serializeWithinCap is idempotent on short lines", () => {
     const ev = sampleEvent();
     const a = INTERNAL.serializeWithinCap(ev);

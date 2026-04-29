@@ -50,7 +50,8 @@ export type PresenceFailureKind =
   | "write-failed"
   | "registry-contention"
   | "operator-reset"
-  | "unhandled";
+  | "unhandled"
+  | "clock-skew";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -246,7 +247,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "write-failed" ||
     k === "registry-contention" ||
     k === "operator-reset" ||
-    k === "unhandled"
+    k === "unhandled" ||
+    k === "clock-skew"
   );
 }
 

@@ -2,7 +2,7 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Bundled-check registrations (19 generic discipline-as-code checks).
+ * Bundled-check registrations (22 generic discipline-as-code checks).
  *
  * Per extraction-manifest §§ 194–225: this module owns the plugin-bound
  * registrations. In batch 4 it moves to the plugin alongside registry.ts and
@@ -36,6 +36,7 @@ import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
 import { check as checkSessionPresenceRegister } from "./session-presence-register.ts";
 import { check as checkIdentityInjector } from "./identity-injector.ts";
 import { check as checkTaskCoordinator } from "./task-coordinator.ts";
+import { check as checkTeammateIdleReminder } from "./teammate-idle-reminder.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -206,6 +207,16 @@ export function registerBundled(
     fn: checkIdentityInjector,
     description:
       "Phase 2 Slice 5 — surface NATO-identity context (identity, role, peer roster) for channels where this session has a claim. Per-session emission cursor avoids re-emitting unchanged context.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+
+  // user-prompt-submit
+  builder.register("user-prompt-submit", {
+    name: "teammate-idle-reminder",
+    fn: checkTeammateIdleReminder,
+    description:
+      "Phase 2 Slice 7 — surface idle peers on UserPromptSubmit so operators discover stuck/crashed siblings without manual `peers` queries. Per-peer rate limit (30 min) + clock-skew suppression (>5 min divergence between peer body-ts and mtime). Fail-open + breadcrumb on read failures.",
     canBlock: false,
     profiles: ["standard", "strict"],
   });
