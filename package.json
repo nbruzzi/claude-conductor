@@ -203,6 +203,11 @@
       "import": "./src/hooks/checks/sync-common.ts",
       "default": "./src/hooks/checks/sync-common.ts"
     },
+    "./hooks/checks/task-coordinator": {
+      "types": "./src/hooks/checks/task-coordinator.ts",
+      "import": "./src/hooks/checks/task-coordinator.ts",
+      "default": "./src/hooks/checks/task-coordinator.ts"
+    },
     "./hooks/checks/test-gate": {
       "types": "./src/hooks/checks/test-gate.ts",
       "import": "./src/hooks/checks/test-gate.ts",
