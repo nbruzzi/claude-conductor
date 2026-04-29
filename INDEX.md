@@ -113,7 +113,7 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 ### CLI dispatcher (`src/cli/`)
 
 - [src/cli/dispatcher.ts](src/cli/dispatcher.ts) — Phase 1 Slice 0 verb router for `channels` and `todos` subcommands; pre-subcommand `--json`/`--quiet` partition with re-injection (Slice 4.5 CLI-B). `presence` subcommand deferred to Phase 2 per Decision C. Wave 2 CLI-W2-1 surfaced post-subcommand position-insensitivity gap (deferred to Slice 8.5).
-- [src/cli/flags.ts](src/cli/flags.ts) — Phase 1 Slice 4 shared flag parser. Supports `--json`, `--quiet`, `--help`, `--force`, `--role`, `--body-file`, `--peer`, `--since-mtime`. POSIX `--help` semantics: stdout, exit 0 (RE-7 closure).
+- [src/cli/flags.ts](src/cli/flags.ts) — Phase 1 Slice 4 shared flag parser for the GLOBAL CLI flags only: `--json`, `--quiet`, `--help`, `-h`. POSIX `--help` semantics: stdout, exit 0 (RE-7 closure). Verb-level flags (`--role`, `--peer`, `--force`, `--body-file`) are parsed inline by `src/channels/cli.ts` per-verb — see that catalog entry for the full per-verb surface. Per Phase 2 Slice 0 sub-step (ARCH-W0-1 drift fix): the prior catalog entry over-claimed flags.ts's responsibility; the verb-level flags never lived here.
 
 ### Top-level (`src/`)
 
