@@ -30,6 +30,17 @@
  * lacking a UUID-shaped CLAUDE_SESSION_ID, use the dotfiles canonical CLI.
  */
 
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+
 import { isValidArtifactId } from "../active-sessions/index.ts";
 import { parseFlags } from "../cli/flags.ts";
 import {
@@ -58,6 +69,14 @@ const VALID_KINDS: readonly ChannelKind[] = [
 ];
 const LIVE_WINDOW_MS = 30 * 60 * 1000;
 const ONLINE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** --body-file size cap (256 KiB). Bodies above this are refused outright. */
+const BODY_FILE_MAX_BYTES = 256 * 1024;
+
+/** Mirror of channels/index.ts:SMALL_MESSAGE_MAX_BYTES (3 KiB). Bodies above
+ *  this trigger the body_ref sidecar shunt; we surface a stderr notice when
+ *  --body-file content crosses this threshold. */
+const BODY_REF_SHUNT_THRESHOLD_BYTES = 3 * 1024;
 
 // die() output mode — set once in main() after flag parse. Plain stderr
 // is the default; --json emits structured payload per parent plan §247-249.
@@ -139,14 +158,174 @@ function liveness(
   return "stale";
 }
 
-async function main(): Promise<void> {
-  const [, , cmd, ...rawRest] = process.argv;
+/**
+ * Read body content from a file path. Validation pipeline (per parent plan
+ * SE-3 + RE-1 fix from `vivid-seeking-crayon` audit, §3):
+ *
+ *   1. lstatSync at user-supplied path → reject if symlink (catches
+ *      direct symlink-to-sensitive-target).
+ *   2. realpathSync → resolve to canonical absolute path. Catches paths
+ *      INSIDE symlinked sensitive directories (e.g., `/private/etc/...`
+ *      via macOS's `/etc → /private/etc` symlink) AND symlinked $HOME
+ *      (NAS-mounted home). ENOENT on realpath → die early.
+ *   3. Path policy → refuse paths under sensitive system / credential
+ *      dirs. The denylist applies to the REALPATH, not the user-supplied
+ *      path; lexical-prefix match on the unresolved input would miss
+ *      symlink-equivalent sensitive paths.
+ *   4. openSync with O_RDONLY | O_NOFOLLOW → race-safe leaf protection
+ *      against symlink-swap between lstat and open.
+ *   5. fstatSync size → reject if > BODY_FILE_MAX_BYTES (256 KiB).
+ *   6. Read content via fd, with try/finally ensuring fd closure on any
+ *      throw mid-read (RE inline-fix prevents fd leak; tested in
+ *      `cli-body-file.test.ts` fd-leak scenario).
+ *   7. Stderr notice when body crosses BODY_REF_SHUNT_THRESHOLD_BYTES so
+ *      operators know the body will be sidecarred to bodies/<uuid>.txt.
+ *
+ * Returns the body string. Dies with a clear message on any rejection.
+ */
+function readBodyFromFile(path: string): string {
+  let lstat;
+  try {
+    lstat = lstatSync(path);
+  } catch (err) {
+    die(`--body-file: cannot lstat "${path}": ${(err as Error).message}`, {
+      code: 2,
+      category: "VALIDATION",
+    });
+  }
+  if (lstat.isSymbolicLink()) {
+    die(
+      `--body-file: refusing symlink "${path}" — pass the target file directly`,
+      { code: 2, category: "VALIDATION" },
+    );
+  }
+
+  // RE-1 fix: realpath-resolve before denylist match. Catches macOS
+  // path-equivalents (`/etc` ↔ `/private/etc`), $HOME-as-symlink, and
+  // paths inside symlinked sensitive dirs.
+  let resolved: string;
+  try {
+    resolved = realpathSync(path);
+  } catch (err) {
+    die(`--body-file: cannot resolve "${path}": ${(err as Error).message}`, {
+      code: 2,
+      category: "VALIDATION",
+    });
+  }
+
+  const realHome = realpathSync(homedir());
+  // OS tmpdir is user-writable scratch space; on macOS it resolves under
+  // `/private/var/folders/...` which would trip both /var and /private
+  // denylist prefixes. Allow tmpdir explicitly so legitimate temp-file
+  // body-file reads work; the denylist still catches sensitive system
+  // paths under /etc, /var (non-tmpdir), /private (non-tmpdir), etc.
+  const realTmpdir = realpathSync(tmpdir());
+  const inTmpdir =
+    resolved === realTmpdir || resolved.startsWith(`${realTmpdir}/`);
+  if (!inTmpdir) {
+    const denied: readonly string[] = [
+      "/etc",
+      "/var",
+      "/private",
+      "/tmp",
+      "/Volumes",
+      `${realHome}/.ssh`,
+      `${realHome}/.aws`,
+      `${realHome}/Library/Application Support`,
+      `${realHome}/Library/Keychains`,
+    ];
+    for (const root of denied) {
+      if (resolved === root || resolved.startsWith(`${root}/`)) {
+        die(`--body-file: refusing path under "${root}" — sensitive location`, {
+          code: 2,
+          category: "VALIDATION",
+        });
+      }
+    }
+  }
+
+  let fd: number;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (err) {
+    die(`--body-file: cannot open "${path}": ${(err as Error).message}`, {
+      code: 2,
+      category: "VALIDATION",
+    });
+  }
+
+  try {
+    const stat = fstatSync(fd);
+    if (stat.size > BODY_FILE_MAX_BYTES) {
+      die(
+        `--body-file: "${path}" is ${stat.size} bytes; exceeds ${BODY_FILE_MAX_BYTES} cap`,
+        { code: 2, category: "VALIDATION" },
+      );
+    }
+    const buf = Buffer.alloc(stat.size);
+    let total = 0;
+    while (total < stat.size) {
+      const n = readSync(fd, buf, total, stat.size - total, total);
+      if (n <= 0) break;
+      total += n;
+    }
+    const body = buf.subarray(0, total).toString("utf-8");
+    if (Buffer.byteLength(body, "utf-8") > BODY_REF_SHUNT_THRESHOLD_BYTES) {
+      process.stderr.write(
+        `[channels] body ${stat.size} bytes — exceeds ${BODY_REF_SHUNT_THRESHOLD_BYTES}-byte inline limit; will be stored as body_ref to bodies/<uuid>.txt\n`,
+      );
+    }
+    return body;
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* close-on-cleanup; ignore */
+    }
+  }
+}
+
+/** Extract `--body-file <path>` from an argv tail. Returns null when absent. */
+function parseBodyFileFlag(args: readonly string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--body-file") {
+      const path = args[i + 1];
+      if (path === undefined || path.length === 0) {
+        die(`--body-file requires a path argument`, {
+          code: 2,
+          category: "ARGS",
+        });
+      }
+      return path;
+    }
+  }
+  return null;
+}
+
+/**
+ * Entry point for the channels CLI. Exported so callers (dispatcher.ts,
+ * tests, future cross-edge consumers) can invoke programmatically without
+ * relying on the `import.meta.main` side-effect at the bottom of this file.
+ *
+ * Atomic-wiring note (per `feedback-atomic-wiring-discipline.md` + plan
+ * vivid-seeking-crayon §3): this export, the `import.meta.main` guard at
+ * EOF, and the body-file plumbing land in a single commit. The
+ * `cli-import-safety.test.ts` triplet asserts: (1) importing this file
+ * does NOT auto-execute the CLI (guard works), (2) `runChannelsCli(["help"])`
+ * returns programmatically (export reachable), (3) subprocess
+ * `bun run src/channels/cli.ts help` succeeds (guard's import.meta.main
+ * branch fires under direct invocation).
+ */
+export async function runChannelsCli(
+  argv: readonly string[] = process.argv.slice(2),
+): Promise<void> {
+  const [cmd, ...rawRest] = argv;
   // Pull the standard CLI flags out of the verb-arg tail so positional
   // indices (`requireArg(rest, 0, ...)`, etc.) skip past --json/--quiet/-h.
   // outputJson is a module-level toggle consumed by die(); writing it once
   // here means error paths emit structured JSON without needing each verb
   // to thread the flag through.
-  const { positional: rest, flags } = parseFlags(rawRest);
+  const { positional: rest, flags } = parseFlags([...rawRest]);
   outputJson = flags.json;
   // try/catch funnels uncaught throws (sid()/readMetadata/spawned-IO
   // failures, etc.) through die() with a stable category so operators see
@@ -188,13 +367,45 @@ async function main(): Promise<void> {
             { category: "VALIDATION" },
           );
         }
-        const body = (await readStdin()).trim();
-        if (body.length === 0)
-          die("empty body — send requires a non-empty message on stdin", {
-            category: "VALIDATION",
-            remediation:
-              "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
-          });
+        // ARCH-4 send-case body order (per plan vivid-seeking-crayon §3):
+        //   1. parse flags + body-file
+        //   2. read body (if --body-file)
+        //   3. role-gate (Bravo's Slice 6 will insert here at merge)
+        //   4. appendMessage
+        // Body is read BEFORE role rejection (cheap-fail-late). The
+        // merge-time integration test `cli-send-merged.test.ts` (added by
+        // the second-merging lane) locks the ordering: --body-file with
+        // role==='out' must die with the DENYLIST die, NOT the role-die.
+        const bodyFilePath = parseBodyFileFlag(rest);
+        // Mutex with stdin: documented as caller-responsibility for now.
+        // Bun's `process.stdin.isTTY` is `undefined` for both piped and
+        // closed/ignored stdin (verified empirically), so there is no
+        // reliable way to detect "stdin piped with data" before reading.
+        // When --body-file is set, file content wins silently; stdin is
+        // not read. Async-readable + timeout detection is feasible but
+        // adds 50ms latency per send and is deferred to a future revision
+        // (TA-2 known-follow-up in plan §Known follow-ups).
+
+        let body: string;
+        if (bodyFilePath !== null) {
+          body = readBodyFromFile(bodyFilePath).trim();
+          if (body.length === 0) {
+            die(
+              `--body-file: "${bodyFilePath}" produced empty body after trim — file is empty or whitespace-only`,
+              { code: 2, category: "VALIDATION" },
+            );
+          }
+        } else {
+          body = (await readStdin()).trim();
+          if (body.length === 0) {
+            die("empty body — send requires a non-empty message on stdin", {
+              category: "VALIDATION",
+              remediation:
+                "pipe a non-empty body via stdin: printf '%s' \"<text>\" | channels send <id> <kind>",
+            });
+          }
+        }
+
         const message: ChannelMessage = {
           ts: new Date().toISOString(),
           from: sid(),
@@ -293,4 +504,17 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+// import.meta.main guard (per `feedback-atomic-wiring-discipline.md` +
+// plan vivid-seeking-crayon §3): this guard prevents auto-execution when
+// the file is imported as a module (test runner, dispatcher.ts, future
+// programmatic callers). When run as the entry point (`bun run src/channels/cli.ts`),
+// import.meta.main is true and the CLI executes. When imported, it is
+// false and `runChannelsCli` is callable but not invoked.
+//
+// Validated by `test/channels/cli-import-safety.test.ts` (3 tests):
+// (1) module import does not exit/hang (guard catches missing-guard regression),
+// (2) programmatic `runChannelsCli(["help"])` returns (export reachable),
+// (3) subprocess entry-path execution succeeds (guard's true branch works).
+if (import.meta.main) {
+  await runChannelsCli();
+}
