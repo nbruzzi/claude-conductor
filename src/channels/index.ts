@@ -145,9 +145,26 @@ export function channelIdFromHandoff(handoffPath: string): string {
 }
 
 /**
- * Canonical session-id resolver. Prefers `CLAUDE_SESSION_ID` (tests) then
- * the hook input's raw session_id. Throws loudly if neither is available —
- * never guesses.
+ * Canonical session-id resolver for channels-internal callers. Prefers
+ * `CLAUDE_SESSION_ID` (tests) then the hook input's raw session_id. Throws
+ * loudly if neither is available — never guesses.
+ *
+ * **Cross-edge env-var contract (ARCH-1, plan vivid-seeking-crayon §1):**
+ * The plugin hosts TWO resolvers reading `CLAUDE_SESSION_ID`:
+ *   (a) THIS function — lenient `isValidSessionId` gate (path-safety only).
+ *       Reachable as `claude-conductor/channels/api`. Used here because
+ *       channel paths only need a path-safe id; tightening to UUID-shape
+ *       would break test fixtures that use short ids ("alice", "bob").
+ *   (b) `shared/session-id-discovery.ts:resolveSessionId` — strict UUID
+ *       gate, with mtime/ppid fallback discovery. Reachable as
+ *       `claude-conductor/shared/session-id-discovery`. Used in CLI-context
+ *       where there's no hook input payload.
+ * The divergence is intentional. A non-UUID `CLAUDE_SESSION_ID` (e.g.,
+ * `"test-session"`) is accepted here verbatim but falls through (b)'s
+ * strict path to ppid/missing. Tests in `test/channels/api.test.ts` (case c)
+ * lock the divergence.
+ *
+ * @see src/shared/session-id-discovery.ts — strict-UUID CLI-context resolver
  */
 export function resolveSessionId(
   raw: Record<string, unknown> | undefined,
@@ -539,6 +556,166 @@ export async function commitIdentityClaim(args: {
   });
 }
 
+/**
+ * Remove a NATO identity claim from `metadata.identities`. Sibling-write to
+ * `commitIdentityClaim` for the release path (Slice 5 close-peer + future
+ * manual release flows). Sub-write under `withMetadataLock` for atomicity
+ * against concurrent claim/join/close mutations.
+ *
+ * Returns the removed `IdentityClaim` so callers can attribute audit log
+ * events (e.g., orphan-sentinel warnings) to the original claimant session.
+ * Idempotent on absence: returns `null` and writes nothing.
+ *
+ * Used by `releaseIdentity` (src/channels/identity.ts) — RE-6 ordering
+ * requires this metadata write to succeed before the sentinel unlink so a
+ * crash mid-release leaves an orphan sentinel (recoverable on next claim
+ * via the reconcile-on-rejoin path per Slice 2.2 Decision D) rather than a
+ * phantom metadata entry with no sentinel (Slice 5 verbs would mistakenly
+ * trust it).
+ */
+export async function removeIdentityClaim(args: {
+  channelId: string;
+  identity: string;
+}): Promise<IdentityClaim | null> {
+  const { channelId, identity } = args;
+  // Defense-in-depth boundary validation per Slice 2.2 verification round
+  // RE-NEW-2 (sibling-parity with commitIdentityClaim). Direct callers
+  // outside identity.ts (Decision Q4 enables Phase 2 hook consumers) get
+  // the same path-traversal guard.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] removeIdentityClaim: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const existing = meta.identities;
+    if (existing === undefined) return null;
+    const removed = existing[identity];
+    if (removed === undefined) return null;
+    const nextIdentities: Record<string, IdentityClaim> = { ...existing };
+    delete nextIdentities[identity];
+    const next: ChannelMetadata = { ...meta, identities: nextIdentities };
+    writeMetadataRaw(channelId, next, removed.session_id);
+    return removed;
+  });
+}
+
+/**
+ * Atomically check a peer's heartbeat staleness AND remove its identity
+ * claim under a SINGLE `withMetadataLock` section. Slice 5 RE-6 close-peer
+ * race fix — without the same-lock sequence, a check-then-release split
+ * lets a second concurrent metadata mutator squeeze in between, and the
+ * staleness snapshot becomes irrelevant by the time the metadata write
+ * lands. (The peer's own `touchHeartbeat` is independent of this lock —
+ * heartbeat writes are not metadata-locked. The atomicity guarantee here
+ * is against OTHER metadata mutators (claim/setRole/release), which is
+ * the load-bearing race; the peer-heartbeat-write race is a tiny window
+ * relative to the > 60 s stale threshold and `--force` covers operator
+ * override.)
+ *
+ * Returns a discriminated result:
+ *   - `{kind: "released", releasedClaim}` — heartbeat was stale (or
+ *     `force === true`); metadata entry removed. Sentinel unlink is the
+ *     caller's responsibility (use
+ *     `unlinkIdentitySentinelOrLogOrphan` from `./identity.ts` for
+ *     RE-6-aligned orphan handling).
+ *   - `{kind: "still-active", ageMs}` — heartbeat is fresh; refused. The
+ *     CLI verb maps this to a non-zero exit with a `--force` hint.
+ *   - `{kind: "not-held"}` — the identity isn't claimed; nothing to
+ *     close.
+ *
+ * `ageMs === null` means the peer has no heartbeat file at all (never
+ * touched). Treated as stale (the most conservative interpretation —
+ * a peer that never heartbeated is presumed dead).
+ */
+export async function closeStalePeerIdentity(args: {
+  channelId: string;
+  identity: string;
+  staleThresholdMs: number;
+  force: boolean;
+}): Promise<
+  | { kind: "released"; releasedClaim: IdentityClaim }
+  | { kind: "still-active"; ageMs: number | null }
+  | { kind: "not-held" }
+> {
+  const { channelId, identity, staleThresholdMs, force } = args;
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] closeStalePeerIdentity: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const claim = meta.identities?.[identity];
+    if (claim === undefined) {
+      return { kind: "not-held" } as const;
+    }
+    // Heartbeat snapshot — read inside the lock so it's stable w/r/t
+    // other metadata mutators (the peer's own touchHeartbeat is
+    // independent; that's the documented narrow race).
+    const peerMtime = heartbeatMtime(channelId, claim.session_id);
+    const ageMs = peerMtime === null ? null : Date.now() - peerMtime;
+    const isStale = ageMs === null || ageMs > staleThresholdMs;
+    if (!isStale && !force) {
+      return { kind: "still-active", ageMs } as const;
+    }
+    const nextIdentities: Record<string, IdentityClaim> = {
+      ...meta.identities,
+    };
+    delete nextIdentities[identity];
+    const next: ChannelMetadata = { ...meta, identities: nextIdentities };
+    writeMetadataRaw(channelId, next, claim.session_id);
+    return { kind: "released", releasedClaim: claim } as const;
+  });
+}
+
+/**
+ * Atomically update the role of an existing identity claim. Read-modify-
+ * write under `withMetadataLock` so set-role races against concurrent
+ * claim/release/heartbeat operations are race-safe.
+ *
+ * Returns a discriminated result:
+ *   - `{kind: "updated", previousRole}` — the role was changed (or set to
+ *     the same value, idempotently).
+ *   - `{kind: "not-held"}` — the identity isn't claimed; no write is
+ *     performed. Callers (CLI's `set-role` verb) map this to exit 5 per
+ *     Slice 5 RE-6 — silent no-op is the failure mode being prevented.
+ *
+ * The discriminated return avoids importing `IdentityNotHeldError` from
+ * identity.ts (which would create a circular import); the caller wraps the
+ * `not-held` case in the appropriate error class.
+ */
+export async function setIdentityRole(args: {
+  channelId: string;
+  identity: string;
+  role: ChannelRole;
+}): Promise<
+  { kind: "updated"; previousRole: ChannelRole } | { kind: "not-held" }
+> {
+  const { channelId, identity, role } = args;
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] setIdentityRole: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const existing = meta.identities?.[identity];
+    if (existing === undefined) {
+      return { kind: "not-held" } as const;
+    }
+    const updated: IdentityClaim = { ...existing, role };
+    const identities: Record<string, IdentityClaim> = {
+      ...(meta.identities ?? {}),
+      [identity]: updated,
+    };
+    const next: ChannelMetadata = { ...meta, identities };
+    writeMetadataRaw(channelId, next, existing.session_id);
+    return { kind: "updated", previousRole: existing.role } as const;
+  });
+}
+
 /** Append a message. Large bodies are redirected to a sidecar file. */
 export function appendMessage(args: {
   channelId: string;
@@ -554,18 +731,51 @@ export function appendMessage(args: {
   }
 
   let message = args.message;
+
+  // Slice 6: auto-attach `identity` + `role` from `metadata.identities`
+  // if the sender holds a claim. Legacy senders (no claim) keep both
+  // fields absent → `renderMessage` shows them as `<unknown>: <body>`
+  // (matrix row 5). Caller-wins: if the message already specifies
+  // either field, leave it untouched (allows tests + callers that need
+  // explicit override to bypass the auto-attach).
+  //
+  // Inline scan instead of importing `getIdentityForSession` from
+  // `./identity.ts` — identity.ts already imports from this module
+  // (`commitIdentityClaim`/`removeIdentityClaim`/etc.), so reverse-
+  // importing would create a cycle. The scan is O(26) max (NATO pool
+  // size) and `meta` is already in scope; no extra IO.
+  if (message.identity === undefined && message.role === undefined) {
+    const identities = meta.identities;
+    if (identities !== undefined) {
+      for (const [letter, claim] of Object.entries(identities)) {
+        if (claim.session_id === message.from) {
+          message = { ...message, identity: letter, role: claim.role };
+          break;
+        }
+      }
+    }
+  }
+
   const initialLine = serializeLine(message);
   if (
     Buffer.byteLength(initialLine, "utf-8") > SMALL_MESSAGE_MAX_BYTES &&
     message.body
   ) {
     const ref = writeBodyFile(channelId, message.body);
-    message = {
+    // Preserve identity/role/version on the body-shunt rewrite — Slice 6
+    // attribution must survive the sidecar redirect (otherwise large
+    // bodies render as `<unknown> [body-ref:<ref>]` which is incorrect
+    // when the sender held a claim).
+    const shunted: ChannelMessage = {
       ts: message.ts,
       from: message.from,
       kind: message.kind,
       body_ref: ref,
     };
+    if (message.identity !== undefined) shunted.identity = message.identity;
+    if (message.role !== undefined) shunted.role = message.role;
+    if (message.version !== undefined) shunted.version = message.version;
+    message = shunted;
   }
   const line = serializeLine(message);
   appendLineAtomically(messagesPath(channelId), line);

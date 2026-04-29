@@ -89,6 +89,9 @@ import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import { channelsDir } from "../shared/paths.ts";
 import {
   commitIdentityClaim,
+  readMetadata,
+  removeIdentityClaim,
+  setIdentityRole,
   type ChannelRole,
   type IdentityClaim,
 } from "./index.ts";
@@ -276,6 +279,234 @@ export async function claimIdentity(args: {
     }
   }
 }
+
+// ─── IdentityNotHeldError ──────────────────────────────────────────
+
+/**
+ * Thrown when `set-role` is called for an identity that is not claimed
+ * on the channel. Per Slice 5 RE-6, `set-role` MUST NOT silently no-op
+ * on an absent identity — that would let an operator run `set-role`
+ * against a dropped peer and assume the role change took effect. The
+ * CLI verb maps this error to exit 5 with `"identity '<x>' not held"`
+ * on stderr.
+ */
+export class IdentityNotHeldError extends Error {
+  constructor(channelId: string, identity: string) {
+    super(
+      `[channels-identity] channel '${channelId}' identity '${identity}' is not held — no metadata change applied`,
+    );
+    this.name = "IdentityNotHeldError";
+  }
+}
+
+// ─── getIdentityForSession ─────────────────────────────────────────
+
+/**
+ * Return the NATO identity claim held by `sessionId` on `channelId`, or
+ * `null` if the session has no claim. Used by the `whoami` verb (Slice
+ * 5) and as a building block for peer discovery.
+ *
+ * Defensive against legacy channels (no `identities` field) and against
+ * partial reconciliation states (a metadata key that isn't a valid NATO
+ * letter — `validateChannelMetadata` already enforces shape, but the
+ * defensive filter here keeps the failure mode obvious if validation is
+ * ever bypassed).
+ *
+ * Async API for consistency with `claimIdentity` / `setRole` /
+ * `releaseIdentity`; the underlying read is synchronous.
+ */
+export async function getIdentityForSession(
+  channelId: string,
+  sessionId: string,
+): Promise<{
+  identity: NatoIdentity;
+  role: ChannelRole;
+  joined_at: string;
+} | null> {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels-identity] getIdentityForSession: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    throw new Error(
+      "[channels-identity] getIdentityForSession: sessionId must be a non-empty string",
+    );
+  }
+  const meta = readMetadata(channelId);
+  if (meta.identities === undefined) return null;
+  for (const [letter, claim] of Object.entries(meta.identities)) {
+    if (!isValidIdentity(letter)) continue;
+    if (claim.session_id !== sessionId) continue;
+    return {
+      identity: letter,
+      role: claim.role,
+      joined_at: claim.joined_at,
+    };
+  }
+  return null;
+}
+
+// ─── setRole ───────────────────────────────────────────────────────
+
+/**
+ * Atomically update the role of a held identity. Wraps `setIdentityRole`
+ * from index.ts, mapping the `not-held` discriminated case to
+ * `IdentityNotHeldError` per Slice 5 RE-6 (no silent no-op on absence).
+ */
+export async function setRole(
+  channelId: string,
+  identity: NatoIdentity,
+  role: ChannelRole,
+): Promise<void> {
+  // channelId is gated downstream by setIdentityRole's isValidArtifactId
+  // check; identity + role gates here block invalid input before
+  // reaching the lock.
+  if (!isValidIdentity(identity)) {
+    throw new Error(
+      `[channels-identity] setRole: invalid identity "${identity}" — must be a NATO letter`,
+    );
+  }
+  if (role !== "pen" && role !== "queue" && role !== "out") {
+    throw new Error(
+      `[channels-identity] setRole: invalid role "${role}" — must be one of pen|queue|out`,
+    );
+  }
+  const result = await setIdentityRole({ channelId, identity, role });
+  if (result.kind === "not-held") {
+    throw new IdentityNotHeldError(channelId, identity);
+  }
+}
+
+// ─── releaseIdentity ───────────────────────────────────────────────
+
+/**
+ * Release a NATO identity claim — remove the materialized metadata entry
+ * AND unlink the per-letter sentinel. RE-6 ordering:
+ *
+ *   1. `removeIdentityClaim` first (atomic metadata write under
+ *      `withMetadataLock`).
+ *   2. On metadata-write failure → propagate the error WITHOUT unlinking
+ *      the sentinel. The sentinel remains as canonical evidence of the
+ *      claim; the caller surfaces the error.
+ *   3. On metadata-write success → unlink the sentinel via
+ *      `INTERNAL.unlinkSentinel`. Idempotent on ENOENT (sentinel already
+ *      gone). On any non-ENOENT unlink failure → log a warning via
+ *      `appendPresenceFailure` and continue. The metadata removal already
+ *      succeeded, so the orphan sentinel is reconcilable on the NEXT
+ *      `claimIdentity` for this letter via the reconcile-on-rejoin path
+ *      (Slice 2.2 Decision D).
+ *
+ * **Why metadata-first:** the failure mode being prevented is "phantom
+ * metadata entry with no sentinel" — Slice 5 verbs (`whoami`, `peers`,
+ * `send` with role gate) read `metadata.identities` and would mistakenly
+ * trust an entry whose sentinel is gone. Conversely, "orphan sentinel
+ * without metadata" is benign: the next `claimIdentity` reconciles via
+ * `findExistingClaim`'s best-effort `commitIdentityClaim` (Slice 2.2).
+ *
+ * Idempotent on absence: releasing an already-absent identity is a no-op
+ * (no error). Matches the expected close-peer flow where a peer may have
+ * already self-released between the operator's intent and the verb call.
+ */
+export async function releaseIdentity(
+  channelId: string,
+  identity: NatoIdentity,
+): Promise<void> {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels-identity] releaseIdentity: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (!isValidIdentity(identity)) {
+    throw new Error(
+      `[channels-identity] releaseIdentity: invalid identity "${identity}" — must be a NATO letter`,
+    );
+  }
+
+  const removed = await removeIdentityClaim({ channelId, identity });
+  if (removed === null) {
+    // Idempotent: nothing to release. If a sentinel exists without
+    // metadata (pre-Phase-1 channel or a torn-write orphan), the next
+    // `claimIdentity` reconciliation handles it.
+    return;
+  }
+  unlinkIdentitySentinelOrLogOrphan(channelId, identity, removed);
+}
+
+/**
+ * Step 2 of the metadata-first release ordering — unlink the per-letter
+ * sentinel after a successful metadata removal. Idempotent on ENOENT;
+ * logs an orphan-sentinel warning via `appendPresenceFailure` on any
+ * other failure (EACCES, EPERM, EBUSY, etc.) without re-throwing. The
+ * orphan is reconcilable on the next `claimIdentity` for this letter
+ * via the reconcile-on-rejoin path (Slice 2.2 Decision D).
+ *
+ * Exported so `close-peer` (CLI verb invoking `closeStalePeerIdentity`)
+ * can reuse the same orphan-handling discipline without duplicating the
+ * try/catch.
+ */
+export function unlinkIdentitySentinelOrLogOrphan(
+  channelId: string,
+  identity: NatoIdentity,
+  releasedClaim: IdentityClaim,
+): void {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels-identity] unlinkIdentitySentinelOrLogOrphan: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (!isValidIdentity(identity)) {
+    throw new Error(
+      `[channels-identity] unlinkIdentitySentinelOrLogOrphan: invalid identity "${identity}" — must be a NATO letter`,
+    );
+  }
+  const sentinel = identitySentinelPath(channelId, identity);
+  try {
+    INTERNAL.unlinkSentinel(sentinel);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") {
+      // Already gone — fine; metadata was the canonical mutation.
+      return;
+    }
+    // Non-ENOENT failure. Metadata removal already succeeded so the
+    // released identity won't be visible to Slice 5 verbs. The orphan
+    // sentinel is reconcilable on next claim via Slice 2.2 Decision D.
+    // Log for operator visibility; do NOT propagate — propagation would
+    // obscure the successful metadata removal.
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "write-failed",
+      sessionId: releasedClaim.session_id,
+      artifactPath: sentinel,
+      detail: `orphan sentinel after metadata-release (reconcile on next claim): ${(err as Error).message}`,
+    });
+  }
+}
+
+// ─── INTERNAL test-only mockable layer ─────────────────────────────
+
+/**
+ * Test-only mockable layer for filesystem operations whose failure modes
+ * Slice 5 ordering tests need to inject. Mirrors the
+ * `session-id-discovery.ts` `INTERNAL` pattern — production code paths
+ * funnel through these wrappers; tests reassign properties to verify the
+ * surrounding control flow.
+ *
+ * Usage:
+ *   const original = INTERNAL.unlinkSentinel;
+ *   INTERNAL.unlinkSentinel = () => { throw Object.assign(new Error(), {code: "EACCES"}); };
+ *   try { await releaseIdentity(...); } finally { INTERNAL.unlinkSentinel = original; }
+ */
+export const INTERNAL = {
+  /** Wraps `unlinkSync` for the sentinel-unlink step in
+   *  `releaseIdentity`. Tests inject failures here to exercise the
+   *  metadata-first ordering guarantee (Slice 5 RE-6). */
+  unlinkSentinel: (path: string): void => {
+    unlinkSync(path);
+  },
+};
 
 /**
  * Scan the identities/ directory for an existing claim by `sessionId`.
