@@ -145,9 +145,26 @@ export function channelIdFromHandoff(handoffPath: string): string {
 }
 
 /**
- * Canonical session-id resolver. Prefers `CLAUDE_SESSION_ID` (tests) then
- * the hook input's raw session_id. Throws loudly if neither is available —
- * never guesses.
+ * Canonical session-id resolver for channels-internal callers. Prefers
+ * `CLAUDE_SESSION_ID` (tests) then the hook input's raw session_id. Throws
+ * loudly if neither is available — never guesses.
+ *
+ * **Cross-edge env-var contract (ARCH-1, plan vivid-seeking-crayon §1):**
+ * The plugin hosts TWO resolvers reading `CLAUDE_SESSION_ID`:
+ *   (a) THIS function — lenient `isValidSessionId` gate (path-safety only).
+ *       Reachable as `claude-conductor/channels/api`. Used here because
+ *       channel paths only need a path-safe id; tightening to UUID-shape
+ *       would break test fixtures that use short ids ("alice", "bob").
+ *   (b) `shared/session-id-discovery.ts:resolveSessionId` — strict UUID
+ *       gate, with mtime/ppid fallback discovery. Reachable as
+ *       `claude-conductor/shared/session-id-discovery`. Used in CLI-context
+ *       where there's no hook input payload.
+ * The divergence is intentional. A non-UUID `CLAUDE_SESSION_ID` (e.g.,
+ * `"test-session"`) is accepted here verbatim but falls through (b)'s
+ * strict path to ppid/missing. Tests in `test/channels/api.test.ts` (case c)
+ * lock the divergence.
+ *
+ * @see src/shared/session-id-discovery.ts — strict-UUID CLI-context resolver
  */
 export function resolveSessionId(
   raw: Record<string, unknown> | undefined,
