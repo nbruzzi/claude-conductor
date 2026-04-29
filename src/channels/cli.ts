@@ -606,7 +606,7 @@ export async function runChannelsCli(
         // the sender has no claim (legacy / pre-join), the message
         // ships without identity+role and renders as `<unknown>: <body>`
         // per matrix row 5.
-        printJson(appendMessage({ channelId, message }));
+        printJson(await appendMessage({ channelId, message }));
         return;
       }
       case "read": {
@@ -813,7 +813,7 @@ export async function runChannelsCli(
             kind: "status",
             body: `peer-closed: identity ${peer} (session ${result.releasedClaim.session_id}) released by ${sid()}${force ? " (--force)" : ""}`,
           };
-          appendMessage({ channelId, message: peerClosedMessage });
+          await appendMessage({ channelId, message: peerClosedMessage });
           printJson({
             kind: "released",
             identity: peer,

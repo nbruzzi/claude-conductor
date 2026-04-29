@@ -172,7 +172,7 @@ describe("Consumer-shape smoke (TA-5 fix) — round-trip via published path", ()
     expect(meta.participants).toContain(sessionId);
 
     // Append via the public surface (not internal).
-    api.appendMessage({
+    await api.appendMessage({
       channelId,
       message: {
         ts: new Date().toISOString(),

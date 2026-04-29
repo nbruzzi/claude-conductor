@@ -737,71 +737,102 @@ export async function setIdentityRole(args: {
   });
 }
 
-/** Append a message. Large bodies are redirected to a sidecar file. */
-export function appendMessage(args: {
+/**
+ * Append a message. Large bodies are redirected to a sidecar file.
+ *
+ * Phase 2 Slice 1+2 (RE-W2-1 closure): the metadata-read + auto-attach +
+ * JSONL append cycle runs inside `withMetadataLock` so concurrent
+ * `setIdentityRole` / `closeStalePeerIdentity` / `removeIdentityClaim`
+ * cannot race the auto-attach scan and produce wrong-attribution messages
+ * (where the appended `role` disagrees with the role at-or-after-write
+ * time). The lock domain is per-channel; cross-channel sends remain
+ * parallel.
+ *
+ * **API-shape break (REV 2 ARCH-W0-7 acknowledgment):** this function was
+ * sync prior to Phase 2; it now returns `Promise<ChannelMessage>`. Every
+ * caller updates to `await`; cross-edge dotfiles consumers reach this via
+ * the Slice 3a shim which already exposes the new async signature.
+ *
+ * **Risk #1 mitigation:** the lock-hold cost is one `withMetadataLock`
+ * acquire per send; the metadata read + auto-attach scan are O(26) (NATO
+ * pool size). If 1000-iter property-fuzz throughput regresses > 20%
+ * post-merge, the follow-up is an RW-lock split (read for the auto-attach
+ * scan, exclusive only for metadata mutations) — not promised in this
+ * slice, just reserved as a Phase 3 follow-up slot.
+ */
+export async function appendMessage(args: {
   channelId: string;
   message: ChannelMessage;
-}): ChannelMessage {
+}): Promise<ChannelMessage> {
   const { channelId } = args;
   if (!existsSync(metadataPath(channelId))) {
     throw new Error(`[channels] channel ${channelId} does not exist`);
   }
-  const meta = readMetadata(channelId);
-  if (meta.closed_at) {
-    throw new Error(`[channels] channel ${channelId} is closed; cannot append`);
-  }
+  return withMetadataLock(channelId, () => {
+    const meta = readMetadata(channelId);
+    if (meta.closed_at) {
+      throw new Error(
+        `[channels] channel ${channelId} is closed; cannot append`,
+      );
+    }
 
-  let message = args.message;
+    let message = args.message;
 
-  // Slice 6: auto-attach `identity` + `role` from `metadata.identities`
-  // if the sender holds a claim. Legacy senders (no claim) keep both
-  // fields absent → `renderMessage` shows them as `<unknown>: <body>`
-  // (matrix row 5). Caller-wins: if the message already specifies
-  // either field, leave it untouched (allows tests + callers that need
-  // explicit override to bypass the auto-attach).
-  //
-  // Inline scan instead of importing `getIdentityForSession` from
-  // `./identity.ts` — identity.ts already imports from this module
-  // (`commitIdentityClaim`/`removeIdentityClaim`/etc.), so reverse-
-  // importing would create a cycle. The scan is O(26) max (NATO pool
-  // size) and `meta` is already in scope; no extra IO.
-  if (message.identity === undefined && message.role === undefined) {
-    const identities = meta.identities;
-    if (identities !== undefined) {
-      for (const [letter, claim] of Object.entries(identities)) {
-        if (claim.session_id === message.from) {
-          message = { ...message, identity: letter, role: claim.role };
-          break;
+    // Slice 6: auto-attach `identity` + `role` from `metadata.identities`
+    // if the sender holds a claim. Legacy senders (no claim) keep both
+    // fields absent → `renderMessage` shows them as `<unknown>: <body>`
+    // (matrix row 5). Caller-wins: if the message already specifies
+    // either field, leave it untouched (allows tests + callers that need
+    // explicit override to bypass the auto-attach).
+    //
+    // Inline scan instead of importing `getIdentityForSession` from
+    // `./identity.ts` — identity.ts already imports from this module
+    // (`commitIdentityClaim`/`removeIdentityClaim`/etc.), so reverse-
+    // importing would create a cycle. The scan is O(26) max (NATO pool
+    // size) and `meta` is already in scope; no extra IO.
+    //
+    // Phase 2 Slice 1+2: this read is now serialized under
+    // `withMetadataLock` against `setIdentityRole`/`closeStalePeerIdentity`/
+    // `removeIdentityClaim`; the attached `role` matches metadata's role
+    // at-or-before append time even under concurrent role flips.
+    if (message.identity === undefined && message.role === undefined) {
+      const identities = meta.identities;
+      if (identities !== undefined) {
+        for (const [letter, claim] of Object.entries(identities)) {
+          if (claim.session_id === message.from) {
+            message = { ...message, identity: letter, role: claim.role };
+            break;
+          }
         }
       }
     }
-  }
 
-  const initialLine = serializeLine(message);
-  if (
-    Buffer.byteLength(initialLine, "utf-8") > SMALL_MESSAGE_MAX_BYTES &&
-    message.body
-  ) {
-    const ref = writeBodyFile(channelId, message.body);
-    // Preserve identity/role/version on the body-shunt rewrite — Slice 6
-    // attribution must survive the sidecar redirect (otherwise large
-    // bodies render as `<unknown> [body-ref:<ref>]` which is incorrect
-    // when the sender held a claim).
-    const shunted: ChannelMessage = {
-      ts: message.ts,
-      from: message.from,
-      kind: message.kind,
-      body_ref: ref,
-    };
-    if (message.identity !== undefined) shunted.identity = message.identity;
-    if (message.role !== undefined) shunted.role = message.role;
-    if (message.version !== undefined) shunted.version = message.version;
-    message = shunted;
-  }
-  const line = serializeLine(message);
-  appendLineAtomically(messagesPath(channelId), line);
-  touchHeartbeat(channelId, message.from);
-  return message;
+    const initialLine = serializeLine(message);
+    if (
+      Buffer.byteLength(initialLine, "utf-8") > SMALL_MESSAGE_MAX_BYTES &&
+      message.body
+    ) {
+      const ref = writeBodyFile(channelId, message.body);
+      // Preserve identity/role/version on the body-shunt rewrite — Slice 6
+      // attribution must survive the sidecar redirect (otherwise large
+      // bodies render as `<unknown> [body-ref:<ref>]` which is incorrect
+      // when the sender held a claim).
+      const shunted: ChannelMessage = {
+        ts: message.ts,
+        from: message.from,
+        kind: message.kind,
+        body_ref: ref,
+      };
+      if (message.identity !== undefined) shunted.identity = message.identity;
+      if (message.role !== undefined) shunted.role = message.role;
+      if (message.version !== undefined) shunted.version = message.version;
+      message = shunted;
+    }
+    const line = serializeLine(message);
+    appendLineAtomically(messagesPath(channelId), line);
+    touchHeartbeat(channelId, message.from);
+    return message;
+  });
 }
 
 /** Read all messages in order. Skips corrupt lines with a single warning. */

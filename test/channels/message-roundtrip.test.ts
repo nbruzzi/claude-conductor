@@ -79,7 +79,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("minimal message (ts, from, kind, body)", async () => {
       await setup("c-min");
       const sent = baseMsg({ body: "hello" });
-      appendMessage({ channelId: "c-min", message: sent });
+      await appendMessage({ channelId: "c-min", message: sent });
       const [received] = readMessages("c-min");
       expect(received).toBeDefined();
       expect(received?.ts).toBe(sent.ts);
@@ -92,7 +92,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
       await setup("c-kinds");
       const kinds: ChannelKind[] = ["note", "question", "handoff", "status"];
       for (const k of kinds) {
-        appendMessage({
+        await appendMessage({
           channelId: "c-kinds",
           message: baseMsg({ kind: k, body: `body-${k}` }),
         });
@@ -106,7 +106,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
   describe("Slice 1 additive fields (identity, role)", () => {
     it("preserves identity field across round-trip", async () => {
       await setup("c-id");
-      appendMessage({
+      await appendMessage({
         channelId: "c-id",
         message: baseMsg({ identity: "Alpha", body: "with-identity" }),
       });
@@ -116,7 +116,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
 
     it("preserves role field across round-trip", async () => {
       await setup("c-role");
-      appendMessage({
+      await appendMessage({
         channelId: "c-role",
         message: baseMsg({ role: "pen", body: "with-role" }),
       });
@@ -128,7 +128,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
       await setup("c-roles");
       const roles: ChannelRole[] = ["pen", "queue", "out"];
       for (const r of roles) {
-        appendMessage({
+        await appendMessage({
           channelId: "c-roles",
           message: baseMsg({ role: r, identity: "Alpha", body: `r-${r}` }),
         });
@@ -140,7 +140,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
 
     it("preserves identity + role together (Slice 6 send-attached shape)", async () => {
       await setup("c-both");
-      appendMessage({
+      await appendMessage({
         channelId: "c-both",
         message: baseMsg({
           identity: "Bravo",
@@ -155,7 +155,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
 
     it("optional fields absent → undefined post-readback (not null or empty string)", async () => {
       await setup("c-abs");
-      appendMessage({
+      await appendMessage({
         channelId: "c-abs",
         message: baseMsg({ body: "legacy-shape" }),
       });
@@ -170,7 +170,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("preserves UTF-8 multibyte characters", async () => {
       await setup("c-utf8");
       const content = "héllo 世界 🦀 αβγ";
-      appendMessage({
+      await appendMessage({
         channelId: "c-utf8",
         message: baseMsg({ body: content }),
       });
@@ -181,7 +181,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("preserves CRLF + tab + special characters", async () => {
       await setup("c-special");
       const content = "line1\r\nline2\tcolumn\twith\rcarriage";
-      appendMessage({
+      await appendMessage({
         channelId: "c-special",
         message: baseMsg({ body: content }),
       });
@@ -192,7 +192,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("preserves quotes + backslashes + braces", async () => {
       await setup("c-escape");
       const content = `{"json":"in body","nested":{"key":"value\\\\with\\""}}`;
-      appendMessage({
+      await appendMessage({
         channelId: "c-escape",
         message: baseMsg({ body: content }),
       });
@@ -205,7 +205,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("large body shunted to body_ref + readable round-trip", async () => {
       await setup("c-large");
       const big = "x".repeat(8 * 1024);
-      const appended = appendMessage({
+      const appended = await appendMessage({
         channelId: "c-large",
         message: baseMsg({ body: big }),
       });
@@ -223,7 +223,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
       await setup("c-order");
       const N = 10;
       for (let i = 0; i < N; i++) {
-        appendMessage({
+        await appendMessage({
           channelId: "c-order",
           message: baseMsg({ body: `msg-${i}` }),
         });
@@ -238,7 +238,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("preserves ts ordering ascending", async () => {
       await setup("c-ts");
       for (let i = 0; i < 5; i++) {
-        appendMessage({
+        await appendMessage({
           channelId: "c-ts",
           message: baseMsg({ body: `t-${i}` }),
         });
@@ -280,7 +280,7 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
     it("invalid kind dropped from read (schema rejection)", async () => {
       await setup("c-bad");
       const path = join(resolveChannelsDir(), "c-bad", "messages.jsonl");
-      appendMessage({
+      await appendMessage({
         channelId: "c-bad",
         message: baseMsg({ body: "valid" }),
       });

@@ -159,9 +159,9 @@ describe("channels", () => {
         sessionId: SESSION,
       });
       await closeChannel({ channelId: "c-c", sessionId: SESSION });
-      expect(() => appendMessage({ channelId: "c-c", message: msg() })).toThrow(
-        /closed/u,
-      );
+      await expect(
+        appendMessage({ channelId: "c-c", message: msg() }),
+      ).rejects.toThrow(/closed/u);
     });
 
     it("close is idempotent", async () => {
@@ -195,7 +195,10 @@ describe("channels", () => {
         handoffId: "c-m",
         sessionId: SESSION,
       });
-      appendMessage({ channelId: "c-m", message: msg({ body: "hello" }) });
+      await appendMessage({
+        channelId: "c-m",
+        message: msg({ body: "hello" }),
+      });
       const msgs = readMessages("c-m");
       expect(msgs).toHaveLength(1);
       expect(msgs[0]?.body).toBe("hello");
@@ -209,7 +212,7 @@ describe("channels", () => {
         sessionId: SESSION,
       });
       const big = "x".repeat(8 * 1024);
-      const appended = appendMessage({
+      const appended = await appendMessage({
         channelId: "c-big",
         message: msg({ body: big }),
       });
@@ -228,7 +231,7 @@ describe("channels", () => {
         handoffId: "c-corrupt",
         sessionId: SESSION,
       });
-      appendMessage({
+      await appendMessage({
         channelId: "c-corrupt",
         message: msg({ body: "good-1" }),
       });
@@ -238,7 +241,7 @@ describe("channels", () => {
         readFileSync(path, "utf-8") + "this is not json\n",
         "utf-8",
       );
-      appendMessage({
+      await appendMessage({
         channelId: "c-corrupt",
         message: msg({ body: "good-2" }),
       });
