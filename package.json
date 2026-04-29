@@ -103,6 +103,11 @@
       "import": "./src/hooks/checks/channel-gc.ts",
       "default": "./src/hooks/checks/channel-gc.ts"
     },
+    "./hooks/checks/channels-gc-reaper": {
+      "types": "./src/hooks/checks/channels-gc-reaper.ts",
+      "import": "./src/hooks/checks/channels-gc-reaper.ts",
+      "default": "./src/hooks/checks/channels-gc-reaper.ts"
+    },
     "./hooks/checks/config-protection": {
       "types": "./src/hooks/checks/config-protection.ts",
       "import": "./src/hooks/checks/config-protection.ts",

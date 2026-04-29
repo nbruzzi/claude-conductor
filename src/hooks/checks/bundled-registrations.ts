@@ -2,7 +2,7 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Bundled-check registrations (18 generic discipline-as-code checks).
+ * Bundled-check registrations (19 generic discipline-as-code checks).
  *
  * Per extraction-manifest §§ 194–225: this module owns the plugin-bound
  * registrations. In batch 4 it moves to the plugin alongside registry.ts and
@@ -31,6 +31,7 @@ import { check as checkTestGate } from "./test-gate.ts";
 import { check as checkHandoffLatestGuard } from "./handoff-latest-guard.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
 import { check as checkChannelGc } from "./channel-gc.ts";
+import { check as checkChannelsGcReaper } from "./channels-gc-reaper.ts";
 import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
 import { check as checkSessionPresenceRegister } from "./session-presence-register.ts";
 import { check as checkIdentityInjector } from "./identity-injector.ts";
@@ -175,6 +176,14 @@ export function registerBundled(
       "Archive stale inter-session channels and prune archive (30-day retention, 100-entry cap)",
     canBlock: false,
     profiles: ["minimal", "standard", "strict"],
+  });
+  builder.register("session-start", {
+    name: "channels-gc-reaper",
+    fn: checkChannelsGcReaper,
+    description:
+      "Phase 2 Slice 4 — sweep orphan channel-identity sentinels with own-before-unlink discipline; rate-limited 1/5min/channel; 90-s mtime gate (3 × LOCK_STALE_MS) + sweep-phase invariant re-check",
+    canBlock: false,
+    profiles: ["standard", "strict"],
   });
   builder.register("session-start", {
     name: "active-channels-load",

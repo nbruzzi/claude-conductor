@@ -53,7 +53,13 @@ import { channelsDir } from "../shared/paths.ts";
  *  to a sidecar file and only a pointer message is appended. */
 const SMALL_MESSAGE_MAX_BYTES = 3 * 1024;
 
-const LOCK_STALE_MS = 30 * 1000;
+/** Lock-stale-steal threshold — `acquireLock` reclaims a lockfile whose
+ *  mtime exceeds this age, on the assumption the holder crashed. Exported
+ *  per Phase 2 Slice 4 — the channels-gc-reaper computes its mtime gate
+ *  as `3 * LOCK_STALE_MS` so future tuning of this constant automatically
+ *  tightens the reaper's race-safety margin (per `feedback-atomic-wiring-discipline.md`
+ *  + plan `lovely-dreaming-willow.md` §Race correctness). */
+export const LOCK_STALE_MS = 30 * 1000;
 const LOCK_MAX_ATTEMPTS = 5;
 const LOCK_BASE_DELAY_MS = 50;
 
@@ -281,7 +287,18 @@ function releaseLock(fd: number, lockPath: string): void {
   }
 }
 
-async function withMetadataLock<T>(
+/** Run `fn` while holding the per-channel metadata lock. Atomic vs other
+ *  metadata mutations on the same channel; does NOT serialize against
+ *  sentinel-file `linkSync` operations (claimIdentity acquires sentinels
+ *  BEFORE entering the lock).
+ *
+ *  Exported per Phase 2 Slice 4 — the channels-gc-reaper holds this lock
+ *  during its mark-and-sweep passes for atomic-snapshot semantics vs
+ *  concurrent metadata writers (commitIdentityClaim, removeIdentityClaim,
+ *  setIdentityRole). Sentinel-side race protection is the reaper's mtime
+ *  gate + sweep-phase invariant re-check, NOT this lock. See
+ *  `feedback-atomic-wiring-discipline.md` ARCH-3 inline comment. */
+export async function withMetadataLock<T>(
   id: string,
   fn: () => T | Promise<T>,
 ): Promise<T> {
