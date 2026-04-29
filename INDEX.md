@@ -137,6 +137,7 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 - [src/channels/identity.ts](src/channels/identity.ts) — Phase 1 Slice 2 NATO identity primitive. `NATO_POOL` (26 letters Alpha…Zulu) + `NatoIdentity` literal-union + `isValidIdentity` validator + `claimIdentity` race-free assignment via `linkSync`-on-tmp create-only EEXIST primitive (sibling pattern of `active-sessions/index.ts:writeMetaIfMissing`). Slice 2.1 closure adds `isValidArtifactId` boundary gate (Wave 1 RE-W1-2), `writeFileSync` `{flag: "wx"}` for tmp creation (Wave 1 RE-W1-4), and commit-after-claim metadata write via `commitIdentityClaim` (Wave 1 ARCH-1). Slice 2.2 closure adds reconcile-on-rejoin per Decision D. Slice 5 adds `setRole`, `getIdentityForSession`, `releaseIdentity`, `unlinkIdentitySentinelOrLogOrphan`, `IdentityNotHeldError`, `INTERNAL.unlinkSentinel` (mockable layer for failure-injection tests). `releaseIdentity` ordering: metadata-write first, sentinel-unlink second per Decision F.
 - [src/channels/api.ts](src/channels/api.ts) — Phase 1 Slice 1 curated public API surface for Phase 2+ hook consumers (per plan v2 §Q4). Slice 3a widened to 18 value + 8 type re-exports for Slice 3b's dotfiles shim. Internal helpers stay private; identity primitives + internal-flow primitives intentionally NOT re-exported per Decisions E/H + Slice 8 ARCH-W2-6 surface-curation policy comment.
 - [src/channels/render.ts](src/channels/render.ts) — Phase 1 Slice 6 7-cell display matrix for `read` rendering per parent plan §311-321. Handles all `(identity, role)` × `(message-shape)` cells including legacy `<unknown>: <body>` fallback. 2 soft-wrap edge handlers for terminal width.
+- [src/channels/identity-context.ts](src/channels/identity-context.ts) — Phase 2 Slice 5 cross-channel identity-context aggregator. Returns per-channel `{self, peers}` for a session via `getIdentityContextForSession(sid)`; consumed by `identity-injector` (Slice 5) and pending `teammate-idle-reminder` (Slice 7). Sync API; skip-on-error per channel; archived channels excluded.
 
 ### Active sessions (`src/active-sessions/`)
 
@@ -173,6 +174,7 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 **SessionStart / Stop hooks (channel-touching):**
 
 - `active-channels-load.ts`, `channel-gc.ts`, `session-presence-register.ts`, `session-presence-unregister.ts`.
+- `identity-injector.ts` (Phase 2 Slice 5) — surface NATO-identity context (self letter + role + peer roster) for claimed channels on SessionStart. Per-session emission cursor at `<channel-dir>/identity-emit/<sid>.json` avoids re-emitting unchanged context. fail-open + breadcrumb class.
 
 **Stop-time auxiliary:**
 

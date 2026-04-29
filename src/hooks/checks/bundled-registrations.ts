@@ -33,6 +33,7 @@ import { check as checkSessionPresenceUnregister } from "./session-presence-unre
 import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
 import { check as checkSessionPresenceRegister } from "./session-presence-register.ts";
+import { check as checkIdentityInjector } from "./identity-injector.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -179,6 +180,14 @@ export function registerBundled(
     fn: checkSessionPresenceRegister,
     description:
       "Touch a presence heartbeat for the current artifact so peers can detect us before our first Edit",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+  builder.register("session-start", {
+    name: "identity-injector",
+    fn: checkIdentityInjector,
+    description:
+      "Phase 2 Slice 5 — surface NATO-identity context (identity, role, peer roster) for channels where this session has a claim. Per-session emission cursor avoids re-emitting unchanged context.",
     canBlock: false,
     profiles: ["standard", "strict"],
   });
