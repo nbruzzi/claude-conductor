@@ -153,6 +153,11 @@
       "import": "./src/hooks/checks/identity-injector.ts",
       "default": "./src/hooks/checks/identity-injector.ts"
     },
+    "./hooks/checks/task-coordinator": {
+      "types": "./src/hooks/checks/task-coordinator.ts",
+      "import": "./src/hooks/checks/task-coordinator.ts",
+      "default": "./src/hooks/checks/task-coordinator.ts"
+    },
     "./channels/identity-context": {
       "types": "./src/channels/identity-context.ts",
       "import": "./src/channels/identity-context.ts",
