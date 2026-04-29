@@ -34,6 +34,7 @@ import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
 import { check as checkSessionPresenceRegister } from "./session-presence-register.ts";
 import { check as checkIdentityInjector } from "./identity-injector.ts";
+import { check as checkTaskCoordinator } from "./task-coordinator.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -106,6 +107,14 @@ export function registerBundled(
     description: "Warn when editing .env, CI configs, Docker, Claude settings",
     canBlock: false,
     profiles: ["minimal", "standard", "strict"],
+  });
+  builder.register("pre-tool-use", {
+    name: "task-coordinator",
+    fn: checkTaskCoordinator,
+    description:
+      "Phase 2 Slice 6 — gate Task tool dispatches against this session's NATO role on every claimed channel. Hard-block role=out (sibling-parity with send role-gate); soft-warn role=queue; pass on role=pen or no claim. Fail-open + breadcrumb on read failures.",
+    canBlock: true,
+    profiles: ["standard", "strict"],
   });
 
   // post-tool-use
