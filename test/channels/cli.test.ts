@@ -275,10 +275,16 @@ describe("channels CLI — Slice 5 identity verbs (subprocess)", () => {
       kind: string;
       identity: string;
       previous_session_id: string;
+      orphan_sentinel: boolean;
+      sentinel_error?: { code: string; detail: string };
     };
     expect(parsed.kind).toBe("released");
     expect(parsed.identity).toBe("Alpha");
     expect(parsed.previous_session_id).toBe(PEER_SESSION_ID);
+    // Phase 2 Slice 3 RE-W2-4: orphan_sentinel field always present.
+    // Happy path: false (unlink succeeded; no sentinel_error).
+    expect(parsed.orphan_sentinel).toBe(false);
+    expect(parsed.sentinel_error).toBeUndefined();
 
     // Metadata: identities['Alpha'] gone.
     const meta = readMetadata("c-cli-close");

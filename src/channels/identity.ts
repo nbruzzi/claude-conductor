@@ -445,11 +445,37 @@ export async function releaseIdentity(
  * can reuse the same orphan-handling discipline without duplicating the
  * try/catch.
  */
+/**
+ * Discriminated result of `unlinkIdentitySentinelOrLogOrphan`. Phase 2
+ * Slice 3 closure (RE-W2-4) — replaces the prior `void` return so callers
+ * (notably `close-peer` CLI verb) can surface orphan-sentinel state in
+ * structured output without re-doing the unlink.
+ *
+ * `ok: true` → sentinel was successfully unlinked.
+ * `ok: false, code: "ENOENT"` → sentinel was already absent at unlink time
+ *   (race with concurrent reconciler or pre-released sentinel). NOT a true
+ *   orphan; metadata is consistent.
+ * `ok: false, code: "EACCES" | "EBUSY"` → unlink rejected by the OS for a
+ *   specific reason. Sentinel persists as a TRUE orphan, recoverable on
+ *   next `claimIdentity` reconcile-on-rejoin (Slice 2.2 Decision D).
+ * `ok: false, code: "OTHER"` → unlink failed for an unrecognized reason
+ *   (errno not in the typed set). `detail` carries the original message.
+ *
+ * Per plan prismatic-orbiting-mesh §Slice 3.
+ */
+export type UnlinkResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly code: "EACCES" | "EBUSY" | "ENOENT" | "OTHER";
+      readonly detail: string;
+    };
+
 export function unlinkIdentitySentinelOrLogOrphan(
   channelId: string,
   identity: NatoIdentity,
   releasedClaim: IdentityClaim,
-): void {
+): UnlinkResult {
   if (!isValidArtifactId(channelId)) {
     throw new Error(
       `[channels-identity] unlinkIdentitySentinelOrLogOrphan: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
@@ -463,25 +489,35 @@ export function unlinkIdentitySentinelOrLogOrphan(
   const sentinel = identitySentinelPath(channelId, identity);
   try {
     INTERNAL.unlinkSentinel(sentinel);
+    return { ok: true };
   } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    if (code === "ENOENT") {
-      // Already gone — fine; metadata was the canonical mutation.
-      return;
+    const errno = (err as NodeJS.ErrnoException | undefined)?.code;
+    const detail = err instanceof Error ? err.message : String(err);
+    if (errno === "ENOENT") {
+      // Already gone — metadata was the canonical mutation. Surface
+      // discriminated for callers that want to distinguish "race-cleared"
+      // from a true orphan; do NOT log to presence-failure-log because
+      // ENOENT is the expected race outcome.
+      return { ok: false, code: "ENOENT", detail };
     }
-    // Non-ENOENT failure. Metadata removal already succeeded so the
-    // released identity won't be visible to Slice 5 verbs. The orphan
-    // sentinel is reconcilable on next claim via Slice 2.2 Decision D.
-    // Log for operator visibility; do NOT propagate — propagation would
-    // obscure the successful metadata removal.
+    // True orphan: metadata removal already succeeded so the released
+    // identity won't be visible to Slice 5 verbs, but the sentinel
+    // persists. Reconcilable on next claim via Slice 2.2 Decision D.
+    // Log for operator visibility (presence-failure-log is the
+    // breadcrumb channel); do NOT throw — propagation would obscure
+    // the successful metadata removal.
     appendPresenceFailure({
       timestamp: new Date().toISOString(),
       source: "channels-identity",
       kind: "write-failed",
       sessionId: releasedClaim.session_id,
       artifactPath: sentinel,
-      detail: `orphan sentinel after metadata-release (reconcile on next claim): ${(err as Error).message}`,
+      detail: `orphan sentinel after metadata-release (reconcile on next claim): ${detail}`,
     });
+    if (errno === "EACCES" || errno === "EBUSY") {
+      return { ok: false, code: errno, detail };
+    }
+    return { ok: false, code: "OTHER", detail };
   }
 }
 
