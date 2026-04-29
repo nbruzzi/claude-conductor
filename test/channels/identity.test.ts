@@ -29,6 +29,7 @@ import {
   NatoExhaustedError,
   releaseIdentity,
   setRole,
+  unlinkIdentitySentinelOrLogOrphan,
 } from "../../src/channels/identity.ts";
 
 const SANDBOX = `/tmp/test-identity-${process.pid}`;
@@ -324,6 +325,158 @@ describe("identity", () => {
       // on next claimIdentity for this letter (Slice 2.2 Decision D).
       const sentinelPath = join(SANDBOX, "c-rel-3", "identities", "Alpha");
       expect(existsSync(sentinelPath)).toBe(true);
+    });
+  });
+
+  // ─── Phase 2 Slice 3 — UnlinkResult discriminated return (RE-W2-4) ───
+  //
+  // unlinkIdentitySentinelOrLogOrphan returns a discriminated union per
+  // plan prismatic-orbiting-mesh §Slice 3 so callers (close-peer CLI verb)
+  // can surface orphan-sentinel state in structured output without
+  // re-executing the unlink. These tests cover all 4 return discriminants.
+
+  describe("Phase 2 Slice 3 — unlinkIdentitySentinelOrLogOrphan discriminated return (RE-W2-4)", () => {
+    it("ok: true on successful unlink (happy path)", async () => {
+      await createChannel({
+        channelId: "c-unlink-ok",
+        handoffId: "c-unlink-ok",
+        sessionId: SESSION,
+      });
+      const claim = await claimIdentity({
+        channelId: "c-unlink-ok",
+        sessionId: SESSION,
+      });
+      // Direct call (releaseIdentity does the metadata removal first;
+      // here we exercise the unlink helper standalone after that).
+      const releasedClaim = {
+        session_id: SESSION,
+        role: claim.role,
+        joined_at: claim.joined_at,
+      };
+      const result = unlinkIdentitySentinelOrLogOrphan(
+        "c-unlink-ok",
+        "Alpha",
+        releasedClaim,
+      );
+      expect(result.ok).toBe(true);
+      // Sentinel gone post-unlink.
+      const sentinelPath = join(SANDBOX, "c-unlink-ok", "identities", "Alpha");
+      expect(existsSync(sentinelPath)).toBe(false);
+    });
+
+    it("ok: false, code: 'ENOENT' when sentinel was already absent (race-cleared)", async () => {
+      // Setup: claim then directly remove the sentinel out-of-band so the
+      // unlink helper hits ENOENT. Simulates the race where another
+      // reconciler beat us to the unlink.
+      await createChannel({
+        channelId: "c-unlink-enoent",
+        handoffId: "c-unlink-enoent",
+        sessionId: SESSION,
+      });
+      const claim = await claimIdentity({
+        channelId: "c-unlink-enoent",
+        sessionId: SESSION,
+      });
+      // Out-of-band sentinel removal.
+      const sentinelPath = join(
+        SANDBOX,
+        "c-unlink-enoent",
+        "identities",
+        "Alpha",
+      );
+      rmSync(sentinelPath, { force: true });
+
+      const releasedClaim = {
+        session_id: SESSION,
+        role: claim.role,
+        joined_at: claim.joined_at,
+      };
+      const result = unlinkIdentitySentinelOrLogOrphan(
+        "c-unlink-enoent",
+        "Alpha",
+        releasedClaim,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok === false) {
+        expect(result.code).toBe("ENOENT");
+        expect(typeof result.detail).toBe("string");
+      }
+    });
+
+    it("ok: false, code: 'EACCES' when unlink throws EACCES (true orphan)", async () => {
+      await createChannel({
+        channelId: "c-unlink-eacces",
+        handoffId: "c-unlink-eacces",
+        sessionId: SESSION,
+      });
+      const claim = await claimIdentity({
+        channelId: "c-unlink-eacces",
+        sessionId: SESSION,
+      });
+
+      const originalUnlink = INTERNAL.unlinkSentinel;
+      INTERNAL.unlinkSentinel = (_path: string) => {
+        throw Object.assign(new Error("simulated EACCES on unlink"), {
+          code: "EACCES",
+        });
+      };
+      try {
+        const releasedClaim = {
+          session_id: SESSION,
+          role: claim.role,
+          joined_at: claim.joined_at,
+        };
+        const result = unlinkIdentitySentinelOrLogOrphan(
+          "c-unlink-eacces",
+          "Alpha",
+          releasedClaim,
+        );
+        expect(result.ok).toBe(false);
+        if (result.ok === false) {
+          expect(result.code).toBe("EACCES");
+          expect(result.detail).toContain("simulated EACCES");
+        }
+      } finally {
+        INTERNAL.unlinkSentinel = originalUnlink;
+      }
+    });
+
+    it("ok: false, code: 'OTHER' when unlink throws an unrecognized errno", async () => {
+      await createChannel({
+        channelId: "c-unlink-other",
+        handoffId: "c-unlink-other",
+        sessionId: SESSION,
+      });
+      const claim = await claimIdentity({
+        channelId: "c-unlink-other",
+        sessionId: SESSION,
+      });
+
+      const originalUnlink = INTERNAL.unlinkSentinel;
+      INTERNAL.unlinkSentinel = (_path: string) => {
+        throw Object.assign(new Error("unrecognized errno"), {
+          code: "ENOTRECOVERABLE",
+        });
+      };
+      try {
+        const releasedClaim = {
+          session_id: SESSION,
+          role: claim.role,
+          joined_at: claim.joined_at,
+        };
+        const result = unlinkIdentitySentinelOrLogOrphan(
+          "c-unlink-other",
+          "Alpha",
+          releasedClaim,
+        );
+        expect(result.ok).toBe(false);
+        if (result.ok === false) {
+          expect(result.code).toBe("OTHER");
+          expect(result.detail).toContain("unrecognized errno");
+        }
+      } finally {
+        INTERNAL.unlinkSentinel = originalUnlink;
+      }
     });
   });
 
