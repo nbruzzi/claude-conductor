@@ -5,6 +5,9 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "claude-conductor": "./bin/claude-conductor"
+  },
   "engines": {
     "bun": ">=1.3.0",
     "claude-code": ">=2.1.32"
@@ -39,6 +42,26 @@
       "types": "./src/shared/presence-failure-log.ts",
       "import": "./src/shared/presence-failure-log.ts",
       "default": "./src/shared/presence-failure-log.ts"
+    },
+    "./shared/session-id-discovery": {
+      "types": "./src/shared/session-id-discovery.ts",
+      "import": "./src/shared/session-id-discovery.ts",
+      "default": "./src/shared/session-id-discovery.ts"
+    },
+    "./channels/api": {
+      "types": "./src/channels/api.ts",
+      "import": "./src/channels/api.ts",
+      "default": "./src/channels/api.ts"
+    },
+    "./channels/cli": {
+      "types": "./src/channels/cli.ts",
+      "import": "./src/channels/cli.ts",
+      "default": "./src/channels/cli.ts"
+    },
+    "./channels/identity": {
+      "types": "./src/channels/identity.ts",
+      "import": "./src/channels/identity.ts",
+      "default": "./src/channels/identity.ts"
     },
     "./hooks/registry": {
       "types": "./src/hooks/registry.ts",

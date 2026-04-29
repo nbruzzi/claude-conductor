@@ -1,0 +1,387 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 nbruzzi
+
+/**
+ * Session ID discovery for CLI-context invocations.
+ *
+ * Distinct from `src/hooks/session-id.ts` (which is the IN-HOOK canonical
+ * helper). Hook-context callers have access to `input.raw.session_id` —
+ * use the hook helper there. This file is only for CLI-context callers
+ * (channels CLI, future todos CLI extensions, etc.) where there is no hook
+ * input payload available.
+ *
+ * **Cross-edge env-var contract (ARCH-1, plan vivid-seeking-crayon §1):**
+ * The plugin hosts TWO resolvers reading `CLAUDE_SESSION_ID`:
+ *   (a) `src/channels/index.ts:resolveSessionId` — lenient `isValidSessionId`
+ *       gate (path-safety only); reachable as `claude-conductor/channels/api`
+ *       via the curated re-export. Used for channel-internal session-id
+ *       handling where any path-safe id works.
+ *   (b) THIS module's `resolveSessionId` — strict UUID-shape gate; reachable
+ *       as `claude-conductor/shared/session-id-discovery`. Used in CLI-context
+ *       where mtime/ppid fallback discovery requires UUID-tight matching.
+ * The divergence is intentional. A non-UUID `CLAUDE_SESSION_ID` (e.g.,
+ * `"test-session"`) hits (a)'s lenient path verbatim but falls through (b)'s
+ * strict path to ppid/missing. Tests in `test/channels/api.test.ts` (case c)
+ * lock the divergence.
+ *
+ * Why mtime is acceptable here when `hooks/session-id.ts` forbids it:
+ * hook-context has a canonical, verified session_id passed in by Claude
+ * Code itself. CLI-context doesn't. The fallback discovery uses mtime ONLY
+ * when (a) the env var isn't set and (b) the deterministic ppid-tree walk
+ * has exhausted retries. mtime here is a LAST RESORT, with body-validation
+ * (filename must match the embedded session_id field) and a sanity check
+ * (resolved id must have a matching `<pid>.json` written by the CC binary,
+ * per SE-2).
+ *
+ * Resolution order (FAIL-LOUD throughout):
+ *   1. `CLAUDE_SESSION_ID` env (strict UUID-shape)
+ *   2. PPID-tree walk: bun's process.ppid → bash → CC binary. Walks up to
+ *      MAX_PPID_DEPTH levels via `ps -o ppid= -p <pid>` looking for a
+ *      `~/.claude/sessions/<pid>.json` file written by the CC binary.
+ *      Empirical 2026-04-26: bun's direct ppid is the bash subprocess
+ *      that wrapped the Bash tool call; the CC binary is one hop further.
+ *   3. Cold-start retry on the walk (3 × 250ms = <1s budget)
+ *   4. mtime fallback on UUID-keyed telemetry-tracker files
+ *      (filename must equal embedded session_id; dedupe by sessionId)
+ *   5. Sanity check (per SE-2): discovered id must have a matching
+ *      `<pid>.json` from the CC binary; otherwise downgrade to missing
+ *   6. fail-loud (kind: "missing" | "ambiguous")
+ *
+ * @see src/hooks/session-id.ts — in-hook canonical resolver (different context)
+ * @see src/channels/index.ts:resolveSessionId — channels-internal lenient resolver
+ * @see src/active-sessions/index.ts — defensiveAgeMs / isValidSessionId
+ */
+
+import { readFileSync, lstatSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+
+/** Strict UUID v4-shaped regex; tighter than `isValidSessionId` (path-safety only). */
+const STRICT_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Bound the parent-process walk; pathological chains rejected. */
+const MAX_PPID_DEPTH = 10;
+
+/** Default mtime window for fallback discovery (1 minute). */
+const DEFAULT_WINDOW_MS = 60_000;
+
+/** Cold-start retry budget (3 attempts × 250ms = max ~750ms). */
+const DEFAULT_RETRY_COUNT = 3;
+const DEFAULT_RETRY_DELAY_MS = 250;
+
+/** Clock-skew tolerance for future-dated mtimes (5 min). Inlined to avoid coupling. */
+const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
+/** `ps` invocation timeout — short to avoid blocking CLI startup. */
+const PS_TIMEOUT_MS = 1000;
+
+export type DiscoveryResult =
+  | { kind: "env"; sessionId: string }
+  | { kind: "ppid"; sessionId: string; pid: number; source: string }
+  | { kind: "mtime"; sessionId: string; mtime: number; source: string }
+  | { kind: "missing" }
+  | {
+      kind: "ambiguous";
+      candidates: Array<{ sessionId: string; mtime: number; source: string }>;
+    };
+
+export type ResolveOptions = {
+  windowMs?: number;
+  sessionsDir?: string;
+  retryDelayMs?: number;
+  retryCount?: number;
+};
+
+type CCBinaryFile = { pid: number; sessionId: string };
+type TelemetryFile = { session_id: string };
+
+/**
+ * Compile-time-exhaustive default-branch helper (RE-4, plan vivid-seeking-crayon §2).
+ *
+ * If a future variant is added to `DiscoveryResult` and any switch over
+ * `result.kind` doesn't handle it, TypeScript narrows the unhandled
+ * variant to a non-`never` type at the `assertNever` call site, producing
+ * a compile error. This is stricter than relying on `noImplicitReturns`
+ * alone: that flag only catches missing returns, not missing case bodies.
+ */
+function assertNever(x: never): never {
+  throw new Error(
+    `Unreachable: unexpected DiscoveryResult variant ${JSON.stringify(x)}`,
+  );
+}
+
+function effectiveSessionsDir(opts?: ResolveOptions): string {
+  if (opts?.sessionsDir !== undefined) return opts.sessionsDir;
+  return join(process.env["HOME"] ?? homedir(), ".claude", "sessions");
+}
+
+function isStrictUUID(s: unknown): s is string {
+  return typeof s === "string" && STRICT_UUID.test(s);
+}
+
+function fileOwnedByMe(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    if (typeof process.geteuid === "function") {
+      return stat.uid === process.geteuid();
+    }
+    return true; // platforms without geteuid (Windows) — skip the check
+  } catch {
+    return false;
+  }
+}
+
+function readCCBinaryFile(path: string): CCBinaryFile | null {
+  try {
+    if (!fileOwnedByMe(path)) return null;
+    const text = readFileSync(path, "utf-8");
+    const obj: unknown = JSON.parse(text);
+    if (typeof obj !== "object" || obj === null) return null;
+    const pid = (obj as Record<string, unknown>)["pid"];
+    const sessionId = (obj as Record<string, unknown>)["sessionId"];
+    if (typeof pid !== "number" || !isStrictUUID(sessionId)) return null;
+    return { pid, sessionId };
+  } catch {
+    return null;
+  }
+}
+
+function readTelemetryFile(path: string): TelemetryFile | null {
+  try {
+    if (!fileOwnedByMe(path)) return null;
+    const text = readFileSync(path, "utf-8");
+    const obj: unknown = JSON.parse(text);
+    if (typeof obj !== "object" || obj === null) return null;
+    const sessionId = (obj as Record<string, unknown>)["session_id"];
+    if (!isStrictUUID(sessionId)) return null;
+    return { session_id: sessionId };
+  } catch {
+    return null;
+  }
+}
+
+function getParentPid(pid: number): number | null {
+  try {
+    const out = execSync(`ps -o ppid= -p ${pid}`, {
+      encoding: "utf-8",
+      timeout: PS_TIMEOUT_MS,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const parsed = parseInt(out, 10);
+    if (!Number.isInteger(parsed) || parsed === pid || parsed <= 1) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function walkPpidTree(
+  sessionsDir: string,
+): { pid: number; sessionId: string } | null {
+  let pid: number | null = process.ppid;
+  for (
+    let depth = 0;
+    depth < MAX_PPID_DEPTH && pid !== null && pid > 1;
+    depth++
+  ) {
+    const candidate = readCCBinaryFile(join(sessionsDir, `${pid}.json`));
+    if (candidate !== null) {
+      return { pid: candidate.pid, sessionId: candidate.sessionId };
+    }
+    pid = getParentPid(pid);
+  }
+  return null;
+}
+
+function sleepSync(ms: number): void {
+  // Cross-runtime synchronous sleep without busy-wait (Bun + Node).
+  const sab = new SharedArrayBuffer(4);
+  const ia = new Int32Array(sab);
+  Atomics.wait(ia, 0, 0, ms);
+}
+
+function ppidWalkWithRetry(
+  sessionsDir: string,
+  retryCount: number,
+  retryDelayMs: number,
+): { pid: number; sessionId: string } | null {
+  for (let attempt = 0; attempt <= retryCount; attempt++) {
+    const found = walkPpidTree(sessionsDir);
+    if (found !== null) return found;
+    if (attempt < retryCount) sleepSync(retryDelayMs);
+  }
+  return null;
+}
+
+function listMtimeCandidates(
+  sessionsDir: string,
+  windowMs: number,
+  now: number,
+): Array<{ sessionId: string; mtime: number; source: string }> {
+  let entries: string[];
+  try {
+    entries = readdirSync(sessionsDir);
+  } catch {
+    return [];
+  }
+
+  const candidates: Array<{
+    sessionId: string;
+    mtime: number;
+    source: string;
+  }> = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const stem = entry.slice(0, -5);
+    // Skip <PID>.json — those are handled by the ppid path
+    if (!isStrictUUID(stem)) continue;
+    const fullPath = join(sessionsDir, entry);
+
+    let mtime: number;
+    try {
+      mtime = lstatSync(fullPath).mtimeMs;
+    } catch {
+      continue;
+    }
+
+    // Defensive age (clock skew defense)
+    if (mtime > now + CLOCK_SKEW_TOLERANCE_MS) continue;
+    if (now - mtime > windowMs) continue;
+
+    const body = readTelemetryFile(fullPath);
+    if (body === null) continue;
+    // Filename must match embedded session_id (per SE-1)
+    if (body.session_id !== stem) continue;
+    // Dedupe by sessionId (per RE-2)
+    if (seen.has(body.session_id)) continue;
+    seen.add(body.session_id);
+
+    candidates.push({ sessionId: body.session_id, mtime, source: fullPath });
+  }
+
+  return candidates.sort((a, b) => b.mtime - a.mtime);
+}
+
+function sanityCheckHasCCFile(sessionId: string, sessionsDir: string): boolean {
+  // Per SE-2: discovered id MUST have a matching <pid>.json from CC binary
+  let entries: string[];
+  try {
+    entries = readdirSync(sessionsDir);
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const stem = entry.slice(0, -5);
+    // PID-keyed files only (numeric)
+    if (!/^\d+$/.test(stem)) continue;
+    const ccFile = readCCBinaryFile(join(sessionsDir, entry));
+    if (ccFile !== null && ccFile.sessionId === sessionId) return true;
+  }
+  return false;
+}
+
+export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
+  const sessionsDir = effectiveSessionsDir(opts);
+  const windowMs = opts?.windowMs ?? DEFAULT_WINDOW_MS;
+  const retryCount = opts?.retryCount ?? DEFAULT_RETRY_COUNT;
+  const retryDelayMs = opts?.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+
+  // 1. env path (strict UUID-shape per SE-1)
+  const envValue = process.env["CLAUDE_SESSION_ID"];
+  if (
+    typeof envValue === "string" &&
+    envValue.length > 0 &&
+    isStrictUUID(envValue)
+  ) {
+    return { kind: "env", sessionId: envValue };
+  }
+
+  // 2. ppid-tree walk + 3. cold-start retry
+  const ppidResult = ppidWalkWithRetry(sessionsDir, retryCount, retryDelayMs);
+  if (ppidResult !== null) {
+    // ppid path reads the CC binary file directly — no separate sanity check needed
+    return {
+      kind: "ppid",
+      sessionId: ppidResult.sessionId,
+      pid: ppidResult.pid,
+      source: join(sessionsDir, `${ppidResult.pid}.json`),
+    };
+  }
+
+  // 4. mtime fallback
+  const candidates = listMtimeCandidates(sessionsDir, windowMs, Date.now());
+  if (candidates.length === 0) return { kind: "missing" };
+  if (candidates.length === 1) {
+    const c = candidates[0];
+    if (c === undefined) return { kind: "missing" };
+    // 5. Sanity check (per SE-2)
+    if (!sanityCheckHasCCFile(c.sessionId, sessionsDir)) {
+      return { kind: "missing" };
+    }
+    return {
+      kind: "mtime",
+      sessionId: c.sessionId,
+      mtime: c.mtime,
+      source: c.source,
+    };
+  }
+  return { kind: "ambiguous", candidates };
+}
+
+function truncateId(sessionId: string): string {
+  if (sessionId.length <= 12) return sessionId;
+  return `${sessionId.slice(0, 8)}...${sessionId.slice(-4)}`;
+}
+
+export function formatRecoveryHint(result: DiscoveryResult): string {
+  switch (result.kind) {
+    case "env":
+    case "ppid":
+    case "mtime":
+      return "";
+    case "missing":
+      return "CLAUDE_SESSION_ID not set and no recent session telemetry found. Set explicitly: export CLAUDE_SESSION_ID=<your-session-id> and re-run.";
+    case "ambiguous": {
+      const lines = result.candidates.map(
+        (c) =>
+          `  ${truncateId(c.sessionId)} (touched ${new Date(c.mtime).toISOString()})`,
+      );
+      return `CLAUDE_SESSION_ID not set; ${result.candidates.length} recent sessions detected:\n${lines.join("\n")}\nSet explicitly to disambiguate: export CLAUDE_SESSION_ID=<your-session-id> and re-run.`;
+    }
+    default:
+      return assertNever(result);
+  }
+}
+
+export function describeSource(result: DiscoveryResult): string {
+  switch (result.kind) {
+    case "env":
+      return "env";
+    case "ppid":
+      return `process tree (resolved at pid ${result.pid})`;
+    case "mtime":
+      return `mtime fallback (touched ${new Date(result.mtime).toISOString()})`;
+    case "missing":
+      return "missing";
+    case "ambiguous":
+      return `ambiguous (${result.candidates.length} candidates)`;
+    default:
+      return assertNever(result);
+  }
+}
+
+/** Internal helpers exported for testing only. Do not import from production code. */
+export const INTERNAL = {
+  truncateId,
+  isStrictUUID,
+  walkPpidTree,
+  listMtimeCandidates,
+  sanityCheckHasCCFile,
+  readCCBinaryFile,
+  readTelemetryFile,
+};

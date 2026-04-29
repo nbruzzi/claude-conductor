@@ -42,7 +42,8 @@ export type PresenceFailureSource =
   | "session-collision-gate"
   | "session-presence-register"
   | "session-presence-unregister"
-  | "active-sessions-registry";
+  | "active-sessions-registry"
+  | "channels-identity";
 
 export type PresenceFailureKind =
   | "lock-timeout"
@@ -234,7 +235,8 @@ function isPresenceFailureSource(s: string): s is PresenceFailureSource {
     s === "session-collision-gate" ||
     s === "session-presence-register" ||
     s === "session-presence-unregister" ||
-    s === "active-sessions-registry"
+    s === "active-sessions-registry" ||
+    s === "channels-identity"
   );
 }
 
