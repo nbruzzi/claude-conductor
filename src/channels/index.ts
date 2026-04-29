@@ -539,6 +539,166 @@ export async function commitIdentityClaim(args: {
   });
 }
 
+/**
+ * Remove a NATO identity claim from `metadata.identities`. Sibling-write to
+ * `commitIdentityClaim` for the release path (Slice 5 close-peer + future
+ * manual release flows). Sub-write under `withMetadataLock` for atomicity
+ * against concurrent claim/join/close mutations.
+ *
+ * Returns the removed `IdentityClaim` so callers can attribute audit log
+ * events (e.g., orphan-sentinel warnings) to the original claimant session.
+ * Idempotent on absence: returns `null` and writes nothing.
+ *
+ * Used by `releaseIdentity` (src/channels/identity.ts) — RE-6 ordering
+ * requires this metadata write to succeed before the sentinel unlink so a
+ * crash mid-release leaves an orphan sentinel (recoverable on next claim
+ * via the reconcile-on-rejoin path per Slice 2.2 Decision D) rather than a
+ * phantom metadata entry with no sentinel (Slice 5 verbs would mistakenly
+ * trust it).
+ */
+export async function removeIdentityClaim(args: {
+  channelId: string;
+  identity: string;
+}): Promise<IdentityClaim | null> {
+  const { channelId, identity } = args;
+  // Defense-in-depth boundary validation per Slice 2.2 verification round
+  // RE-NEW-2 (sibling-parity with commitIdentityClaim). Direct callers
+  // outside identity.ts (Decision Q4 enables Phase 2 hook consumers) get
+  // the same path-traversal guard.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] removeIdentityClaim: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const existing = meta.identities;
+    if (existing === undefined) return null;
+    const removed = existing[identity];
+    if (removed === undefined) return null;
+    const nextIdentities: Record<string, IdentityClaim> = { ...existing };
+    delete nextIdentities[identity];
+    const next: ChannelMetadata = { ...meta, identities: nextIdentities };
+    writeMetadataRaw(channelId, next, removed.session_id);
+    return removed;
+  });
+}
+
+/**
+ * Atomically check a peer's heartbeat staleness AND remove its identity
+ * claim under a SINGLE `withMetadataLock` section. Slice 5 RE-6 close-peer
+ * race fix — without the same-lock sequence, a check-then-release split
+ * lets a second concurrent metadata mutator squeeze in between, and the
+ * staleness snapshot becomes irrelevant by the time the metadata write
+ * lands. (The peer's own `touchHeartbeat` is independent of this lock —
+ * heartbeat writes are not metadata-locked. The atomicity guarantee here
+ * is against OTHER metadata mutators (claim/setRole/release), which is
+ * the load-bearing race; the peer-heartbeat-write race is a tiny window
+ * relative to the > 60 s stale threshold and `--force` covers operator
+ * override.)
+ *
+ * Returns a discriminated result:
+ *   - `{kind: "released", releasedClaim}` — heartbeat was stale (or
+ *     `force === true`); metadata entry removed. Sentinel unlink is the
+ *     caller's responsibility (use
+ *     `unlinkIdentitySentinelOrLogOrphan` from `./identity.ts` for
+ *     RE-6-aligned orphan handling).
+ *   - `{kind: "still-active", ageMs}` — heartbeat is fresh; refused. The
+ *     CLI verb maps this to a non-zero exit with a `--force` hint.
+ *   - `{kind: "not-held"}` — the identity isn't claimed; nothing to
+ *     close.
+ *
+ * `ageMs === null` means the peer has no heartbeat file at all (never
+ * touched). Treated as stale (the most conservative interpretation —
+ * a peer that never heartbeated is presumed dead).
+ */
+export async function closeStalePeerIdentity(args: {
+  channelId: string;
+  identity: string;
+  staleThresholdMs: number;
+  force: boolean;
+}): Promise<
+  | { kind: "released"; releasedClaim: IdentityClaim }
+  | { kind: "still-active"; ageMs: number | null }
+  | { kind: "not-held" }
+> {
+  const { channelId, identity, staleThresholdMs, force } = args;
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] closeStalePeerIdentity: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const claim = meta.identities?.[identity];
+    if (claim === undefined) {
+      return { kind: "not-held" } as const;
+    }
+    // Heartbeat snapshot — read inside the lock so it's stable w/r/t
+    // other metadata mutators (the peer's own touchHeartbeat is
+    // independent; that's the documented narrow race).
+    const peerMtime = heartbeatMtime(channelId, claim.session_id);
+    const ageMs = peerMtime === null ? null : Date.now() - peerMtime;
+    const isStale = ageMs === null || ageMs > staleThresholdMs;
+    if (!isStale && !force) {
+      return { kind: "still-active", ageMs } as const;
+    }
+    const nextIdentities: Record<string, IdentityClaim> = {
+      ...meta.identities,
+    };
+    delete nextIdentities[identity];
+    const next: ChannelMetadata = { ...meta, identities: nextIdentities };
+    writeMetadataRaw(channelId, next, claim.session_id);
+    return { kind: "released", releasedClaim: claim } as const;
+  });
+}
+
+/**
+ * Atomically update the role of an existing identity claim. Read-modify-
+ * write under `withMetadataLock` so set-role races against concurrent
+ * claim/release/heartbeat operations are race-safe.
+ *
+ * Returns a discriminated result:
+ *   - `{kind: "updated", previousRole}` — the role was changed (or set to
+ *     the same value, idempotently).
+ *   - `{kind: "not-held"}` — the identity isn't claimed; no write is
+ *     performed. Callers (CLI's `set-role` verb) map this to exit 5 per
+ *     Slice 5 RE-6 — silent no-op is the failure mode being prevented.
+ *
+ * The discriminated return avoids importing `IdentityNotHeldError` from
+ * identity.ts (which would create a circular import); the caller wraps the
+ * `not-held` case in the appropriate error class.
+ */
+export async function setIdentityRole(args: {
+  channelId: string;
+  identity: string;
+  role: ChannelRole;
+}): Promise<
+  { kind: "updated"; previousRole: ChannelRole } | { kind: "not-held" }
+> {
+  const { channelId, identity, role } = args;
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] setIdentityRole: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return await withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const existing = meta.identities?.[identity];
+    if (existing === undefined) {
+      return { kind: "not-held" } as const;
+    }
+    const updated: IdentityClaim = { ...existing, role };
+    const identities: Record<string, IdentityClaim> = {
+      ...(meta.identities ?? {}),
+      [identity]: updated,
+    };
+    const next: ChannelMetadata = { ...meta, identities };
+    writeMetadataRaw(channelId, next, existing.session_id);
+    return { kind: "updated", previousRole: existing.role } as const;
+  });
+}
+
 /** Append a message. Large bodies are redirected to a sidecar file. */
 export function appendMessage(args: {
   channelId: string;
