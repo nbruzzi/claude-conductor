@@ -649,6 +649,16 @@ export async function removeIdentityClaim(args: {
  * `ageMs === null` means the peer has no heartbeat file at all (never
  * touched). Treated as stale (the most conservative interpretation —
  * a peer that never heartbeated is presumed dead).
+ *
+ * **Phase 2 Slice 1+2 RE-W0-8 audit-trail caveat:** the `peer-closed`
+ * status message that documents the close (posted by the operator's CLI
+ * via `appendMessage`) is best-effort post-metadata-commit. If the
+ * audit-trail JSONL append fails (disk full, fd cap, etc.), the metadata
+ * removal here is already committed — the close happened, but the audit
+ * line may be missing. Failure surfaces via `appendPresenceFailure`
+ * source=`channels-identity` and does NOT roll back the close. Operators
+ * cross-referencing audit lines should treat absence as a forensic gap,
+ * not as evidence the close didn't happen.
  */
 export async function closeStalePeerIdentity(args: {
   channelId: string;
