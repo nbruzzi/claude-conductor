@@ -222,10 +222,21 @@ async function acquireLock(lockPath: string): Promise<number> {
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt < LOCK_MAX_ATTEMPTS; attempt++) {
     try {
-      return openSync(
+      const fd = openSync(
         lockPath,
         fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
       );
+      // Wave 2 RE-W2-5: write owner pid into the lockfile so future
+      // acquireLock failures can surface the holder's pid in the error.
+      // Sibling pattern of `active-sessions/index.ts:writeMetaIfMissing`'s
+      // owner-of-meta convention. Best-effort — a writeSync failure does
+      // not invalidate the lock (we still hold the fd via O_EXCL).
+      try {
+        writeSync(fd, `${process.pid}\n`);
+      } catch {
+        /* ignore — fd ownership via O_EXCL is the load-bearing primitive */
+      }
+      return fd;
     } catch (err: unknown) {
       lastErr = err instanceof Error ? err : new Error(String(err));
       try {
@@ -242,8 +253,18 @@ async function acquireLock(lockPath: string): Promise<number> {
       await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
   }
+  // Wave 2 RE-W2-5: read the lockfile content to surface the holder pid in
+  // the failure message. Best-effort — an unreadable lockfile means we just
+  // omit the holder hint.
+  let holderHint = "";
+  try {
+    const holderPid = readFileSync(lockPath, "utf-8").trim();
+    if (holderPid !== "") holderHint = ` (held by pid ${holderPid})`;
+  } catch {
+    /* lockfile vanished between final attempt and read; no hint */
+  }
   throw new Error(
-    `[channels] failed to acquire lock ${lockPath}: ${lastErr?.message ?? "unknown"}`,
+    `[channels] failed to acquire lock ${lockPath}${holderHint}: ${lastErr?.message ?? "unknown"}`,
   );
 }
 

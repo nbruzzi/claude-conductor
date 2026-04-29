@@ -151,6 +151,23 @@ type DieOptions = {
   readonly remediation?: string;
 };
 
+/**
+ * Sentinel thrown after a successful die() call when `process.exit` was
+ * mocked (so the runtime did not actually terminate). Wave 2 RE-W2-6 fix:
+ * the runChannelsCli catch-all at the bottom of `runChannelsCli` would
+ * otherwise re-fire die() with category=UNCAUGHT, masking the original
+ * die's category/code/remediation. Tests that mock `process.exit` (none
+ * yet exist in tree, but the fd-leak in-process spy in cli-body-file is
+ * an example consumer that needed mocked exit) can detect this sentinel
+ * via `instanceof` to recognize "die already wrote stderr — let it bubble".
+ */
+class DieAlreadyHandled extends Error {
+  constructor() {
+    super("die() already wrote stderr; process.exit was mocked");
+    this.name = "DieAlreadyHandled";
+  }
+}
+
 function die(message: string, opts: DieOptions = {}): never {
   const code = opts.code ?? 1;
   const category = opts.category ?? "GENERAL";
@@ -169,7 +186,14 @@ function die(message: string, opts: DieOptions = {}): never {
       process.stderr.write(`  ${opts.remediation}\n`);
     }
   }
-  process.exit(code);
+  // Cast to drop the `: never` return type so TS sees the throw below as
+  // reachable. In production process.exit terminates and the throw is dead;
+  // when tests mock process.exit (treating it as `void`) the throw fires
+  // and the runChannelsCli catch-all re-throws via the DieAlreadyHandled
+  // sentinel rather than re-firing die() with UNCAUGHT.
+  const mockableExit = process.exit as (code?: number) => void;
+  mockableExit(code);
+  throw new DieAlreadyHandled();
 }
 
 function requireArg(argv: readonly string[], i: number, name: string): string {
@@ -773,6 +797,11 @@ export async function runChannelsCli(
         });
     }
   } catch (err) {
+    // Wave 2 RE-W2-6: if die() already ran (only possible when process.exit
+    // is mocked in tests), the original stderr write + category are already
+    // out. Re-throw the sentinel rather than firing die() again with
+    // UNCAUGHT, which would mask the original category/code/remediation.
+    if (err instanceof DieAlreadyHandled) throw err;
     const message = err instanceof Error ? err.message : String(err);
     die(message, { category: "UNCAUGHT" });
   }
