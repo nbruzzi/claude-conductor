@@ -280,4 +280,131 @@ describe("claude-conductor dispatcher", () => {
       expect(stdout).toContain("Usage:");
     });
   });
+
+  // ─── Slice 7 joint piece — verb-routing matrix ───
+  //
+  // Existing tests cover: --help/-h/help, channels:help, todos:no-args,
+  // unknown-subcommand, --json position-insensitivity, symlink chain depth.
+  // This matrix fills end-to-end pass-through + exit-code propagation
+  // gaps: argv positional + flag pass-through to the routed CLI; stdin
+  // pass-through for `channels send`; non-zero subcommand exit codes
+  // surface unchanged in the dispatcher; deferred routing (presence)
+  // hits the unknown-subcommand path with a helpful hint.
+  describe("verb-routing matrix (Slice 7 joint piece)", () => {
+    let routingDir: string;
+    beforeAll(() => {
+      routingDir = mkdtempSync(join(tmpdir(), "dispatcher-routing-"));
+    });
+    afterAll(() => {
+      rmSync(routingDir, { recursive: true, force: true });
+    });
+
+    function spawnSendWithStdin(
+      args: readonly string[],
+      body: string,
+    ): RunResult {
+      const proc = Bun.spawnSync({
+        cmd: [BINARY, ...args],
+        stdin: new TextEncoder().encode(body),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: routingDir,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+        },
+      });
+      return {
+        exitCode: proc.exitCode ?? -1,
+        stdout: new TextDecoder().decode(proc.stdout),
+        stderr: new TextDecoder().decode(proc.stderr),
+      };
+    }
+
+    it("routes 'channels create' + 'channels read' end-to-end through dispatcher", () => {
+      // create through dispatcher
+      const created = run(
+        ["channels", "create", "c-routing-1", "c-routing-1"],
+        {
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: routingDir,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+        },
+      );
+      expect(created.exitCode).toBe(0);
+      const createdParsed = JSON.parse(created.stdout) as {
+        participants: readonly string[];
+      };
+      expect(createdParsed.participants).toContain(TEST_SESSION_ID);
+
+      // read through dispatcher with --json (still structured) — verifies
+      // dispatcher passes positional + flag args correctly and the
+      // subcommand's output reaches dispatcher stdout unchanged.
+      const reads = run(["channels", "read", "c-routing-1", "--json"], {
+        CLAUDE_CONDUCTOR_CHANNELS_DIR: routingDir,
+        CLAUDE_SESSION_ID: TEST_SESSION_ID,
+      });
+      expect(reads.exitCode).toBe(0);
+      // Empty channel: read returns "[]" (well-formed JSON array).
+      const readsParsed = JSON.parse(reads.stdout) as readonly unknown[];
+      expect(Array.isArray(readsParsed)).toBe(true);
+    });
+
+    it("routes 'channels send' with stdin body through dispatcher (stdin pass-through)", () => {
+      // setup: create channel
+      run(["channels", "create", "c-routing-send", "c-routing-send"], {
+        CLAUDE_CONDUCTOR_CHANNELS_DIR: routingDir,
+        CLAUDE_SESSION_ID: TEST_SESSION_ID,
+      });
+      // send via dispatcher with stdin body — exercises the
+      // dispatcher → bun → channels/cli.ts stdin chain.
+      const result = spawnSendWithStdin(
+        ["channels", "send", "c-routing-send", "status"],
+        "matrix-test-body",
+      );
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout) as { body?: string };
+      expect(parsed.body).toBe("matrix-test-body");
+    });
+
+    it("propagates non-zero exit codes from subcommand (channels meta on missing channel)", () => {
+      const result = run(["channels", "meta", "no-such-channel"], {
+        CLAUDE_CONDUCTOR_CHANNELS_DIR: routingDir,
+        CLAUDE_SESSION_ID: TEST_SESSION_ID,
+      });
+      // Subcommand's non-zero exit must propagate through bash → bun →
+      // dispatcher. Without exit-code pass-through, the bash dispatcher
+      // would mask failures and return 0 even on subcommand errors.
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.length).toBeGreaterThan(0);
+    });
+
+    it("routes 'todos exists' to todos CLI (cross-subcommand routing)", () => {
+      // todos exists with a never-existed handoff id — todos CLI exits 1
+      // (NOT_FOUND) silently. The interesting assertion is that 'todos'
+      // routes at all (proves the SUBCOMMANDS table covers todos, not
+      // just channels) and that exit-code pass-through works for todos.
+      // We verify routing succeeded by checking stderr does NOT contain
+      // the unknown-subcommand hint that would fire if dispatcher
+      // rejected 'todos'.
+      const result = run(["todos", "exists", "no-such-handoff"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toLowerCase()).not.toContain("unknown subcommand");
+      expect(result.stderr.toLowerCase()).not.toContain(
+        "claude-conductor --help",
+      );
+    });
+
+    it("rejects 'presence' with unknown-subcommand error (Decision C — presence routing deferred)", () => {
+      // Slice 2.1 Decision C: dispatcher scope is channels + todos only
+      // for Phase 1; presence routing deferred to Phase 2. Verifying the
+      // rejection path proves the SUBCOMMANDS table doesn't accidentally
+      // accept 'presence' (which would silently break — there's no
+      // src/presence/cli.ts to spawn).
+      const result = run(["presence", "list"]);
+      expect(result.exitCode).not.toBe(0);
+      // Hint should point at --help so operator can see what IS routed.
+      const allOutput = (result.stdout + result.stderr).toLowerCase();
+      expect(allOutput).toContain("help");
+    });
+  });
 });

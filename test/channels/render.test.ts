@@ -166,6 +166,108 @@ describe("renderMessage — 2 soft-wrap scenarios", () => {
   });
 });
 
+describe("renderMessage — Slice 7 branch coverage gate", () => {
+  // Per plan vivid-seeking-crayon §212 — 95% branch coverage on render.ts.
+  // Existing 7-cell + 2-soft-wrap + warn-once tests already hit 100%
+  // line + function coverage; these additions close the residual branch
+  // gaps: suppressTimestamp option + Cell 7 both-body-and-body_ref
+  // explicit render output assertion.
+
+  it("suppressTimestamp: true omits the [ts] prefix", () => {
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "status",
+      identity: "Lima",
+      role: "queue",
+      body: "no-prefix-please",
+    };
+    expect(renderMessage(msg, { suppressTimestamp: true })).toBe(
+      "Lima (queue): no-prefix-please",
+    );
+  });
+
+  it("suppressTimestamp: false explicitly is equivalent to default", () => {
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "status",
+      identity: "Mike",
+      role: "pen",
+      body: "default-prefix",
+    };
+    expect(renderMessage(msg, { suppressTimestamp: false })).toBe(
+      `[${TS}] Mike (pen): default-prefix`,
+    );
+  });
+
+  it("Cell 7b: both body AND body_ref → renders inline body + warns 'both' key", () => {
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(
+      () => {},
+    );
+    try {
+      const msg: ChannelMessage = {
+        ts: TS,
+        from: FROM,
+        kind: "status",
+        identity: "November",
+        role: "queue",
+        body: "salvageable inline body",
+        body_ref: "ref-shouldnt-be-here",
+      };
+      // Cell 7b: schema violation. Salvage by rendering the inline
+      // body (cheaper-to-display path); body_ref ignored.
+      const rendered = renderMessage(msg);
+      expect(rendered).toBe(
+        `[${TS}] November (queue): salvageable inline body`,
+      );
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      const warning = consoleErrorSpy.mock.calls[0]?.[0];
+      expect(typeof warning).toBe("string");
+      expect(warning as string).toContain("both body AND body_ref");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("Cell 7a + 7b warnings use distinct keys (cross-key independence)", () => {
+    // Already covered indirectly by warn-once dedup test, but this is
+    // the explicit assertion that the keys 'missing-body' and
+    // 'both-body-and-body-ref' are independent in the warnedKeys Set —
+    // the rendering branch in render.ts uses different `warnOnce(key, …)`
+    // arguments for each subcase.
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(
+      () => {},
+    );
+    try {
+      const missingBody: ChannelMessage = {
+        ts: TS,
+        from: FROM,
+        kind: "status",
+        identity: "Oscar",
+      };
+      const bothBody: ChannelMessage = {
+        ts: TS,
+        from: FROM,
+        kind: "status",
+        identity: "Papa",
+        body: "x",
+        body_ref: "ref",
+      };
+      renderMessage(missingBody);
+      renderMessage(bothBody);
+      // Two distinct keys → two distinct warnings.
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(2);
+      // Repeating either key does not re-fire.
+      renderMessage(missingBody);
+      renderMessage(bothBody);
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});
+
 describe("renderMessage — warn-once dedup", () => {
   it("multiple messages with same malformed key emit console.error exactly once", () => {
     const consoleErrorSpy = spyOn(console, "error").mockImplementation(

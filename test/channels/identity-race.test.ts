@@ -182,8 +182,7 @@ describe("identity claim — subprocess stress (26-concurrent)", () => {
 
     // Default role is "queue" for every claimant (Slice 2 invariant).
     expect(claims.every((c) => c.role === "queue")).toBe(true);
-  }, // 60s timeout — subprocess startup + 26x linkSync contention can
-  // spike on slow CI. Each child should still finish in <2s in practice.
+  }, // spike on slow CI. Each child should still finish in <2s in practice. // 60s timeout — subprocess startup + 26x linkSync contention can
   60_000);
 });
 
@@ -223,8 +222,7 @@ describe("identity claim — in-process property-based fuzz", () => {
     // (1000 * avg(N=2,3,4)=3 = ~3000 total claims.)
     expect(totalClaims).toBeGreaterThanOrEqual(2000);
     expect(totalClaims).toBeLessThanOrEqual(4000);
-  }, // 90s timeout — 1000 iterations × ~30ms per iter = ~30s typical;
-  // headroom for slow CI runners.
+  }, // headroom for slow CI runners. // 90s timeout — 1000 iterations × ~30ms per iter = ~30s typical;
   90_000);
 
   it("50 iterations of N=20 concurrent claims yield distinct letters (high-N coverage)", async () => {
