@@ -27,6 +27,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 ## Architecture Decision Records (`docs/architecture/`)
 
 - [ADR-001 — Extraction strategy](docs/architecture/ADR-001-extraction-strategy.md) — coordinated branches, dotfiles-side vendoring, atomic flip on Phase 5 pass.
+- [hooks-layer.md](docs/architecture/hooks-layer.md) — Phase 2 Slice 4.5 operator mental-model doc for the hook layer. Firing order per BUNDLED_CHECKS_BY_EVENT, system-reminder composition, 3-tier failure-mode classification (fail-open silent / fail-open + breadcrumb / fail-loud), opt-out via CLAUDE_CONDUCTOR_DISABLE_HOOKS env var, Phase 1 ↔ Phase 2 hook composition rules, hook catalog (Phase 1 SHIPPED + Phase 2 PENDING-by-slice).
 
 ## Conventions (`docs/conventions/`)
 

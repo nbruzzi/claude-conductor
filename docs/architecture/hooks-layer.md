@@ -1,0 +1,242 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+Copyright 2026 nbruzzi
+-->
+
+# Hooks layer — operator mental model
+
+How `claude-conductor`'s hook checks compose at runtime. This doc is the operator's reference for: which hooks fire when, how their outputs concatenate, what their failure modes are, and how to disable or override them.
+
+Phase 1 shipped 17 hook checks; Phase 2 adds 4 (Slices 4–7). This doc covers both phases. Each new hook slice MUST update this doc as part of its commit.
+
+## Phase 2 status
+
+This doc ships with Phase 2 Slice 4.5 (cut from `phase-1-lane-b-binary` post-`v0.1.0-phase-1`). Phase 2 hook entries below are pending until each slice ships:
+
+| Slice | Hook                     | Status  |
+| ----- | ------------------------ | ------- |
+| 4     | `channels-gc-reaper`     | PENDING |
+| 5     | `identity-injector`      | PENDING |
+| 6     | `task-coordinator`       | PENDING |
+| 7     | `teammate-idle-reminder` | PENDING |
+
+This file's "PENDING" entries are placeholders. As each slice ships, the row above flips to "SHIPPED <commit-sha>" and the §Hook catalog below gains the concrete entry.
+
+---
+
+## Firing order
+
+Hooks fire in registry-determined order, NOT lexically. The registry is `src/hooks/bundled-check-names.ts:BUNDLED_CHECKS_BY_EVENT` — the array order per event is the firing order.
+
+Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
+
+### `pre-tool-use`
+
+1. `session-collision-gate` — refuses tool dispatch when another active session conflicts.
+2. `handoff-symlink-write-guard` — blocks writes to handoff symlinks.
+3. `fact-force` — enforces fact-force scope.
+4. `branch-enforcement` — refuses commits on protected branches without scope.
+5. `destructive-cmd` — gates `rm -rf`, `force push`, etc. behind explicit user approval.
+6. `prefer-bun` — nudges away from `npm`/`yarn` toward `bun`.
+7. `pre-commit` — runs the pre-commit gate (typecheck + format + lint + tests).
+8. `config-protection` — protects `~/.claude/` config from accidental overwrites.
+9. `sensitive-files` — refuses writes to sensitive paths (.env, credentials).
+10. **(Phase 2 Slice 6, PENDING):** `task-coordinator` — gates Task tool dispatch on channel role.
+
+### `post-tool-use`
+
+1. `auto-format` — runs prettier on modified files.
+2. `no-any` — refuses `any` in TypeScript.
+3. `no-enum` — refuses `enum` in TypeScript (use literal-union types).
+
+### `stop`
+
+1. `test-gate` — refuses end-of-session if tests fail (when test-gate-on enabled).
+2. `handoff-latest-guard` — verifies LATEST.md symlink integrity.
+3. `session-presence-unregister` — drops session from active-sessions registry.
+
+### `session-start`
+
+1. `channel-gc` — Phase 1 channel-archive gc.
+2. `active-channels-load` — Phase 1 active-channels surfacing.
+3. `session-presence-register` — registers session in active-sessions registry.
+4. **(Phase 2 Slice 4, PENDING):** `channels-gc-reaper` — Phase 2 sentinel/metadata reconciliation reaper.
+5. **(Phase 2 Slice 5, PENDING):** `identity-injector` — Phase 2 NATO-identity context surface.
+
+### `user-prompt-submit`
+
+1. **(Phase 2 Slice 7, PENDING):** `teammate-idle-reminder` — surfaces idle peers on prompt submission.
+
+Phase 2 hooks are appended to existing arrays — new hooks fire AFTER all Phase 1 hooks for the same event. Reordering existing hooks is out of scope for Phase 2.
+
+---
+
+## system-reminder composition
+
+When N hooks fire on the same event and emit `system-reminder`-class output, the dispatcher concatenates the outputs in firing order with `\n\n---\n\n` separators. Each hook's output is one block.
+
+Operator mental model: each `\n\n---\n\n`-separated block in a SessionStart message is one hook's output. The block order matches the firing order above.
+
+There is NO per-hook header or footer. Each hook is responsible for self-identifying its output via a leading `[<source>]` tag (convention from `active-channels-load.ts:32` `const SOURCE = "active-channels-load"` style). Phase 2 hooks follow the same convention: `[task-coordinator]`, `[teammate-idle]`, `[gc-reaper]`. The identity-injector hook is the exception — its output is operator-facing context, not a debug-tagged note, so it omits the bracket prefix.
+
+Maximum recommended hook output: 8 lines per fire. Operators reading SessionStart should be able to scan each block in 1-2 seconds.
+
+---
+
+## Failure-mode classification
+
+Every hook MUST declare one of three failure-mode classes. The class shapes IO-error behavior:
+
+### fail-open silent
+
+IO error → skip emission, NO breadcrumb. Used for low-priority informational hooks where a missing emission is fine and noise should not accumulate in the failure log.
+
+**When to use:** read-only informational hooks where absence-of-output is acceptable.
+
+**Phase 1 examples:** `channel-gc` (best-effort archive cleanup).
+
+### fail-open + breadcrumb
+
+IO error → skip emission, log via `appendPresenceFailure` with `source: "<hook-name>"` and a `kind` describing the failure class.
+
+**When to use:** default for read-path hooks. Operators can debug via `~/.claude/presence-failures.jsonl` if behavior seems wrong.
+
+**Phase 1 examples:** `active-channels-load` (read-side surfacing).
+
+**Phase 2 examples:** `identity-injector`, `task-coordinator`, `teammate-idle-reminder` (all read-only operator-context hooks).
+
+### fail-loud
+
+IO error → emit a system-reminder error block + breadcrumb. Operator sees the failure inline AND the breadcrumb persists for forensics.
+
+**When to use:** required for write-path hooks where operators MUST know reconciliation is in a degraded state.
+
+**Phase 2 examples:** `channels-gc-reaper` (writes sentinel + metadata).
+
+**Format for fail-loud emissions:**
+
+```
+[<source>] Failed to <operation>: <error>.
+<one-line operator-actionable recovery hint>
+
+(diagnostic) Breadcrumb: appendPresenceFailure source=<source> kind=<kind>
+```
+
+The `(diagnostic)` prefix on the breadcrumb line tells the operator the line is for forensics, not action.
+
+---
+
+## Opt-out path
+
+Operators can disable individual hooks via the `CLAUDE_CONDUCTOR_DISABLE_HOOKS` environment variable. Comma-separated list of hook names; hooks in the list are skipped at dispatch time.
+
+```bash
+# Disable identity-injector and teammate-idle-reminder for one session:
+CLAUDE_CONDUCTOR_DISABLE_HOOKS=identity-injector,teammate-idle-reminder claude
+
+# Persist for all sessions in a directory: drop into ~/.claude/settings.json or .claude/settings.local.json
+{
+  "env": {
+    "CLAUDE_CONDUCTOR_DISABLE_HOOKS": "identity-injector"
+  }
+}
+```
+
+The variable is read once per hook event by the dispatcher. Hooks listed in the variable are SKIPPED — they never run, no breadcrumb is emitted, no system-reminder is composed for the disabled hook.
+
+**Phase 2 implementation note:** the `CLAUDE_CONDUCTOR_DISABLE_HOOKS` plumbing through the dispatcher is part of Slice 4 (first hook-skip implementation lands with the GC reaper). Until Slice 4 ships, the variable is documented here but inert.
+
+**Cannot disable:**
+
+- `pre-commit` (gate-of-record for the commit pipeline; opt-out via `--no-verify` flag at commit time, NOT via this env var).
+- `session-presence-register` / `session-presence-unregister` (substrate-level; sessions without registry presence break peer-coordination).
+
+---
+
+## Phase 1 ↔ Phase 2 hook composition
+
+Phase 2's hooks read substrate that Phase 1 established. The composition rules:
+
+1. **`active-channels-load` (Phase 1) fires before `identity-injector` (Phase 2)** on SessionStart. Operators see channel-existence first, then NATO-identity context. The order matters because identity-injector's output assumes the operator already knows which channels are active.
+
+2. **`channels-gc-reaper` (Phase 2 Slice 4) reaps stale identity sentinels created via `claimIdentity` (Phase 1).** The reaper participates in the same `linkSync` ownership protocol — it OWNS the sentinel via linkSync before unlinking. See `~/.claude/plans/prismatic-orbiting-mesh.md §Slice 4` for the lock-domain spec.
+
+3. **`task-coordinator` (Phase 2 Slice 6) reads `metadata.identities` populated by `claimIdentity` (Phase 1 Slice 2/2.1/2.2).** Sessions without claims are no-op (the dominant case for Task subagent dispatch outside any channel).
+
+4. **`teammate-idle-reminder` (Phase 2 Slice 7) reads heartbeat mtime (Phase 1) AND heartbeat body timestamp (Phase 2 Slice 7 schema extension).** Backwards-compat: pre-Slice-7 heartbeats with empty body resolve via mtime-only; Slice-7+ heartbeats with `Date.now()` written into the body get clock-skew sanity checks.
+
+5. **`identity-injector` cadence cursor at `<channel-dir>/identity-emit/<sid>.json`** is independent of Phase 1's substrate. The cursor lives alongside `last-seen/` (Slice 8) and `identities/` (Phase 1) sibling-directory pattern.
+
+---
+
+## Hook catalog
+
+(Phase 1 + Phase 2 hooks summarized. Each entry: name, event, failure-mode class, one-line purpose, source link.)
+
+### Phase 1
+
+| Name                          | Event         | Failure mode           | Purpose                                               |
+| ----------------------------- | ------------- | ---------------------- | ----------------------------------------------------- |
+| `session-collision-gate`      | pre-tool-use  | fail-loud              | Block tool dispatch under conflicting active session. |
+| `handoff-symlink-write-guard` | pre-tool-use  | fail-loud              | Refuse writes to handoff symlinks.                    |
+| `fact-force`                  | pre-tool-use  | fail-loud              | Enforce fact-force scope.                             |
+| `branch-enforcement`          | pre-tool-use  | fail-loud              | Refuse protected-branch commits without scope.        |
+| `destructive-cmd`             | pre-tool-use  | fail-loud              | Gate destructive ops behind explicit approval.        |
+| `prefer-bun`                  | pre-tool-use  | fail-open + breadcrumb | Nudge npm→bun.                                        |
+| `pre-commit`                  | pre-tool-use  | fail-loud              | Run pre-commit gate (typecheck/format/lint/tests).    |
+| `config-protection`           | pre-tool-use  | fail-loud              | Protect `~/.claude/` from accidental overwrites.      |
+| `sensitive-files`             | pre-tool-use  | fail-loud              | Refuse writes to .env / credentials.                  |
+| `auto-format`                 | post-tool-use | fail-open silent       | Run prettier on modified files.                       |
+| `no-any`                      | post-tool-use | fail-open + breadcrumb | Refuse `any` in TS.                                   |
+| `no-enum`                     | post-tool-use | fail-open + breadcrumb | Refuse `enum` in TS.                                  |
+| `test-gate`                   | stop          | fail-loud              | Refuse end-of-session if tests fail.                  |
+| `handoff-latest-guard`        | stop          | fail-loud              | Verify LATEST.md symlink integrity.                   |
+| `session-presence-unregister` | stop          | fail-open + breadcrumb | Drop session from active-sessions registry.           |
+| `channel-gc`                  | session-start | fail-open silent       | Best-effort channel-archive gc.                       |
+| `active-channels-load`        | session-start | fail-open + breadcrumb | Surface live channels on SessionStart.                |
+| `session-presence-register`   | session-start | fail-open + breadcrumb | Register session in active-sessions registry.         |
+
+### Phase 2 (PENDING — entries finalized at slice-ship time)
+
+| Name                     | Event              | Failure mode           | Purpose                                                            |
+| ------------------------ | ------------------ | ---------------------- | ------------------------------------------------------------------ |
+| `channels-gc-reaper`     | session-start      | **fail-loud**          | Reconcile metadata.identities ↔ sentinels with own-before-unlink.  |
+| `identity-injector`      | session-start      | fail-open + breadcrumb | Surface NATO identity + role + peer context for claimed channels.  |
+| `task-coordinator`       | pre-tool-use       | fail-open + breadcrumb | Gate Task tool dispatch on channel role (block out, warn queue).   |
+| `teammate-idle-reminder` | user-prompt-submit | fail-open + breadcrumb | Surface idle peers (heartbeat-stale) with clock-skew sanity check. |
+
+---
+
+## Debugging
+
+Every hook event end-to-end is observable via:
+
+1. **`appendPresenceFailure` log:** `~/.claude/presence-failures.jsonl`. Filter by `source: "<hook-name>"`. Each entry has timestamp, kind, sessionId (if known), and detail.
+2. **system-reminder output:** captured in the agent's session transcript at `~/.claude/projects/<project>/<sid>.jsonl`. Search for `[<source>]` tags.
+3. **Disable to isolate:** set `CLAUDE_CONDUCTOR_DISABLE_HOOKS=<hook-name>` and re-run; if the symptom resolves, that hook owned the issue.
+
+For Phase 2 hook-specific debugging, see also:
+
+- `claude-conductor channels peers <channel-id>` — current peer state (heartbeat ages, roles).
+- `claude-conductor channels meta <channel-id>` — full metadata.json including `identities` map.
+- `claude-conductor channels list --include-archived` — channel inventory.
+
+---
+
+## Adding a new hook (post-Phase-2)
+
+Phase 3+ hook authors: this is the canonical add-a-hook checklist:
+
+1. New file under `src/hooks/checks/<hook-name>.ts`. Follow `active-channels-load.ts` style.
+2. Add export entry to `package.json:exports`: `"./hooks/checks/<hook-name>"`.
+3. Append name to `src/hooks/bundled-check-names.ts:BUNDLED_CHECKS_BY_EVENT[<event>]` array.
+4. Register in `src/hooks/checks/bundled-registrations.ts` with import + `Registry.register` call.
+5. **Cross-edge atomic-wiring:** parallel commit on dotfiles' `src/hooks/checks/bundled-registrations.ts` per `feedback-atomic-wiring-discipline.md`. Both repos must update in lockstep or CI parity check fails.
+6. Update this doc:
+   - Add row to §Hook catalog.
+   - Add slot to firing order under the appropriate event.
+   - If it's a write-path hook, declare fail-loud + describe the recovery flow.
+   - If it composes with existing hooks in non-obvious ways, document under §Phase N ↔ existing hook composition.
+7. Add tests under `test/hooks/checks/<hook-name>.test.ts`.
+
+The doc-update step (6) is non-optional — operators rely on this catalog for mental model.
