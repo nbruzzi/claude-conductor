@@ -394,17 +394,18 @@ describe("claude-conductor dispatcher", () => {
       );
     });
 
-    it("rejects 'presence' with unknown-subcommand error (Decision C — presence routing deferred)", () => {
-      // Slice 2.1 Decision C: dispatcher scope is channels + todos only
-      // for Phase 1; presence routing deferred to Phase 2. Verifying the
-      // rejection path proves the SUBCOMMANDS table doesn't accidentally
-      // accept 'presence' (which would silently break — there's no
-      // src/presence/cli.ts to spawn).
+    it("rejects 'presence' with deferral hint (Decision C + Wave 2 ARCH-W2-4)", () => {
+      // Decision C: dispatcher scope is channels + todos only for Phase 1;
+      // presence routing deferred to Phase 2. Wave 2 ARCH-W2-4 widened the
+      // bare unknown-subcommand error into a deferral hint pointing at the
+      // canonical fallback path (`bun run src/active-sessions/cli.ts` in
+      // dotfiles), since `feedback-direct-and-advise.md` says when there's
+      // a clear recovery path, surface it in the error.
       const result = run(["presence", "list"]);
       expect(result.exitCode).not.toBe(0);
-      // Hint should point at --help so operator can see what IS routed.
       const allOutput = (result.stdout + result.stderr).toLowerCase();
-      expect(allOutput).toContain("help");
+      expect(allOutput).toContain("deferred");
+      expect(allOutput).toContain("active-sessions");
     });
   });
 });
