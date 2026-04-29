@@ -55,6 +55,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "channel-gc",
     "active-channels-load",
     "session-presence-register",
+    "identity-injector",
   ],
   "user-prompt-submit": [],
 } as const satisfies Record<HookEvent, readonly string[]>;

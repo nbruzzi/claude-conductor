@@ -2,7 +2,8 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Meta-test — anti-drift assertions for the 18 bundled discipline checks.
+ * Meta-test — anti-drift assertions for the 19 bundled discipline checks
+ * (Phase 1: 18; Phase 2 Slice 5 added identity-injector → 19).
  *
  * Replaces the per-component-stub approach (one stub per check) with a single
  * iteration over `BUNDLED_CHECKS_BY_EVENT` that builds a fresh
@@ -47,10 +48,10 @@ import { registerBundled } from "../../src/hooks/checks/bundled-registrations.ts
 import { pass } from "../../src/hooks/types.ts";
 import type { HookEvent } from "../../src/hooks/types.ts";
 
-const EXPECTED_COUNT = 18;
+const EXPECTED_COUNT = 19;
 
 describe("bundled-registrations meta-test", () => {
-  it("BUNDLED_CHECK_NAMES has exactly 18 entries", () => {
+  it("BUNDLED_CHECK_NAMES has exactly 19 entries", () => {
     expect(BUNDLED_CHECK_NAMES.length).toBe(EXPECTED_COUNT);
   });
 

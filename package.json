@@ -148,6 +148,16 @@
       "import": "./src/hooks/checks/handoff-symlink-write-guard.ts",
       "default": "./src/hooks/checks/handoff-symlink-write-guard.ts"
     },
+    "./hooks/checks/identity-injector": {
+      "types": "./src/hooks/checks/identity-injector.ts",
+      "import": "./src/hooks/checks/identity-injector.ts",
+      "default": "./src/hooks/checks/identity-injector.ts"
+    },
+    "./channels/identity-context": {
+      "types": "./src/channels/identity-context.ts",
+      "import": "./src/channels/identity-context.ts",
+      "default": "./src/channels/identity-context.ts"
+    },
     "./hooks/checks/no-any": {
       "types": "./src/hooks/checks/no-any.ts",
       "import": "./src/hooks/checks/no-any.ts",
