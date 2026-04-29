@@ -37,8 +37,16 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { claimIdentity, NATO_POOL } from "../../src/channels/identity.ts";
-import { createChannel } from "../../src/channels/index.ts";
+import {
+  claimIdentity,
+  NATO_POOL,
+  setRole,
+} from "../../src/channels/identity.ts";
+import {
+  appendMessage,
+  createChannel,
+  readMessages,
+} from "../../src/channels/index.ts";
 
 const PACKAGE_ROOT = dirname(dirname(import.meta.dir));
 const IDENTITY_TS_PATH = join(PACKAGE_ROOT, "src", "channels", "identity.ts");
@@ -252,4 +260,71 @@ describe("identity claim — in-process property-based fuzz", () => {
       }
     }
   }, 60_000);
+});
+
+/**
+ * Phase 2 Slice 1+2 — appendMessage role-flip interleave (RE-W0-1 closure).
+ *
+ * Pre-Slice-1+2 the auto-attach scan (`metadata.identities` read inside
+ * appendMessage) ran OUTSIDE `withMetadataLock`. A concurrent `setIdentityRole`
+ * via `setRole` could mutate the role between the auto-attach read and the
+ * JSONL append, producing a message attributed with a stale role.
+ *
+ * Post-Slice-1+2 the read+attach+append cycle runs inside the lock, so the
+ * appended `role` matches `metadata.identities[<letter>].role` at-or-before
+ * append time even under concurrent flips.
+ *
+ * Test shape: 1 sender claims Alpha; runs N=20 concurrent (sender, role-flip)
+ * pairs via `Promise.all`. After all settle, asserts EVERY message has
+ * `role` defined AND its value is one of the roles the sender ever held
+ * (queue / pen / out — never some torn intermediate or undefined).
+ */
+describe("appendMessage role-flip interleave (Phase 2 Slice 1+2 / RE-W0-1)", () => {
+  it("concurrent send + set-role: every appended message has a valid role attached", async () => {
+    const channelId = "c-interleave";
+    const sessionId = "ad41f287-c7d2-4b01-a3ad-3aec8eb25d29";
+    await createChannel({ channelId, handoffId: channelId, sessionId });
+    const claim = await claimIdentity({ channelId, sessionId });
+    expect(claim.identity).toBe("Alpha");
+
+    const N = 20;
+    const roles = ["queue", "pen", "out"] as const;
+
+    // Interleave: N concurrent sends + N concurrent role-flips. Bun's
+    // microtask scheduler interleaves Promise.all members on a single
+    // event loop, so the sends + flips race for the metadata lock —
+    // exactly the surface the lock fix prevents wrong-attribution on.
+    const sends = Array.from({ length: N }, (_, i) =>
+      appendMessage({
+        channelId,
+        message: {
+          ts: new Date(Date.now() + i).toISOString(),
+          from: sessionId,
+          kind: "note",
+          body: `interleave-${i}`,
+        },
+      }),
+    );
+    const flips = Array.from({ length: N }, (_, i) =>
+      setRole(channelId, "Alpha", roles[i % roles.length] ?? "queue"),
+    );
+
+    await Promise.all([...sends, ...flips]);
+
+    const messages = readMessages(channelId);
+    const interleaveMsgs = messages.filter((m) =>
+      m.body?.startsWith("interleave-"),
+    );
+    expect(interleaveMsgs).toHaveLength(N);
+
+    for (const m of interleaveMsgs) {
+      // Every interleaved message must have role attached (auto-attach
+      // consulted metadata.identities under the lock).
+      expect(m.identity).toBe("Alpha");
+      expect(m.role).toBeDefined();
+      if (m.role !== undefined) {
+        expect(roles).toContain(m.role);
+      }
+    }
+  }, 30_000);
 });
