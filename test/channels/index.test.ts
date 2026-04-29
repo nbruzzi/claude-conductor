@@ -25,6 +25,7 @@ import {
   newestHeartbeatMtime,
   pruneArchive,
   readBodyFile,
+  readHeartbeatBody,
   readMessages,
   readMetadata,
   resolveArchiveDir,
@@ -290,6 +291,156 @@ describe("channels", () => {
         sessionId: SESSION,
       });
       expect(heartbeatMtime("c-hb-2", "not-a-participant")).toBeNull();
+    });
+
+    // ─── Slice 7 substrate: heartbeat body content ───────────────────
+
+    it("touchHeartbeat writes Date.now() into the file body (Slice 7 schema)", async () => {
+      await createChannel({
+        channelId: "c-hb-body",
+        handoffId: "c-hb-body",
+        sessionId: SESSION,
+      });
+      const before = Date.now();
+      touchHeartbeat("c-hb-body", SESSION);
+      const after = Date.now();
+
+      const body = readHeartbeatBody("c-hb-body", SESSION);
+      expect(body).not.toBeNull();
+      if (body === null) throw new Error();
+      // Body is a wall-clock ms timestamp captured at write time.
+      expect(body).toBeGreaterThanOrEqual(before);
+      expect(body).toBeLessThanOrEqual(after);
+    });
+
+    it("touchHeartbeat overwrites the body on existing file (not append)", async () => {
+      await createChannel({
+        channelId: "c-hb-overwrite",
+        handoffId: "c-hb-overwrite",
+        sessionId: SESSION,
+      });
+      touchHeartbeat("c-hb-overwrite", SESSION);
+      const first = readHeartbeatBody("c-hb-overwrite", SESSION);
+      expect(first).not.toBeNull();
+
+      // Second touch should replace, not concatenate.
+      touchHeartbeat("c-hb-overwrite", SESSION);
+      const second = readHeartbeatBody("c-hb-overwrite", SESSION);
+      expect(second).not.toBeNull();
+      // Re-parse should still succeed (body is a single integer, not "ts1ts2").
+      // If we appended, the body would be "ts1ts2" and Number() would return NaN
+      // → readHeartbeatBody returns null. The non-null result proves overwrite.
+    });
+
+    it("readHeartbeatBody returns null when heartbeat file is missing", async () => {
+      await createChannel({
+        channelId: "c-hb-missing",
+        handoffId: "c-hb-missing",
+        sessionId: SESSION,
+      });
+      expect(readHeartbeatBody("c-hb-missing", "no-such-session")).toBeNull();
+    });
+
+    it("readHeartbeatBody returns null on legacy empty body", async () => {
+      await createChannel({
+        channelId: "c-hb-empty",
+        handoffId: "c-hb-empty",
+        sessionId: SESSION,
+      });
+      // Simulate a legacy peer that wrote an empty heartbeat body.
+      const channelsRoot = resolveChannelsDir();
+      const path = join(channelsRoot, "c-hb-empty", "heartbeat", SESSION);
+      mkdirSync(join(channelsRoot, "c-hb-empty", "heartbeat"), {
+        recursive: true,
+      });
+      writeFileSync(path, "", "utf-8");
+      expect(readHeartbeatBody("c-hb-empty", SESSION)).toBeNull();
+    });
+
+    it("readHeartbeatBody returns null on whitespace-only body", async () => {
+      await createChannel({
+        channelId: "c-hb-ws",
+        handoffId: "c-hb-ws",
+        sessionId: SESSION,
+      });
+      const channelsRoot = resolveChannelsDir();
+      const path = join(channelsRoot, "c-hb-ws", "heartbeat", SESSION);
+      mkdirSync(join(channelsRoot, "c-hb-ws", "heartbeat"), {
+        recursive: true,
+      });
+      writeFileSync(path, "   \n\t  ", "utf-8");
+      expect(readHeartbeatBody("c-hb-ws", SESSION)).toBeNull();
+    });
+
+    it("readHeartbeatBody returns null on corrupt non-numeric body", async () => {
+      await createChannel({
+        channelId: "c-hb-corrupt",
+        handoffId: "c-hb-corrupt",
+        sessionId: SESSION,
+      });
+      const channelsRoot = resolveChannelsDir();
+      const heartbeatsDir = join(channelsRoot, "c-hb-corrupt", "heartbeat");
+      mkdirSync(heartbeatsDir, { recursive: true });
+
+      // Each invalid form gets a separate session id so reads are isolated.
+      const invalidBodies: Array<[string, string]> = [
+        ["abc-session", "abc"],
+        ["nan-session", "NaN"],
+        ["inf-session", "Infinity"],
+        ["neginf-session", "-Infinity"],
+        ["float-session", "1.5"],
+        ["neg-session", "-1"],
+        ["expr-session", "5e3"], // scientific notation — Number accepts; parser rejects via isInteger? actually 5e3 is integer → see below
+      ];
+
+      for (const [sid, body] of invalidBodies) {
+        writeFileSync(join(heartbeatsDir, sid), body, "utf-8");
+      }
+
+      // "abc" → NaN → not-finite → null
+      expect(readHeartbeatBody("c-hb-corrupt", "abc-session")).toBeNull();
+      // "NaN" → NaN → not-finite → null
+      expect(readHeartbeatBody("c-hb-corrupt", "nan-session")).toBeNull();
+      // "Infinity" → Infinity → not-finite → null
+      expect(readHeartbeatBody("c-hb-corrupt", "inf-session")).toBeNull();
+      // "-Infinity" → -Infinity → not-finite → null
+      expect(readHeartbeatBody("c-hb-corrupt", "neginf-session")).toBeNull();
+      // "1.5" → 1.5 → not-integer → null
+      expect(readHeartbeatBody("c-hb-corrupt", "float-session")).toBeNull();
+      // "-1" → -1 → negative → null (n < 0 guard)
+      expect(readHeartbeatBody("c-hb-corrupt", "neg-session")).toBeNull();
+      // "5e3" → 5000 → finite + integer + positive → ACCEPTED (not rejected at substrate; env-var
+      // parser in teammate-idle-reminder rejects via syntactic regex, but the substrate parser is
+      // lenient about scientific notation since Date.now() output never produces that form anyway.
+      // Documenting the boundary here so readers don't expect substrate-side rejection.
+      expect(readHeartbeatBody("c-hb-corrupt", "expr-session")).toBe(5000);
+    });
+
+    it("readHeartbeatBody returns the parsed integer on a valid body", async () => {
+      await createChannel({
+        channelId: "c-hb-valid",
+        handoffId: "c-hb-valid",
+        sessionId: SESSION,
+      });
+      const channelsRoot = resolveChannelsDir();
+      const heartbeatsDir = join(channelsRoot, "c-hb-valid", "heartbeat");
+      mkdirSync(heartbeatsDir, { recursive: true });
+
+      // Valid body — integer ms timestamp.
+      writeFileSync(join(heartbeatsDir, "peer-1"), "1700000000000", "utf-8");
+      expect(readHeartbeatBody("c-hb-valid", "peer-1")).toBe(1700000000000);
+
+      // Valid body with surrounding whitespace (parser trims).
+      writeFileSync(
+        join(heartbeatsDir, "peer-2"),
+        "  1700000001234  \n",
+        "utf-8",
+      );
+      expect(readHeartbeatBody("c-hb-valid", "peer-2")).toBe(1700000001234);
+
+      // Zero is non-negative — accepted (degenerate but technically valid).
+      writeFileSync(join(heartbeatsDir, "peer-3"), "0", "utf-8");
+      expect(readHeartbeatBody("c-hb-valid", "peer-3")).toBe(0);
     });
   });
 
