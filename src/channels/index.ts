@@ -731,18 +731,51 @@ export function appendMessage(args: {
   }
 
   let message = args.message;
+
+  // Slice 6: auto-attach `identity` + `role` from `metadata.identities`
+  // if the sender holds a claim. Legacy senders (no claim) keep both
+  // fields absent → `renderMessage` shows them as `<unknown>: <body>`
+  // (matrix row 5). Caller-wins: if the message already specifies
+  // either field, leave it untouched (allows tests + callers that need
+  // explicit override to bypass the auto-attach).
+  //
+  // Inline scan instead of importing `getIdentityForSession` from
+  // `./identity.ts` — identity.ts already imports from this module
+  // (`commitIdentityClaim`/`removeIdentityClaim`/etc.), so reverse-
+  // importing would create a cycle. The scan is O(26) max (NATO pool
+  // size) and `meta` is already in scope; no extra IO.
+  if (message.identity === undefined && message.role === undefined) {
+    const identities = meta.identities;
+    if (identities !== undefined) {
+      for (const [letter, claim] of Object.entries(identities)) {
+        if (claim.session_id === message.from) {
+          message = { ...message, identity: letter, role: claim.role };
+          break;
+        }
+      }
+    }
+  }
+
   const initialLine = serializeLine(message);
   if (
     Buffer.byteLength(initialLine, "utf-8") > SMALL_MESSAGE_MAX_BYTES &&
     message.body
   ) {
     const ref = writeBodyFile(channelId, message.body);
-    message = {
+    // Preserve identity/role/version on the body-shunt rewrite — Slice 6
+    // attribution must survive the sidecar redirect (otherwise large
+    // bodies render as `<unknown> [body-ref:<ref>]` which is incorrect
+    // when the sender held a claim).
+    const shunted: ChannelMessage = {
       ts: message.ts,
       from: message.from,
       kind: message.kind,
       body_ref: ref,
     };
+    if (message.identity !== undefined) shunted.identity = message.identity;
+    if (message.role !== undefined) shunted.role = message.role;
+    if (message.version !== undefined) shunted.version = message.version;
+    message = shunted;
   }
   const line = serializeLine(message);
   appendLineAtomically(messagesPath(channelId), line);

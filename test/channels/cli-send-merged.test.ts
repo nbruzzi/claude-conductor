@@ -40,27 +40,156 @@
  * merge-back PR is ready (TA-8 fix per plan).
  */
 
-import { describe, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
-describe("cli send-case merged invariants (TA-8 gate; second-merging lane fills these in)", () => {
-  it.todo(
-    "(a) --body-file + role=out → DENYLIST die NOT role-die (locks body-read-before-role-reject ordering)",
-    () => {
-      /* implementation deferred; fill at merge-back time */
-    },
-  );
+import { claimIdentity, setRole } from "../../src/channels/identity.ts";
+import { createChannel } from "../../src/channels/index.ts";
 
-  it.todo(
-    "(b) stdin body + role=in → succeeds with appendMessage written (positive control)",
-    () => {
-      /* implementation deferred; fill at merge-back time */
-    },
-  );
+const PACKAGE_ROOT = dirname(dirname(import.meta.dir));
+const CLI_PATH = join(PACKAGE_ROOT, "src", "channels", "cli.ts");
 
-  it.todo(
-    "(c) regular send + role=out → role-die exit 4 (Bravo's Slice 6 invariant)",
-    () => {
-      /* implementation deferred; fill at merge-back time */
+const TEST_SESSION_ID = "00000000-0000-4000-8000-000000000001";
+
+let tempChannelsDir: string;
+
+beforeEach(() => {
+  tempChannelsDir = mkdtempSync(join(tmpdir(), "cli-send-merged-"));
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = tempChannelsDir;
+});
+
+afterEach(() => {
+  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  if (existsSync(tempChannelsDir)) {
+    rmSync(tempChannelsDir, { recursive: true, force: true });
+  }
+});
+
+type RunResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+};
+
+function runSend(
+  args: readonly string[],
+  body: string | null = null,
+): RunResult {
+  const proc = Bun.spawnSync({
+    cmd: ["bun", CLI_PATH, ...args],
+    stdin: body !== null ? new TextEncoder().encode(body) : "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      CLAUDE_CONDUCTOR_CHANNELS_DIR: tempChannelsDir,
+      CLAUDE_SESSION_ID: TEST_SESSION_ID,
     },
-  );
+  });
+  return {
+    exitCode: proc.exitCode ?? -1,
+    stdout: new TextDecoder().decode(proc.stdout),
+    stderr: new TextDecoder().decode(proc.stderr),
+  };
+}
+
+describe("cli send-case merged invariants (TA-8 gate)", () => {
+  it("(a) --body-file + role=out → DENYLIST die NOT role-die (locks body-read-before-role-reject ordering)", async () => {
+    await createChannel({
+      channelId: "c-merged-a",
+      handoffId: "c-merged-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    await setRole("c-merged-a", "Alpha", "out");
+
+    // /etc/passwd is on Alpha's body-file denylist (RE-1 realpath gate).
+    // With role==='out' AND --body-file pointing at a denylisted path,
+    // ARCH-4 ordering says: body-file flag parse → readBodyFromFile (dies
+    // on denylist) → role-gate (NEVER reached). The error category must
+    // therefore be DENYLIST/VALIDATION-shape, NOT ROLE_OUT_BLOCKED.
+    //
+    // A future refactor that flipped the ordering (role-gate before body
+    // read) would surface a ROLE_OUT_BLOCKED error here instead of the
+    // body-file denylist error — this assertion locks the contract.
+    const result = runSend([
+      "send",
+      "c-merged-a",
+      "status",
+      "--body-file",
+      "/etc/passwd",
+      "--json",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    const firstLine = result.stderr.trim().split("\n")[0] ?? "";
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(firstLine) as Record<string, unknown>;
+    } catch {
+      // If stderr isn't JSON the test fails on the next assertion anyway.
+    }
+    // Body-file denylist die fires BEFORE role-gate per ARCH-4 ordering.
+    const category = parsed["category"];
+    expect(category).not.toBe("ROLE_OUT_BLOCKED");
+    // The denylist die uses category="VALIDATION" per cli.ts
+    // readBodyFromFile, so a category-shape check is sufficient.
+    expect(typeof category).toBe("string");
+    expect(["VALIDATION", "UNCAUGHT"]).toContain(category as string);
+  });
+
+  it("(b) stdin body + role=queue → succeeds with appendMessage written (positive control)", async () => {
+    await createChannel({
+      channelId: "c-merged-b",
+      handoffId: "c-merged-b",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-b",
+      sessionId: TEST_SESSION_ID,
+    });
+    // Default role on claim is "queue" — explicit set-role here for
+    // documentation symmetry with case (c).
+    await setRole("c-merged-b", "Alpha", "queue");
+
+    const result = runSend(
+      ["send", "c-merged-b", "status"],
+      "merged-positive-control body",
+    );
+    expect(result.exitCode).toBe(0);
+    // appendMessage's printJson output includes the appended message.
+    const parsed = JSON.parse(result.stdout) as { body?: string };
+    expect(parsed.body).toBe("merged-positive-control body");
+
+    const messagesPath = join(tempChannelsDir, "c-merged-b", "messages.jsonl");
+    expect(existsSync(messagesPath)).toBe(true);
+  });
+
+  it("(c) stdin body + role=out → role-die exit 4 (Slice 6 invariant)", async () => {
+    await createChannel({
+      channelId: "c-merged-c",
+      handoffId: "c-merged-c",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-c",
+      sessionId: TEST_SESSION_ID,
+    });
+    await setRole("c-merged-c", "Alpha", "out");
+
+    const result = runSend(
+      ["send", "c-merged-c", "status", "--json"],
+      "should be blocked by role gate",
+    );
+    expect(result.exitCode).toBe(4);
+    const firstLine = result.stderr.trim().split("\n")[0] ?? "";
+    const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+    expect(parsed["category"]).toBe("ROLE_OUT_BLOCKED");
+    expect(parsed["code"]).toBe(4);
+  });
 });

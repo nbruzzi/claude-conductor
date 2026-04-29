@@ -71,6 +71,7 @@ import {
   unlinkIdentitySentinelOrLogOrphan,
   type NatoIdentity,
 } from "./identity.ts";
+import { renderMessage } from "./render.ts";
 
 const VALID_KINDS: readonly ChannelKind[] = [
   "note",
@@ -495,12 +496,41 @@ export async function runChannelsCli(
           }
         }
 
+        // Slice 6 ARCH-4 step (3) — role-gate after body is read but
+        // before appendMessage. Body-read-before-role-reject is the
+        // contract locked by `cli-send-merged.test.ts` (a): a sender
+        // with role==='out' attempting `--body-file <denylisted-path>`
+        // dies with the DENYLIST die above (cheap-fail-late on path
+        // safety) NOT this role-die. If body validation passes, THIS
+        // gate runs and rejects role==='out' with exit 4.
+        //
+        // Pass-through if no claim (legacy/anonymous send): the role
+        // gate only blocks an explicitly-claimed `out` role. A peer
+        // that hasn't called `join` has no role attached and isn't
+        // bound by this rule.
+        const claim = await getIdentityForSession(channelId, sid());
+        if (claim?.role === "out") {
+          die(
+            `[send] role 'out' blocks send for identity '${claim.identity}' on channel '${channelId}' — transition to 'pen' or 'queue' first`,
+            {
+              code: 4,
+              category: "ROLE_OUT_BLOCKED",
+              remediation: `channels set-role ${channelId} --role pen`,
+            },
+          );
+        }
+
         const message: ChannelMessage = {
           ts: new Date().toISOString(),
           from: sid(),
           kind: kind as ChannelKind,
           body,
         };
+        // appendMessage auto-attaches identity+role from the sender's
+        // claim (Slice 6 — see src/channels/index.ts:appendMessage). If
+        // the sender has no claim (legacy / pre-join), the message
+        // ships without identity+role and renders as `<unknown>: <body>`
+        // per matrix row 5.
         printJson(appendMessage({ channelId, message }));
         return;
       }
@@ -513,7 +543,17 @@ export async function runChannelsCli(
           }
           return m;
         });
-        printJson(resolved);
+        // Slice 6: default output is renderMessage one-per-line
+        // (human-readable). `--json` (already extracted by parseFlags)
+        // keeps the structured output for piping to jq / consumer apps
+        // that want raw `ChannelMessage[]`.
+        if (flags.json) {
+          printJson(resolved);
+          return;
+        }
+        for (const m of resolved) {
+          process.stdout.write(`${renderMessage(m)}\n`);
+        }
         return;
       }
       case "list": {
