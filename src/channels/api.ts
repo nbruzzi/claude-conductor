@@ -43,6 +43,18 @@ export type { NatoIdentity } from "./identity.ts";
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
 // shim can re-export them via `claude-conductor/channels/api`.
+//
+// Intentionally NOT re-exported here per Decision E + Wave 2 ARCH-W2-6
+// (surface-curation policy):
+//   - Identity primitives: `claimIdentity`, `setRole`, `releaseIdentity`,
+//     `getIdentityForSession` — Phase 2 hook consumers needing identity
+//     primitives import from `claude-conductor/channels/identity` directly.
+//   - Internal flow primitives: `commitIdentityClaim`, `removeIdentityClaim`,
+//     `closeStalePeerIdentity`, `setIdentityRole` — only Phase 2 GC reapers
+//     would call these directly; they import from `claude-conductor/channels`
+//     directly.
+// All CRUD + identity functions in the channels module return `Promise<...>`
+// (async cascade landed Slice 2.1).
 
 export {
   appendMessage,

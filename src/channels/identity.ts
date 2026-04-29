@@ -106,7 +106,7 @@ export class NatoExhaustedError extends Error {
     super(
       `[channels-identity] channel '${channelId}' has assigned all 26 NATO ` +
         `identities. Recovery: close idle peers via 'claude-conductor channels ` +
-        `close-peer ${channelId} <identity>'.`,
+        `close-peer ${channelId} --peer <Identity>' (add --force to override active heartbeat).`,
     );
     this.name = "NatoExhaustedError";
   }

@@ -515,7 +515,7 @@ export async function runChannelsCli(
             {
               code: 4,
               category: "ROLE_OUT_BLOCKED",
-              remediation: `channels set-role ${channelId} --role pen`,
+              remediation: `claude-conductor channels set-role ${channelId} --role pen`,
             },
           );
         }
@@ -603,7 +603,7 @@ export async function runChannelsCli(
           die(`body ${ref} not found for channel ${channelId}`, {
             code: 2,
             category: "NOT_FOUND",
-            remediation: `verify the body-ref via 'channels read ${channelId}' and confirm the message has body_ref set`,
+            remediation: `verify the body-ref via 'claude-conductor channels read ${channelId}' and confirm the message has body_ref set`,
           });
         process.stdout.write(body);
         return;
@@ -660,7 +660,7 @@ export async function runChannelsCli(
             {
               code: 5,
               category: "NOT_HELD",
-              remediation: `Run 'channels join ${channelId}' first to claim an identity.`,
+              remediation: `Run 'claude-conductor channels join ${channelId}' first to claim an identity.`,
             },
           );
         }
@@ -768,7 +768,8 @@ export async function runChannelsCli(
       default:
         die(`unknown subcommand: ${cmd}`, {
           category: "ARGS",
-          remediation: "Run 'channels help' to list valid subcommands",
+          remediation:
+            "Run 'claude-conductor channels --help' to list valid subcommands",
         });
     }
   } catch (err) {
