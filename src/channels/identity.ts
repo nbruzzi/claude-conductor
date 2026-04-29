@@ -114,12 +114,24 @@ export class NatoExhaustedError extends Error {
 
 /** Per-channel directory holding per-identity sentinel files. The
  *  sentinel is the atomic create-only marker (linkSync EEXIST primitive);
- *  metadata.identities is the materialized cache. */
-function identitiesDir(channelId: string): string {
+ *  metadata.identities is the materialized cache.
+ *
+ *  Exported per Phase 2 Slice 4 — the channels-gc-reaper hook iterates
+ *  this directory to detect orphan sentinels (sentinel exists with no
+ *  matching `metadata.identities[L]` entry). Pure path-construction
+ *  function with no side effects; safe to expose. */
+export function identitiesDir(channelId: string): string {
   return join(channelsDir(), channelId, "identities");
 }
 
-function identitySentinelPath(channelId: string, letter: NatoIdentity): string {
+/** Per-letter sentinel file path within `identitiesDir(channelId)`.
+ *  Exported per Phase 2 Slice 4 alongside `identitiesDir` so the reaper
+ *  can compose the path for race-detection breadcrumb writes
+ *  (`linkSync(reaperTmp, identitySentinelPath(...))`). */
+export function identitySentinelPath(
+  channelId: string,
+  letter: NatoIdentity,
+): string {
   return join(identitiesDir(channelId), letter);
 }
 
