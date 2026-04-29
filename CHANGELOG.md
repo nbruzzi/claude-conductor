@@ -12,6 +12,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-phase-1.5] — 2026-04-29
+
+### Phase 1 follow-on — CLI-DX consistency closure + RE polish
+
+Wave 2 audit closures from Phase 1 that were too substantive for v0.1.0-phase-1 inline closure but worth shipping as a follow-on point release. 8 commits, 7 of 8 outstanding W2 polish items closed (5 CLI-DX + 2 RE; CLI-W2-4 slash command migration deferred to Phase 2 Slice 9).
+
+#### Added
+
+- **`--version` / `-V` flag** on `claude-conductor` binary — POSIX/GNU convention; reads version constant from dispatcher (mirrors `package.json:version` with CHANGELOG cap discipline keeping them in lockstep at tag time).
+- **`--help` Global flags section** documenting position-insensitive `--json` / `--quiet` / `--help` / `--version`.
+- **Dispatcher 'presence' deferral hint** — instead of bare "unknown subcommand" error, points operators at `bun run src/active-sessions/cli.ts` (canonical fallback per Decision C). ARCH-W2-4 closure.
+- **`acquireLock` writes process.pid into lockfile** — best-effort; on acquire-fail surfaces "held by pid X" in the thrown error. Sibling pattern with `active-sessions/index.ts` owner-of-meta convention. RE-W2-5 closure.
+- **`DieAlreadyHandled` sentinel + catch-all guard** — forward-compat for in-process consumers that mock `process.exit`; preserves the original die's category/code/remediation rather than re-firing as `UNCAUGHT`. RE-W2-6 closure.
+
+#### Changed
+
+- **`--json` position-insensitivity full fix** — `partitionPropagatedFlags` scans the FULL argv now, not just pre-cmd position. CLI-W2-1 closure.
+- **`todos/cli.ts` structural parity with channels/cli.ts** — `parseFlags` integration (per-verb `--help`), `VERB_HELP` map, `runTodosCli` programmatic export + `import.meta.main` guard. CLI-W2-3 closure.
+
+#### Phase 2 hand-off
+
+Phase 2 (Agent Teams integration hooks) starts from this v0.1.0-phase-1.5 tag. Plan: `~/.claude/plans/prismatic-orbiting-mesh.md` REV 2.1 (ratified 2026-04-29 post Wave 0 audit + bounded verification round). 11 slices; Phase 2 carry-over backlog includes RE-W2-1/2/3/4, ARCH-W2-7, CLI-W2-4, plus the 5 hook integrations.
+
 ## [0.1.0-phase-1] — 2026-04-29
 
 ### Phase 1 — Agent Teams identity + cross-edge plugin boundary
@@ -81,7 +104,8 @@ Phase 1 ships the identity + role + display layer that lets multiple Claude sess
 - Initial repo creation. License (Apache-2.0), README skeleton with the 6 MUST-contains sections, CHANGELOG (this file), CONTRIBUTING, INDEX (master catalog), SECURITY, .gitignore, package.json with `engines` pinning Claude Code minimum version, tsconfig.json with strict mode and lint config, decisions/phase-0.md (first decision-log entry), audits/ directory scaffolded, docs/ tree (architecture/conventions/operations/api), memories/ directory scaffolded, dependencies-rationale.md, ADR-001 documenting the extraction strategy.
 - Phase 0 starts here. Subsequent commits ship the extraction-manifest, generic-paths primitives, file extraction with refactor, test scaffolding, plugin-managed memory loader, dotfiles-side `claude-conductor-extraction` feature branch updates, and CI gates.
 
-[Unreleased]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1...HEAD
+[Unreleased]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1.5...HEAD
+[0.1.0-phase-1.5]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1...v0.1.0-phase-1.5
 [0.1.0-phase-1]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-0...v0.1.0-phase-1
 [0.1.0-phase-0]: https://github.com/nbruzzi/claude-conductor/compare/v0.0.0...v0.1.0-phase-0
 [0.0.0]: https://github.com/nbruzzi/claude-conductor/releases/tag/v0.0.0
