@@ -17,9 +17,14 @@
  * a re-bindable namespace; defer to Wave 2):
  *
  *   - Symlink rejection (1): symlink at user-supplied path
- *   - Denylist prefixes (9): /etc, /var, /private, /tmp, /Volumes,
+ *   - Denylist prefixes (8 cross-platform + 1 darwin-only test for /tmp
+ *     via /private chain): /etc, /var, /private, /Volumes,
  *     ${realHome}/.ssh, ${realHome}/.aws,
- *     ${realHome}/Library/Application Support, ${realHome}/Library/Keychains
+ *     ${realHome}/Library/Application Support, ${realHome}/Library/Keychains.
+ *     /tmp is NOT in the cross-platform denylist (it's the user's tmpdir
+ *     on Linux). On macOS, /tmp resolves through /private/tmp via the
+ *     /etc-style symlink chain and is caught by the /private denylist
+ *     entry; one darwin-only test verifies this.
  *   - Realpath denylist (1, TA-7 SIP-aware): symlink-chain into denylist
  *   - Size cap (2): 257 KiB die, 256 KiB succeeds
  *   - Notice threshold (2): 3.1 KiB succeeds-with-notice, <3 KiB succeeds-no-notice
@@ -159,13 +164,14 @@ describe("--body-file: denylist prefixes (9)", () => {
     expect(result.stderr).toContain("/private");
   });
 
-  it("rejects /tmp/* paths", () => {
+  it("/tmp on macOS is denied via /private chain (not denied directly on Linux)", () => {
+    if (process.platform !== "darwin") return; // /tmp on Linux IS user tmpdir
     const tmpFile = join("/tmp", `body-file-test-${Date.now()}`);
     writeFileSync(tmpFile, "content");
     try {
       const result = runSend(tmpFile);
       expect(result.status).toBe(2);
-      expect(result.stderr).toMatch(/refusing path under "(\/tmp|\/private)"/);
+      expect(result.stderr).toContain("/private");
     } finally {
       rmSync(tmpFile, { force: true });
     }

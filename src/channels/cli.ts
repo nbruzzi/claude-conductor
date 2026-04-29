@@ -223,11 +223,14 @@ function readBodyFromFile(path: string): string {
   const inTmpdir =
     resolved === realTmpdir || resolved.startsWith(`${realTmpdir}/`);
   if (!inTmpdir) {
+    // /tmp is the user's tmpdir on Linux (not sensitive). On macOS,
+    // `/tmp` is a symlink chain to `/private/tmp`, caught by `/private`.
+    // The realTmpdir allowlist above already excludes legitimate user
+    // tmp paths from this list. Cross-platform safe denylist:
     const denied: readonly string[] = [
       "/etc",
       "/var",
       "/private",
-      "/tmp",
       "/Volumes",
       `${realHome}/.ssh`,
       `${realHome}/.aws`,
