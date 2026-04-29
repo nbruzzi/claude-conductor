@@ -48,6 +48,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "pre-commit",
     "config-protection",
     "sensitive-files",
+    "task-coordinator",
   ],
   "post-tool-use": ["auto-format", "no-any", "no-enum"],
   stop: ["test-gate", "handoff-latest-guard", "session-presence-unregister"],
