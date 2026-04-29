@@ -165,7 +165,90 @@ affects: [src/channels/index.ts]
 
 ---
 
+## 2026-04-29 — Decision F: `releaseIdentity` ordering — metadata write first, sentinel unlink second
+
+```yaml
+---
+ts: 2026-04-29T16:50:00Z
+kind: architectural
+severity: minor
+phase: 1
+affects: [src/channels/identity.ts]
+---
+```
+
+**Context:** Slice 5 RE-6 surfaced an ordering question for `releaseIdentity` (called by `close-peer` and `set-role` recovery paths). Two writes needed: remove the entry from `metadata.identities` AND unlink the per-letter sentinel file. Either order leaves a different recovery state if the second write fails.
+
+**Options considered:**
+
+- (a) **Sentinel first, metadata second** — unlink sentinel, then remove `metadata.identities[letter]`. Pros: matches "sentinel canonical" framing of Decision B. Cons: if metadata write fails, sentinel is gone but metadata still claims the letter — `claimIdentity` will refuse (sentinel-EEXIST is the gate, but here sentinel is gone so EEXIST is FALSE and the next claim succeeds with a NEW write — but the old metadata entry remains pointing at a stale claim, potentially confusing `whoami`/`peers` for the duration).
+- (b) **Metadata first, sentinel second** — remove `metadata.identities[letter]`, then unlink sentinel. On metadata-write failure, abort without unlinking — the claim is still observable in metadata, the sentinel still claims the letter. Operator retries. On sentinel-unlink failure (EACCES, etc.), metadata is consistent but the sentinel is orphaned — Phase 2 GC reaper reconciles. Pros: failure during the window leaves an internally-consistent state (sentinel + metadata both still claim the letter); operator-visible recovery is "retry close-peer". Cons: orphan sentinels accumulate if unlink keeps failing.
+
+**Chosen:** (b) — metadata first, sentinel second.
+
+**Reason:** Internal consistency under partial failure beats sentinel-canonical purity. (a) creates a window where `claimIdentity` from a different session can grab the freshly-vacated letter before the metadata write completes — operator-visible "two sessions claim the same NATO letter" race. (b)'s orphan-sentinel failure mode is a Phase 2 GC concern (already deferred); the immediate window is internally consistent and operator-visible recovery is "retry close-peer". `releaseIdentity`'s implementation in `identity.ts` enforces this via try/catch around the metadata write — on failure, abort without unlinking; on success, attempt the unlink and tolerate failure (logged via `unlinkIdentitySentinelOrLogOrphan`).
+
+**Supersedes:** None.
+
+---
+
+## 2026-04-29 — Decision G: Slice 6 `appendMessage` auto-attaches `identity` + `role` from `metadata.identities`
+
+```yaml
+---
+ts: 2026-04-29T16:55:00Z
+kind: architectural
+severity: minor
+phase: 1
+affects: [src/channels/index.ts, src/channels/cli.ts]
+---
+```
+
+**Context:** Slice 6 needed `send` to attach the sender's NATO `identity` + `role` to outgoing `ChannelMessage` records so `read`'s renderMessage can display the canonical `<Identity> (<role>): <body>` line per parent plan §311-321. Two implementation locations were considered.
+
+**Options considered:**
+
+- (a) **CLI-layer attach** — `cli.ts` send case reads `metadata.identities[<self>]`, attaches identity + role to the message, then calls `appendMessage`. Pros: keeps `appendMessage` ignorant of identity semantics. Cons: every caller of `appendMessage` (including future Phase 2 hooks) has to remember to attach; legacy callers that don't attach produce un-attributed messages.
+- (b) **Library-layer auto-attach** — `appendMessage` in `index.ts` reads `metadata.identities` for the calling session and auto-attaches identity + role if found. Pros: single attribution path; legacy callers automatically benefit; the `<unknown>: <body>` rendering only fires for genuinely-unclaimed sessions. Cons: `appendMessage` reads metadata outside the message-write lock (RE-W2-1 in Wave 2 — TOCTOU on concurrent `set-role`/`close-peer`).
+
+**Chosen:** (b) — library-layer auto-attach in `appendMessage`.
+
+**Reason:** Single attribution path eliminates a class of "forgot to attach" bugs at every Phase 2 hook author's surface. The TOCTOU concern (Wave 2 RE-W2-1) is real but bounded — wrong-attribution under concurrent role-flip is a forensic-confusion failure, not a correctness/security failure. Closing the window requires wrapping `appendMessage` in `withMetadataLock`, which cascades: every caller becomes async-from-async (already true in Phase 1), but the per-message metadata-read+lock+write triples message-append cost. Phase 2 hook layer can revisit if the TOCTOU window matters more than throughput. Legacy reader path (`<unknown>: <body>` rendering) is preserved as the fallback for messages with no `identity` field — backwards-compat with Phase 0 channels.
+
+**Supersedes:** None.
+
+---
+
+## 2026-04-29 — Decision H: Slice 3b dotfiles shim — identity primitives NOT re-exported
+
+```yaml
+---
+ts: 2026-04-29T17:00:00Z
+kind: api-shape
+severity: minor
+phase: 1
+affects: [dotfiles src/channels/index.ts, plugin src/channels/api.ts]
+---
+```
+
+**Context:** Slice 3b converted dotfiles `src/channels/{index,cli}.ts` to re-export shims pointing at `claude-conductor/channels/{api,cli}`. The dotfiles shim re-exports the curated channels surface (CRUD + heartbeat + read/write/list) but NOT the identity primitives (`claimIdentity`, `setRole`, `releaseIdentity`, `getIdentityForSession`). Surface-curation rationale needed durable record.
+
+**Options considered:**
+
+- (a) **Re-export identity primitives via shim** — make every plugin identity primitive reachable from `claude-conductor` (dotfiles shim) and `claude-conductor/channels/identity` (direct). Pros: one path to find them. Cons: doubles the shim surface; widens dotfiles' nominal export surface beyond its pre-shim shape (which never exposed identity primitives because they didn't exist).
+- (b) **Identity primitives via `claude-conductor/channels/identity` direct only** — dotfiles shim does not re-export them. Phase 2 hook consumers import from `claude-conductor/channels/identity` directly. Pros: narrow shim; clear separation between "channels-CRUD canonical surface" (shim re-exports) and "Phase 2 hook integration surface" (direct imports). Cons: requires consumers to know which path to use.
+
+**Chosen:** (b) — direct-only.
+
+**Reason:** Pre-shim dotfiles never exposed identity primitives (Phase 0 channels had no identity layer at all). Re-exporting them via the shim would silently widen the dotfiles surface beyond its historical shape and create two paths to find the same primitives — the kind of surface drift that costs more in Phase 2/3 audit clarity than it saves in convenience. Phase 2 hook consumers are a small audience who can be told "import from `claude-conductor/channels/identity` directly". The shim's JSDoc carries the policy + recovery hint per `feedback-direct-and-advise.md`.
+
+**Supersedes:** None.
+
+---
+
 ## Pending decisions (Phase 1 audit cycle)
 
-- **Async signature cascade across cross-edge consumers** — `claimIdentity` is now `async` (Slice 2.1 closure). Slice 3a must thread the `Promise<...>` return type through any `api.ts` re-export; Slice 3b shim must `await` `claimIdentity` rather than treating it sync. Forward-reference for Lane D execution.
-- **`commitIdentityClaim` non-re-export rationale** — when Slice 3a widens `api.ts`, add a one-line comment noting that `commitIdentityClaim` is intentionally NOT re-exported via the curated public surface (it's an internal-flow primitive of `claimIdentity` that only Phase 2 GC hooks would call directly, and those import from `./channels` directly per Decision Q4). Per ARCH-NEW-2 closure verification.
+All Phase 1 pending decisions have been resolved:
+
+- **Async signature cascade across cross-edge consumers** — RESOLVED in Slice 3a: `api.ts` re-exports thread `Promise<...>` types correctly; Slice 3b shim awaits all async primitives. Verified at Slice 3a step 2 (a6b8249) + Slice 3b atomic flip (e1d1ca4).
+- **`commitIdentityClaim` non-re-export rationale** — RESOLVED in Slice 8 ARCH-W2-6 closure: api.ts now carries the surface-curation policy comment listing all 8 intentionally-not-re-exported names with the rationale.

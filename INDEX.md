@@ -7,7 +7,7 @@ Copyright 2026 nbruzzi
 
 Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.md` pattern). Every shipped knowledge artifact (skill, hook, agent, memory, decision, audit transcript, ADR, runbook, convention page) MUST appear here with a one-line description. Audit gate verifies no shipped artifact is missing from this index.
 
-> **v0.1.0-phase-0 catalog refresh.** Last comprehensive update at sub-step 0.10 Slice 8. Per Decision H discipline; ARCH-S8-1 audit caught accumulated drift across sub-steps 0.6 → 0.10 and prompted this consolidated entry pass.
+> **v0.1.0-phase-1 catalog refresh.** Last comprehensive update at Phase 1 Slice 8 (Wave 2 audit closure). Per Decision H discipline; Wave 2 ARCH-W2-2 caught accumulated drift across Slices 0–7 (11 of 12 Phase 1-shipped artifacts unrecorded — `bin/claude-conductor`, `src/cli/dispatcher.ts`, `src/cli/flags.ts`, `src/channels/render.ts`, `src/shared/session-id-discovery.ts`, `decisions/phase-1.md`, plus 8 new test files) and prompted this consolidated entry pass.
 
 ## Top-level docs
 
@@ -43,6 +43,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 ## Decision logs (`decisions/`)
 
 - [phase-0.md](decisions/phase-0.md) — Phase 0 sequencing + design decisions (33 entries through sub-step 0.10; Decisions A–O ratified, Decision N supersedes J per ARCH-1 audit).
+- [phase-1.md](decisions/phase-1.md) — Phase 1 architectural + scope + api-shape decisions (8 entries: A MCP Mail integration deferral, B claimIdentity commit-after-claim ordering, C dispatcher scope, D reconcile-on-rejoin, E commitIdentityClaim boundary gate, F releaseIdentity ordering, G appendMessage auto-attach, H Slice 3b shim curation).
 
 ## Audit transcripts (`audits/phase-0/`)
 
@@ -105,7 +106,16 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ## Source code (`src/`)
 
-### Top-level
+### Top-level binary (`bin/`)
+
+- [bin/claude-conductor](bin/claude-conductor) — Phase 1 Slice 0 top-level CLI binary. Routes via `src/cli/dispatcher.ts`. Bare-bun fallback for slash-command callers preserved indefinitely (Risk #6 mitigation). Symlink chain depth bounded at 8 (Slice 4.5 RE-W1-6 closure).
+
+### CLI dispatcher (`src/cli/`)
+
+- [src/cli/dispatcher.ts](src/cli/dispatcher.ts) — Phase 1 Slice 0 verb router for `channels` and `todos` subcommands; pre-subcommand `--json`/`--quiet` partition with re-injection (Slice 4.5 CLI-B). `presence` subcommand deferred to Phase 2 per Decision C. Wave 2 CLI-W2-1 surfaced post-subcommand position-insensitivity gap (deferred to Slice 8.5).
+- [src/cli/flags.ts](src/cli/flags.ts) — Phase 1 Slice 4 shared flag parser. Supports `--json`, `--quiet`, `--help`, `--force`, `--role`, `--body-file`, `--peer`, `--since-mtime`. POSIX `--help` semantics: stdout, exit 0 (RE-7 closure).
+
+### Top-level (`src/`)
 
 - [src/index.ts](src/index.ts) — public API surface placeholder (populated as extraction progresses).
 
@@ -113,7 +123,8 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 - [src/shared/paths.ts](src/shared/paths.ts) — per-component path resolvers with 3-layer env precedence (sub-step 0.5; FALLBACK_ROOT_SUFFIX `.claude` per Decision N — 6 components default to canonical, 2 plugin-internal default to `conductor/`).
 - [src/shared/home.ts](src/shared/home.ts) — `effectiveHome()` HOME-resolver with HOME-env-respecting + os.homedir() fallback (sub-step 0.8 hoist; canonical source per Decision I).
-- [src/shared/presence-failure-log.ts](src/shared/presence-failure-log.ts) — append-only JSONL log for hook gate failures (forensics + telemetry).
+- [src/shared/presence-failure-log.ts](src/shared/presence-failure-log.ts) — append-only JSONL log for hook gate failures (forensics + telemetry). Phase 1 extends `PresenceFailureSource` with `"channels-identity"` (Slice 2 NATO claim contention).
+- [src/shared/session-id-discovery.ts](src/shared/session-id-discovery.ts) — Phase 1 Slice 3a CLI-context session-id resolver (lifted from dotfiles canonical at `phase-1-lane-b-binary` step 1). Strict-UUID env precedence + ppid-tree walk + cold-start retry + mtime fallback + sentinel sanity-check + fail-loud. `assertNever` exhaustiveness gate per Wave 1 RE-4. ARCH-1 dual-resolver JSDoc documents the strict-UUID-only-here vs lenient-channels-internal split. Dotfiles' `src/shared/session-id-discovery.ts` is now a re-export shim per Slice 8 ARCH-W2-1 closure.
 
 ### Memory loader (`src/memory-loader/`)
 
@@ -121,10 +132,11 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ### Channels (`src/channels/`)
 
-- [src/channels/index.ts](src/channels/index.ts) — channel CRUD + metadata RMW + heartbeat + appendMessage; routes via `channelsDir()` resolver. Path-parameterized validator split (Phase 0 Slice 4 TS-1 / TS-A6). Phase 1 Slice 1: `ChannelRole` + `IdentityClaim` types added; `ChannelMessage` gains optional `identity?` / `role?` / `version?` fields; `ChannelMetadata` gains optional `identities?` map. Slice 2: `acquireLock` + `withMetadataLock` + public CRUD converted sync→async. Slice 2.1: `commitIdentityClaim` exported for materialized-cache write-after-claim ordering (plan v2 §122).
-- [src/channels/cli.ts](src/channels/cli.ts) — channel CLI bin: from-handoff, create, join, close, send, read, list, meta, heartbeat, peers, body. `requireChannelId()` defense-in-depth via `isValidArtifactId` (Phase 0 Slice 5 RE-2).
-- [src/channels/identity.ts](src/channels/identity.ts) — Phase 1 Slice 2 NATO identity primitive. `NATO_POOL` (26 letters Alpha…Zulu) + `NatoIdentity` literal-union + `isValidIdentity` validator + `claimIdentity` race-free assignment via `linkSync`-on-tmp create-only EEXIST primitive (sibling pattern of `active-sessions/index.ts:writeMetaIfMissing`). Slice 2.1 closure adds `isValidArtifactId` boundary gate (Wave 1 RE-W1-2), `writeFileSync` `{flag: "wx"}` for tmp creation (Wave 1 RE-W1-4), and commit-after-claim metadata write via `commitIdentityClaim` (Wave 1 ARCH-1).
-- [src/channels/api.ts](src/channels/api.ts) — Phase 1 Slice 1 curated public API surface for Phase 2+ hook consumers (per plan v2 §Q4). Re-exports types + functions; internal helpers stay private. Flat `./channels` root dropped per Wave 0 ARCH-MAJ-4.
+- [src/channels/index.ts](src/channels/index.ts) — channel CRUD + metadata RMW + heartbeat + appendMessage; routes via `channelsDir()` resolver. Path-parameterized validator split (Phase 0 Slice 4 TS-1 / TS-A6). Phase 1 Slice 1: `ChannelRole` + `IdentityClaim` types added; `ChannelMessage` gains optional `identity?` / `role?` / `version?` fields; `ChannelMetadata` gains optional `identities?` map. Slice 2: `acquireLock` + `withMetadataLock` + public CRUD converted sync→async. Slice 2.1: `commitIdentityClaim` exported for materialized-cache write-after-claim ordering (plan v2 §122). Slice 5: `removeIdentityClaim` + `setIdentityRole` + `closeStalePeerIdentity` for verb integration. Slice 6: `appendMessage` auto-attaches `identity` + `role` from `metadata.identities` per Decision G.
+- [src/channels/cli.ts](src/channels/cli.ts) — channel CLI bin (14 verbs). Phase 0: from-handoff, create, join, close, send, read, list, meta, heartbeat, peers, body, `requireChannelId()` defense-in-depth via `isValidArtifactId` (Slice 5 RE-2). Phase 1 Slice 4 + 4.5: `die()` rewrite with structured exit-code partition + JSON parity + try/catch funneling for uncaught throws (CLI-A); `parseFlags` integration. Slice 5: 4 new verbs (whoami, set-role, modified join, close-peer with --force) + heartbeat-staleness guard inside `withMetadataLock`. Slice 6: send role-gate + read renderMessage. Slice 3a: `runChannelsCli` export + `import.meta.main` guard + `--body-file` plumbing (62 LOC) with realpath denylist + tmpdir allowlist (RE-1 cross-platform).
+- [src/channels/identity.ts](src/channels/identity.ts) — Phase 1 Slice 2 NATO identity primitive. `NATO_POOL` (26 letters Alpha…Zulu) + `NatoIdentity` literal-union + `isValidIdentity` validator + `claimIdentity` race-free assignment via `linkSync`-on-tmp create-only EEXIST primitive (sibling pattern of `active-sessions/index.ts:writeMetaIfMissing`). Slice 2.1 closure adds `isValidArtifactId` boundary gate (Wave 1 RE-W1-2), `writeFileSync` `{flag: "wx"}` for tmp creation (Wave 1 RE-W1-4), and commit-after-claim metadata write via `commitIdentityClaim` (Wave 1 ARCH-1). Slice 2.2 closure adds reconcile-on-rejoin per Decision D. Slice 5 adds `setRole`, `getIdentityForSession`, `releaseIdentity`, `unlinkIdentitySentinelOrLogOrphan`, `IdentityNotHeldError`, `INTERNAL.unlinkSentinel` (mockable layer for failure-injection tests). `releaseIdentity` ordering: metadata-write first, sentinel-unlink second per Decision F.
+- [src/channels/api.ts](src/channels/api.ts) — Phase 1 Slice 1 curated public API surface for Phase 2+ hook consumers (per plan v2 §Q4). Slice 3a widened to 18 value + 8 type re-exports for Slice 3b's dotfiles shim. Internal helpers stay private; identity primitives + internal-flow primitives intentionally NOT re-exported per Decisions E/H + Slice 8 ARCH-W2-6 surface-curation policy comment.
+- [src/channels/render.ts](src/channels/render.ts) — Phase 1 Slice 6 7-cell display matrix for `read` rendering per parent plan §311-321. Handles all `(identity, role)` × `(message-shape)` cells including legacy `<unknown>: <body>` fallback. 2 soft-wrap edge handlers for terminal width.
 
 ### Active sessions (`src/active-sessions/`)
 
@@ -176,6 +188,18 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 - [test/memory-loader/fixtures/](test/memory-loader/fixtures/) — 7 fixtures (valid + invalid + filtered shapes).
 - [test/channels/index.test.ts](test/channels/index.test.ts) — channel CRUD + metadata RMW + heartbeat lifecycle.
 - [test/channels/cli.test.ts](test/channels/cli.test.ts) — CLI verb integration tests.
+- [test/channels/api.test.ts](test/channels/api.test.ts) — Phase 1 Slice 3a curated-surface integrity test (each value name resolves to non-undefined runtime binding via `claude-conductor/channels/api`; dual-resolver regression; consumer-shape round-trip).
+- [test/channels/api.type-test.ts](test/channels/api.type-test.ts) — Phase 1 Slice 3a compile-only bidirectional sentinels for type integrity (16 sentinel pairs).
+- [test/channels/identity.test.ts](test/channels/identity.test.ts) — Phase 1 Slice 2 + Slice 7 identity primitive tests. Claim/release/setRole/getIdentityForSession unit coverage + boundary validation + path-traversal rejection + closeStalePeerIdentity discriminated-result coverage + setIdentityRole direct + reconcile-on-rejoin.
+- [test/channels/identity-race.test.ts](test/channels/identity-race.test.ts) — Phase 1 Slice 7 26-concurrent subprocess stress + 1000-iteration in-process property-based fuzz (N=2-4) + 50-iteration N=20 high-N coverage. Distinct-letter invariant under contention.
+- [test/channels/message-roundtrip.test.ts](test/channels/message-roundtrip.test.ts) — Phase 1 Slice 7 ChannelMessage round-trip invariant lock (15 tests covering all 4 ChannelKind, all 3 ChannelRole, body fidelity UTF-8/CRLF/escapes, body_ref shunt, multi-message ordering, tolerant reader, schema rejection).
+- [test/channels/render.test.ts](test/channels/render.test.ts) — Phase 1 Slice 6 + Slice 7 render.ts coverage (7-cell display matrix + 2 soft-wrap edges + suppressTimestamp branches + Cell 7b body+body_ref + cross-key independence).
+- [test/channels/cli-body-file.test.ts](test/channels/cli-body-file.test.ts) — Phase 1 Slice 3a `--body-file` integration tests (20 tests covering realpath denylist, tmpdir allowlist, `O_NOFOLLOW`, fstat size, fd cleanup).
+- [test/channels/cli-import-safety.test.ts](test/channels/cli-import-safety.test.ts) — Phase 1 Slice 3a atomic-wiring sentinel triplet for `runChannelsCli` (module import doesn't auto-execute; programmatic invocation works; subprocess entry path executes).
+- [test/channels/cli-send-merged.test.ts](test/channels/cli-send-merged.test.ts) — Phase 1 Slice 6 send-case body-read-before-role-reject ordering lock (ARCH-4 contractual).
+- [test/cli/dispatcher.test.ts](test/cli/dispatcher.test.ts) — Phase 1 Slice 0 + Slice 7 dispatcher verb-routing matrix (--help / -h / help / no-args; subcommand routing; unknown subcommand handling; help text discoverability; --json position-insensitivity; symlink chain depth protection).
+- [test/cli/flags.test.ts](test/cli/flags.test.ts) — Phase 1 Slice 4 flag parser tests.
+- [test/shared/session-id-discovery.test.ts](test/shared/session-id-discovery.test.ts) — Phase 1 Slice 3a CLI-context resolver tests (env var + ppid-walk + mtime fallback + sentinel sanity-check + fail-loud).
 - [test/active-sessions/](test/active-sessions/) — registry atomicity, heartbeat, GC, peer-info-owner-invariant tests.
 - [test/todos/](test/todos/) — todos write/read-active/count-active tests.
 - [test/hooks/timing.test.ts](test/hooks/timing.test.ts) — timing-log JSONL append invariants.

@@ -2,7 +2,13 @@
 // Copyright 2026 nbruzzi
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -98,6 +104,40 @@ describe("identity", () => {
       expect(second.role).toBe(first.role);
       expect(second.joined_at).toBe(first.joined_at);
       expect(second.is_new_participant).toBe(false);
+    });
+
+    it("reconcile-on-rejoin: torn write (sentinel exists, metadata empty) heals on next claim — Wave 2 RE-W2-7 + Decision D", async () => {
+      await createChannel({
+        channelId: "c-torn",
+        handoffId: "c-torn",
+        sessionId: SESSION,
+      });
+      const initial = await claimIdentity({
+        channelId: "c-torn",
+        sessionId: SESSION,
+      });
+      expect(initial.identity).toBe("Alpha");
+
+      const metaPath = join(SANDBOX, "c-torn", "metadata.json");
+      const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
+      expect(meta.identities?.["Alpha"]).toBeDefined();
+      meta.identities = {};
+      writeFileSync(metaPath, JSON.stringify(meta), "utf-8");
+
+      const sentinelPath = join(SANDBOX, "c-torn", "identities", "Alpha");
+      expect(existsSync(sentinelPath)).toBe(true);
+
+      const reclaim = await claimIdentity({
+        channelId: "c-torn",
+        sessionId: SESSION,
+      });
+      expect(reclaim.identity).toBe("Alpha");
+      expect(reclaim.is_new_participant).toBe(false);
+      expect(reclaim.session_id).toBe(SESSION);
+
+      const reconciled = JSON.parse(readFileSync(metaPath, "utf-8"));
+      expect(reconciled.identities?.["Alpha"]).toBeDefined();
+      expect(reconciled.identities["Alpha"].session_id).toBe(SESSION);
     });
 
     it("two different sessions get distinct letters (Alpha + Bravo)", async () => {
