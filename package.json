@@ -43,6 +43,11 @@
       "import": "./src/shared/presence-failure-log.ts",
       "default": "./src/shared/presence-failure-log.ts"
     },
+    "./shared/session-id-discovery": {
+      "types": "./src/shared/session-id-discovery.ts",
+      "import": "./src/shared/session-id-discovery.ts",
+      "default": "./src/shared/session-id-discovery.ts"
+    },
     "./channels/api": {
       "types": "./src/channels/api.ts",
       "import": "./src/channels/api.ts",
