@@ -535,4 +535,96 @@ describe("channels", () => {
       expect(pruneArchive({ retentionDays: 30, maxEntries: 100 })).toEqual([]);
     });
   });
+
+  describe("Phase 2 Slice 8 — last-seen cursor helpers", () => {
+    const UUID_SID = "11111111-1111-4111-8111-111111111111";
+
+    beforeEach(async () => {
+      await createChannel({
+        channelId: "ch1",
+        handoffId: "ch1",
+        sessionId: SESSION,
+      });
+    });
+
+    it("readLastSeenCursor returns null on ENOENT", async () => {
+      const { readLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      expect(readLastSeenCursor("ch1", UUID_SID)).toBe(null);
+    });
+
+    it("writeLastSeenCursor + readLastSeenCursor round-trip preserves mtime+ts", async () => {
+      const { readLastSeenCursor, writeLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      writeLastSeenCursor("ch1", UUID_SID, 12345, "2025-01-01T00:00:00.000Z");
+      const cursor = readLastSeenCursor("ch1", UUID_SID);
+      expect(cursor).toEqual({
+        mtime: 12345,
+        ts: "2025-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("writeLastSeenCursor throws on non-finite mtime (RE-1)", async () => {
+      const { writeLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      expect(() => writeLastSeenCursor("ch1", UUID_SID, NaN, "x")).toThrow(
+        /finite/,
+      );
+      expect(() => writeLastSeenCursor("ch1", UUID_SID, Infinity, "x")).toThrow(
+        /finite/,
+      );
+    });
+
+    it("readLastSeenCursor returns null when JSON has NaN-ish mtime (RE-1)", async () => {
+      const { readLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      const dir = join(resolveChannelsDir(), "ch1", "last-seen");
+      mkdirSync(dir, { recursive: true });
+      // Mtime is null in raw JSON (JSON can't serialize NaN); after parse,
+      // typeof === "object" so isFinite check rejects.
+      writeFileSync(
+        join(dir, `${UUID_SID}.json`),
+        JSON.stringify({ mtime: null, ts: "x" }),
+      );
+      expect(readLastSeenCursor("ch1", UUID_SID)).toBe(null);
+    });
+
+    it("readLastSeenCursor returns null on malformed JSON", async () => {
+      const { readLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      const dir = join(resolveChannelsDir(), "ch1", "last-seen");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${UUID_SID}.json`), "{not json");
+      expect(readLastSeenCursor("ch1", UUID_SID)).toBe(null);
+    });
+
+    it("readLastSeenCursor throws on invalid sessionId (RE-8 boundary check)", async () => {
+      const { readLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      // Path-traversal-style sessionId fails the boundary's safe-chars check.
+      expect(() => readLastSeenCursor("ch1", "../etc/passwd")).toThrow(
+        /sessionId/,
+      );
+    });
+
+    it("clearLastSeenCursor returns kind:cleared on existing cursor", async () => {
+      const { clearLastSeenCursor, writeLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      writeLastSeenCursor("ch1", UUID_SID, 123, "x");
+      expect(clearLastSeenCursor("ch1", UUID_SID)).toEqual({ kind: "cleared" });
+    });
+
+    it("clearLastSeenCursor returns kind:absent on ENOENT", async () => {
+      const { clearLastSeenCursor } =
+        await import("../../src/channels/index.ts");
+      expect(clearLastSeenCursor("ch1", UUID_SID)).toEqual({ kind: "absent" });
+    });
+
+    it("isChannelArchived returns false for active channel, true after archive", async () => {
+      const { isChannelArchived } = await import("../../src/channels/index.ts");
+      expect(isChannelArchived("ch1")).toBe(false);
+      archiveChannel("ch1");
+      expect(isChannelArchived("ch1")).toBe(true);
+    });
+  });
 });

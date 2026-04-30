@@ -191,6 +191,18 @@ export function resolveSessionId(
 
 // ─── Paths ──────────────────────────────────────────────────────
 
+// ─── Per-channel substrate subdirs (CLI-12 closure) ──────────────────
+// Each channel directory `<channelsDir>/<channel-id>/` contains:
+//   - metadata.json + metadata.json.lock — channel metadata + RMW lock
+//   - messages.jsonl                     — append-only message log
+//   - bodies/                            — large message bodies (body_ref)
+//   - heartbeat/<sid>                    — per-session liveness markers
+//   - identities/<NATO-letter>           — per-letter sentinel files (Phase 1 Slice 2)
+//   - identity-emit/<sid>.json           — identity-injector emission cursors (Phase 2 Slice 5)
+//   - gc-reap/cursor                     — channels-gc-reaper rate-gate cursor (Phase 2 Slice 4)
+//   - last-seen/<sid>.json               — channels read --since-cursor cursors (Phase 2 Slice 8)
+// ─────────────────────────────────────────────────────────────────────
+
 function channelDir(id: string): string {
   return join(resolveChannelsDir(), id);
 }
@@ -211,6 +223,15 @@ function heartbeatDir(id: string): string {
 }
 function heartbeatPath(id: string, sessionId: string): string {
   return join(heartbeatDir(id), sessionId);
+}
+function lastSeenDir(id: string): string {
+  return join(channelDir(id), "last-seen");
+}
+function lastSeenCursorPath(id: string, sessionId: string): string {
+  return join(lastSeenDir(id), `${sessionId}.json`);
+}
+function archivedChannelDir(id: string): string {
+  return join(resolveArchiveDir(), id);
 }
 
 // ─── Metadata RMW (O_EXCL lock + temp+rename) ───────────────────
@@ -1107,4 +1128,188 @@ export function pruneArchive(opts: {
     }
   }
   return purged;
+}
+
+// ─── Last-seen cursor helpers (Phase 2 Slice 8) ──────────────────────
+
+/** Discriminated result of `clearLastSeenCursor`. */
+export type ClearLastSeenCursorResult =
+  | { readonly kind: "cleared" }
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "error";
+      readonly code: "EACCES" | "EBUSY" | "OTHER";
+      readonly detail: string;
+    };
+
+/** Last-seen cursor shape: per-session, per-channel.
+ *  - `mtime`: max `Date.parse(msg.ts)` across the last filtered batch
+ *    (with `Number.isFinite` filter — RE-1 closure). NOT the file mtime.
+ *  - `ts`: ISO 8601 form for human/debug. */
+export type LastSeenCursor = {
+  readonly mtime: number;
+  readonly ts: string;
+};
+
+/** Read the per-session cursor for `channelId`. Returns null when absent
+ *  or malformed. RE-1 closure: validates `Number.isFinite(parsed.mtime)`,
+ *  not just `typeof === "number"` (NaN passes typeof check). RE-8 closure:
+ *  `isValidArtifactId(channelId)` + `isValidSessionId(sessionId)` boundary
+ *  checks. RE-13 closure: try/catch around readFileSync handles ENOENT
+ *  during read (race with concurrent prune unlinking the file). */
+export function readLastSeenCursor(
+  channelId: string,
+  sessionId: string,
+): LastSeenCursor | null {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] readLastSeenCursor: invalid channelId "${channelId}"`,
+    );
+  }
+  if (!isValidSessionId(sessionId)) {
+    throw new Error(
+      `[channels] readLastSeenCursor: invalid sessionId "${sessionId}"`,
+    );
+  }
+  const path = lastSeenCursorPath(channelId, sessionId);
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const c = parsed as LastSeenCursor;
+    if (!Number.isFinite(c.mtime)) return null;
+    if (typeof c.ts !== "string") return null;
+    return { mtime: c.mtime, ts: c.ts };
+  } catch {
+    return null;
+  }
+}
+
+/** Write the per-session cursor for `channelId`. Atomic via tmp+rename
+ *  (RE-5 closure): `writeFileSync(tmpPath, ..., { flag: "wx" })` then
+ *  `renameSync(tmpPath, finalPath)`. Concurrent writers race on rename;
+ *  one wins, file always valid. RE-1 closure: rejects non-finite mtime.
+ *  RE-8 closure: boundary checks. RE-12 closure: tmpPath includes
+ *  `${pid}.${random}` suffix to avoid EEXIST collision on stale orphan. */
+export function writeLastSeenCursor(
+  channelId: string,
+  sessionId: string,
+  mtime: number,
+  ts: string,
+): void {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] writeLastSeenCursor: invalid channelId "${channelId}"`,
+    );
+  }
+  if (!isValidSessionId(sessionId)) {
+    throw new Error(
+      `[channels] writeLastSeenCursor: invalid sessionId "${sessionId}"`,
+    );
+  }
+  if (!Number.isFinite(mtime)) {
+    throw new Error(
+      `[channels] writeLastSeenCursor: mtime must be finite, got ${mtime}`,
+    );
+  }
+  const dir = lastSeenDir(channelId);
+  mkdirSync(dir, { recursive: true });
+  const finalPath = lastSeenCursorPath(channelId, sessionId);
+  const tmpSuffix = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}`;
+  const tmpPath = `${finalPath}.${tmpSuffix}.tmp`;
+  const cursor: LastSeenCursor = { mtime, ts };
+  writeFileSync(tmpPath, `${JSON.stringify(cursor)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  try {
+    renameSync(tmpPath, finalPath);
+  } catch (err) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      /* tmp already gone; ignore */
+    }
+    throw err;
+  }
+}
+
+/** Clear the per-session cursor for `channelId`. Idempotent — returns
+ *  `{kind: "absent"}` on ENOENT (RE-10 closure: discriminated result for
+ *  EACCES/EBUSY too). RE-8 closure: boundary checks. */
+export function clearLastSeenCursor(
+  channelId: string,
+  sessionId: string,
+): ClearLastSeenCursorResult {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] clearLastSeenCursor: invalid channelId "${channelId}"`,
+    );
+  }
+  if (!isValidSessionId(sessionId)) {
+    throw new Error(
+      `[channels] clearLastSeenCursor: invalid sessionId "${sessionId}"`,
+    );
+  }
+  const path = lastSeenCursorPath(channelId, sessionId);
+  try {
+    unlinkSync(path);
+    return { kind: "cleared" };
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const detail = err instanceof Error ? err.message : String(err);
+    if (code === "ENOENT") return { kind: "absent" };
+    if (code === "EACCES" || code === "EBUSY") {
+      return { kind: "error", code, detail };
+    }
+    return { kind: "error", code: "OTHER", detail };
+  }
+}
+
+/** True iff the channel exists in the archive directory (per-channel
+ *  archive dir at `<archiveDir>/<channelId>/`). Used by Slice 8's
+ *  `forget-cursor` + `show-cursor` verbs to short-circuit on archived
+ *  channels (CLI-11 closure). */
+export function isChannelArchived(channelId: string): boolean {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] isChannelArchived: invalid channelId "${channelId}"`,
+    );
+  }
+  return existsSync(archivedChannelDir(channelId));
+}
+
+/** Path to the per-channel `last-seen/` subdirectory. Exported so the
+ *  Slice 4 GC reaper can scan + prune stale cursors (RE-W0-5). */
+export function resolveLastSeenDir(channelId: string): string {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] resolveLastSeenDir: invalid channelId "${channelId}"`,
+    );
+  }
+  return lastSeenDir(channelId);
+}
+
+/** Path to a specific session's last-seen cursor file. Exported for the
+ *  Slice 4 GC reaper's per-cursor unlink path. */
+export function resolveLastSeenCursorPath(
+  channelId: string,
+  sessionId: string,
+): string {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] resolveLastSeenCursorPath: invalid channelId "${channelId}"`,
+    );
+  }
+  if (!isValidSessionId(sessionId)) {
+    throw new Error(
+      `[channels] resolveLastSeenCursorPath: invalid sessionId "${sessionId}"`,
+    );
+  }
+  return lastSeenCursorPath(channelId, sessionId);
 }

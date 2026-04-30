@@ -65,10 +65,12 @@ import {
   LOCK_STALE_MS,
   listChannels,
   resolveChannelsDir,
+  resolveLastSeenDir,
   withMetadataLock,
   readMetadata,
   type IdentityClaim,
 } from "../../channels/index.ts";
+import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
   identitiesDir,
   identitySentinelPath,
@@ -85,6 +87,10 @@ const SOURCE = "channels-gc-reaper";
 
 /** 5-min rate gate per channel (cursor mtime). */
 const REAP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** Phase 2 Slice 8: TTL for last-seen cursors. Cursor file mtime > 7 days
+ *  AND owning sid not in metadata.identities → prune. */
+const LAST_SEEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Mtime gate for orphan candidates: 3 × LOCK_STALE_MS = 90 s. Ensures
  *  any in-flight claimIdentity has fully committed before reaper acts.
@@ -235,6 +241,23 @@ async function reapChannel(channelId: string): Promise<string[]> {
   }
 
   lines.push(...sweepLines);
+
+  // Phase 2 Slice 8: prune stale last-seen cursors AFTER sweepPhase
+  // releases its lock (RE-3 + RE-6 closures — separate withMetadataLock
+  // block; re-reads metadata.identities inside the lock).
+  try {
+    await pruneStaleLastSeenCursors(channelId);
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "lock-timeout",
+      sessionId: null,
+      artifactPath: channelId,
+      detail: `gc-reaper last-seen prune lock-acquire failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
   touchReapCursor(channelId);
   return lines;
 }
@@ -550,4 +573,75 @@ function runRaceDetectionBreadcrumb(
       /* tmp-file already moved or absent — ignore */
     }
   }
+}
+
+/**
+ * Phase 2 Slice 8: prune stale last-seen cursors. Runs in its OWN
+ * `withMetadataLock` block (RE-3 + RE-6 closures — separate from
+ * `sweepPhase`'s lock; re-reads `metadata.identities` inside the lock).
+ *
+ * For each `<channel-dir>/last-seen/<sid>.json`:
+ *   1. Validate filename has the `<uuid>.json` shape (skip non-UUID
+ *      debris like `.tmp` partial-write leftovers).
+ *   2. Check the owning `sid` is NOT in any `metadata.identities[*].session_id`
+ *      (re-read inside the lock for fresh post-sweep snapshot).
+ *   3. Check cursor file mtime > 7 days old.
+ *   4. If BOTH true: `unlinkSync(cursorPath)`. EACCES/EBUSY → breadcrumb.
+ *
+ * Race-safe vs concurrent `read --since-cursor` — TTL window is 7 days;
+ * any session active in that window will have their sid in
+ * `metadata.identities` (kept fresh by claimIdentity + heartbeat). False
+ * positives only when a session is BOTH absent from metadata AND silent
+ * for 7 days, which by definition means re-read-from-start is acceptable.
+ */
+async function pruneStaleLastSeenCursors(channelId: string): Promise<void> {
+  await withMetadataLock(channelId, () => {
+    let metaIdentities: Record<string, IdentityClaim> = {};
+    try {
+      const meta = readMetadata(channelId);
+      metaIdentities = meta.identities ?? {};
+    } catch {
+      return; // skip channel if metadata unreadable
+    }
+    const liveSids = new Set<string>();
+    for (const claim of Object.values(metaIdentities)) {
+      liveSids.add(claim.session_id);
+    }
+    const dir = resolveLastSeenDir(channelId);
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return; // ENOENT — channel never had --since-cursor consumers
+    }
+    const now = Date.now();
+    for (const name of entries) {
+      if (!name.endsWith(".json")) continue;
+      const sid = name.slice(0, -".json".length);
+      if (!isValidSessionId(sid)) continue; // skip .tmp partial-write debris
+      if (liveSids.has(sid)) continue; // session is current participant
+      const cursorPath = join(dir, name);
+      let mtimeMs: number;
+      try {
+        mtimeMs = statSync(cursorPath).mtimeMs;
+      } catch {
+        continue; // race-cleared
+      }
+      if (now - mtimeMs < LAST_SEEN_TTL_MS) continue;
+      try {
+        unlinkSync(cursorPath);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException | undefined)?.code;
+        if (code === "ENOENT") continue;
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          source: "channels-identity",
+          kind: "write-failed",
+          sessionId: sid,
+          artifactPath: cursorPath,
+          detail: `gc-reaper last-seen prune unlink failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+  });
 }
