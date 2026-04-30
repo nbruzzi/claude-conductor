@@ -104,6 +104,22 @@ P3_FILE_ALLOWLIST=(
   "src/hooks/checks/test-gate.ts"
   "src/hooks/checks/bundled-registrations.ts"
   "src/channels/index.ts"
+  # Phase 2 Slice 8 — `read` verb help text references the per-channel
+  # cursor path `~/.claude/channels/<id>/last-seen/<sid>.json` in
+  # operator-facing help output. The literal IS the operator-facing
+  # documentation; routing via paths.ts would require template
+  # interpolation in help strings and obscure the answer to the
+  # "where does my cursor live" operator question.
+  "src/channels/cli.ts"
+  # Phase 3 Slice 1 — kill-switch warning string references the per-hook
+  # disable file path `~/.claude/${name}-off` as an operator escape hatch.
+  # Operator-facing documentation, same rationale as channels/cli.ts.
+  "src/shared/disable-hooks.ts"
+  # Phase 2 Slice 10 — smoke matrix scenario greps the canonical
+  # `presence-gate-failures.log` citation OUT of hooks-layer.md as the
+  # assertion target. The literal is the expected-string-to-match,
+  # not a path the script computes.
+  "scripts/smoke-phase-2.sh"
 )
 
 # --- 3. Patterns ---
