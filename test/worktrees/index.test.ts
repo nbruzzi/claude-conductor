@@ -64,13 +64,13 @@ function getRepo(): TmpRepo {
 
 describe("worktreePathForSession", () => {
   it("appends -<sid-prefix-8> to the canonical", () => {
-    const path = worktreePathForSession(SID, "/Users/nick/.claude-dotfiles");
-    expect(path).toBe("/Users/nick/.claude-dotfiles-94a8058c");
+    const path = worktreePathForSession(SID, "/tmp/.claude-dotfiles");
+    expect(path).toBe("/tmp/.claude-dotfiles-94a8058c");
   });
 
   it("strips trailing slashes from the canonical", () => {
-    const path = worktreePathForSession(SID, "/Users/nick/.claude-dotfiles///");
-    expect(path).toBe("/Users/nick/.claude-dotfiles-94a8058c");
+    const path = worktreePathForSession(SID, "/tmp/.claude-dotfiles///");
+    expect(path).toBe("/tmp/.claude-dotfiles-94a8058c");
   });
 
   it("is deterministic — same sid + canonical → same path", () => {

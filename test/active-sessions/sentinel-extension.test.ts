@@ -35,8 +35,8 @@ import { readPresenceFailures } from "../../src/shared/presence-failure-log.ts";
 
 const SID = "94a8058c-d764-43e1-a87e-b43126b7fe90";
 const SID2 = "76b84abc-a6a2-4395-bb65-f5bd799c525c";
-const DOTFILES_ROOT = "/Users/test/.claude-dotfiles-94a8058c";
-const DOTFILES_ROOT_2 = "/Users/test/.claude-dotfiles-76b84abc";
+const DOTFILES_ROOT = "/tmp/.claude-dotfiles-94a8058c";
+const DOTFILES_ROOT_2 = "/tmp/.claude-dotfiles-76b84abc";
 
 let tmpDir: string;
 let prevActiveSessionsDir: string | undefined;
@@ -117,7 +117,7 @@ describe("setSentinelDotfilesRoot + readSentinelDotfilesRoot", () => {
 
   it("re-pinning the same sid with a NEW value updates the field", () => {
     setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: DOTFILES_ROOT });
-    const updated = "/Users/test/.claude-dotfiles-changed";
+    const updated = "/tmp/.claude-dotfiles-changed";
     setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: updated });
     expect(readSentinelDotfilesRoot(SID)).toBe(updated);
   });

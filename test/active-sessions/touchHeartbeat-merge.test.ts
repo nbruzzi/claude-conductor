@@ -27,7 +27,7 @@ import {
 } from "../../src/active-sessions/index.ts";
 
 const SID = "94a8058c-d764-43e1-a87e-b43126b7fe90";
-const DOTFILES_ROOT = "/Users/test/.claude-dotfiles-94a8058c";
+const DOTFILES_ROOT = "/tmp/.claude-dotfiles-94a8058c";
 
 let tmpDir: string;
 let prevActiveSessionsDir: string | undefined;
