@@ -36,6 +36,11 @@
   },
   "dependencies": {},
   "exports": {
+    "./shared/disable-hooks": {
+      "types": "./src/shared/disable-hooks.ts",
+      "import": "./src/shared/disable-hooks.ts",
+      "default": "./src/shared/disable-hooks.ts"
+    },
     "./shared/home": {
       "types": "./src/shared/home.ts",
       "import": "./src/shared/home.ts",

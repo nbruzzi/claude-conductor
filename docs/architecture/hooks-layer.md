@@ -139,7 +139,7 @@ Phase 2 hooks fail-soft (fail-open + breadcrumb) by design except for `channels-
 | `teammate-idle-reminder` | Suspected stale-peer false positive                | `claude-conductor channels peers <id>` shows the underlying heartbeat ages; clock-skew breadcrumb is informational only. |
 | `read --since-cursor`    | Cursor stuck on a since-cursor read                | `claude-conductor channels forget-cursor <id>` (resets cursor; next read bootstraps from full history).                  |
 
-A dispatcher-level universal kill-switch (`CLAUDE_CONDUCTOR_DISABLE_HOOKS`) is deferred to Phase 3 as its own focused slice — the cross-edge atomic-wiring + per-hook correctness review is substrate-amendment work that deserves explicit scope, not a Phase 2 closure feature.
+A dispatcher-level universal kill-switch (`CLAUDE_CONDUCTOR_DISABLE_HOOKS`) shipped in Phase 3 Slice 1 — see [`docs/operations/phase-3-kill-switch.md`](../operations/phase-3-kill-switch.md) for the operator runbook + composition rule + breadcrumb taxonomy. The per-hook recovery procedures in the table above remain the granular per-hook path; the kill-switch is the universal emergency-stop for multi-hook wedges.
 
 **Cannot fail-open via skip (substrate-level invariants):**
 

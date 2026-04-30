@@ -43,7 +43,8 @@ export type PresenceFailureSource =
   | "session-presence-register"
   | "session-presence-unregister"
   | "active-sessions-registry"
-  | "channels-identity";
+  | "channels-identity"
+  | "dispatcher";
 
 export type PresenceFailureKind =
   | "lock-timeout"
@@ -51,7 +52,8 @@ export type PresenceFailureKind =
   | "registry-contention"
   | "operator-reset"
   | "unhandled"
-  | "clock-skew";
+  | "clock-skew"
+  | "kill-switch";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -237,7 +239,8 @@ function isPresenceFailureSource(s: string): s is PresenceFailureSource {
     s === "session-presence-register" ||
     s === "session-presence-unregister" ||
     s === "active-sessions-registry" ||
-    s === "channels-identity"
+    s === "channels-identity" ||
+    s === "dispatcher"
   );
 }
 
@@ -248,7 +251,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "registry-contention" ||
     k === "operator-reset" ||
     k === "unhandled" ||
-    k === "clock-skew"
+    k === "clock-skew" ||
+    k === "kill-switch"
   );
 }
 

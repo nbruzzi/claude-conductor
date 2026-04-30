@@ -248,7 +248,7 @@ The `~/.claude/channels/<channel-id>/` directory is the per-channel substrate. P
 
 Phase 2 hooks fail-soft (fail-open + breadcrumb) by design except for `channels-gc-reaper` (fail-loud — substrate corruption needs operator action). When a hook gets the operator into a wedged state, recovery is **per-hook rather than via a global kill-switch** — each hook owns substrate with different correctness implications, so a universal "disable all" toggle would be a footgun.
 
-**A dispatcher-level kill-switch (`CLAUDE_CONDUCTOR_DISABLE_HOOKS`) is deferred to Phase 3** as its own focused slice — the cross-edge atomic-wiring + per-hook correctness review is substrate-amendment work that deserves explicit scope, not a Phase 2 closure feature. The procedures below resolve all dominant wedge cases without it.
+**A dispatcher-level kill-switch (`CLAUDE_CONDUCTOR_DISABLE_HOOKS`) shipped in Phase 3 Slice 1** — see [`phase-3-kill-switch.md`](phase-3-kill-switch.md) for the full operator runbook. The per-hook recovery procedures below remain the granular path; the kill-switch is the universal emergency-stop for multi-hook wedges. Composition rule: profile-filter applies first, env-var-disable second, `--check=NAME` isolation third.
 
 Each entry is structured **symptom → diagnose → recover → verify** (depth-3 per CLI-2):
 
