@@ -53,7 +53,8 @@ behaviour (lock acquisition, body-ref redirection, tolerant read) stays
 consistent with the hooks.
 
 ```bash
-cd "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
+eval "$(bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/cli/resolve-dotfiles-root.ts" --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || true)"
+cd "${CLAUDE_DOTFILES_ROOT_RESOLVED:-${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}}"
 CLAUDE_SESSION_ID="<session-id>" bun run src/channels/cli.ts <subcommand> [args...]
 ```
 

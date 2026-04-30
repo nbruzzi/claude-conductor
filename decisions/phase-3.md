@@ -174,3 +174,141 @@ For presence-failure variant:
 **Supersedes / superseded_by:** none.
 
 ---
+
+## 2026-04-30 — Decision D: Per-session dotfiles worktrees substrate (Slice 2)
+
+---
+
+**Status:** SHIPPED (plugin lane lands as commits 599c209 + 4ab733b + ebefdcb + 92c24a5 + this commit; awaits plugin merge to main + Bravo lane).
+
+**Context:** the recurring shared-tree-bleed failure mode (per
+`feedback-parallel-session-shared-tree-branch-race.md`) — two concurrent
+Claude sessions share `~/.claude-dotfiles` as a single working tree, and
+branch checkouts / staged files / pre-commit runs leak across sessions.
+Recorded incidents on 2026-04-26, 2026-04-29, 2026-04-30. Bravo manually
+dogfooded a `~/.claude-dotfiles-bravo` worktree workaround during Slice 1.
+
+Slice 2 substrate-bakes the workaround: every Claude session, when the
+feature flag `CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES=1` is set, gets its
+own `git worktree` of canonical at `~/.claude-dotfiles-<sid-prefix-8>/`.
+Default-off in this slice (D9); flip-default scheduled as a follow-up
+commit on main after Bravo first-dogfood ack.
+
+---
+
+**Sub-decisions ratified (per REV 0.2 Nick decisions):**
+
+- **D-ARCH1 — Slash command symlink restore.** Source-of-truth for
+  `commands/session/*.md` is plugin canonical (`~/claude-conductor/commands/session/`).
+  install.sh:248 already declares `commands/session/` as a `DIR_SYMLINK`
+  pointing at `node_modules/claude-conductor/commands/session/`. Bravo lane
+  deletes the stale dotfiles fork files and re-establishes the symlink.
+
+- **D-ARCH3 — Heartbeat-body sentinel anchored at canonical-claude-home.**
+  The per-session `dotfilesRoot` value lives as an optional field on the
+  existing `OwnerRecord` heartbeat body at
+  `~/.claude/active-sessions/<canonical-claude-home>/heartbeats/<sid>`,
+  NOT a separate `~/.claude/session-state/` directory. Anchored at the
+  always-resolvable canonical `~/.claude` artifact-id. Provisioner
+  explicitly pins the anchor at session-start regardless of CWD (REV 0.2
+  ARCH-1 fix); `touchHeartbeat()` is read-merge-write so the field
+  survives subsequent dispatcher fires (REV 0.2 ARCH-2 / RE-101 fix).
+
+- **D-ARCH5 — Slash command sentinel-reader prelude.** Each plugin canonical
+  slash command prepends `eval "$(bun run ${plugin}/src/cli/resolve-dotfiles-root.ts --session-id "$CLAUDE_SESSION_ID")"`
+  - `cd "${CLAUDE_DOTFILES_ROOT_RESOLVED:-${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}}"`.
+    Both hooks and slash commands resolve via the same `dotfilesRoot()`
+    core. Failure-fallthrough is silent (REV 0.2 ARCH-5): if the bun-run
+    fails, eval consumes empty stdout and the downstream fallback chain
+    takes over.
+
+- **D-CLIDX3 — `[fff-off]` tag string.** Feature-flag-disabled hooks
+  render `[fff-off]` in dispatcher `--list` output. Tag stacking grammar
+  (Bravo B9): bare single-tag form when one dimension is disabled
+  (`[disabled]` / `[env-disabled]` / `[fff-off]`); unified
+  `[disabled by <reasons>]` grammar when 2+ dimensions are disabled
+  (`[disabled by profile,env,fff]`). Sibling-parity with Slice 1's
+  existing `[disabled by profile,env]` pattern. **NOTE:** this edit
+  lands in dotfiles' `src/hooks/dispatcher.ts` (Bravo lane), not plugin
+  — see `dispatcher-migrate-to-plugin` polish backlog.
+
+- **D-CLIDX4 — Full 10-scenario runbook manifest.** `docs/operations/phase-3-worktrees.md`
+  ships with 10 depth-3 scenarios (1-disable-this-session, 2-wedged-worktree,
+  3-missed-cleanup, 4-migrate-uncommitted, 5-sid-collision, 6-provision-failure,
+  7-gc-reaped-while-active, 8-flip-revert-recovery, 9-second-terminal,
+  10-fresh-install-bootstrap) + 8 verbatim error drafts (E-1 through E-8)
+  - Operational notes (Time Machine exclusion + path-walk discipline +
+    hard-vs-soft ceiling + mixed flag-state).
+
+- **D-RE6 — Strict-serialization lane split.** Alpha plugin lane lands
+  AND merges to main BEFORE Bravo's dotfiles lane begins. Bravo first-
+  spin opens a fresh terminal with `CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES=1`
+  set explicitly. Manual `~/.claude-dotfiles-bravo` workaround
+  decommissioned. Don't dogfood the substrate while building it.
+  Channel signal protocol: Alpha posts `MAIN-MERGE-LANDED <sha>` on
+  channel `2026-04-28_01-50` after plugin merge to main (regex
+  `^MAIN-MERGE-LANDED [0-9a-f]{7,40}$`); Bravo's lane-start
+  `/handoff-resume` reads channel history and verifies SHA matches
+  `git -C ~/claude-conductor rev-parse origin/main` before proceeding.
+
+---
+
+**CLI verb hierarchy (REV 0.2 Q5):** for v1, the new CLI verbs (`session
+resolve-dotfiles-root`, `worktrees show`) live as flat scripts at
+`src/cli/` invoked directly by slash commands and operators. The
+top-level `bin/claude-conductor` dispatcher (`src/cli/dispatcher.ts`)
+currently routes `channels` and `todos` subcommands; routing the new
+verbs through it is a polish item if/when the verb count grows or
+operator UX warrants it.
+
+---
+
+**Alternatives considered + rejected:**
+
+- **Two parallel registries (sentinel dir + active-sessions registry)** —
+  Eliminated by D-ARCH3 in favor of heartbeat-body-extension. Two
+  registries to keep in sync = future drift hazard.
+- **Slash commands as canonical-tier-by-design** (no sentinel-reader
+  prelude) — Eliminated by D-ARCH5. Two-tier resolution
+  (hooks→worktree, slash→canonical) is a foot-gun.
+- **Hard ceiling N=20 with refusal** — Eliminated by REV 0.2 RE-105.
+  TOCTOU window; brief over-shoot tolerated by design. Soft ceiling
+  with system-reminder converges at steady state via the GC reaper.
+- **Parent-dir worktree naming `~/.claude-dotfiles-worktrees/<sid>/`** —
+  Filed as polish (`worktree-parent-dir-tidy`). Cleaner home-dir but
+  requires `file:../../claude-conductor` path bump.
+- **Lazy provisioning on plan-mode-entry** — Filed as polish
+  (`worktree-provisioning-lazy`). Bravo's recommendation; Nick chose
+  default-on for v1.
+
+---
+
+**Cross-edge atomic-wiring (Bravo lens-audit (a) confirmed 5×3=15
+dotfiles-side surfaces):** 3 new hooks → per-hook 5-rule contract from
+`feedback-atomic-wiring-discipline.md`. Plugin-side: 4 surfaces × 3
+hooks + 1 shared bundled-registrations.test.ts assertion file = 13
+plugin-side touches. Dotfiles-side (Bravo lane): 5 surfaces × 3 hooks =
+15 dotfiles-side touches across 8 actual files (3 shims + check-names +
+bundled-registrations + 2 ORDER files + registry.test.ts).
+
+---
+
+**REV history:**
+
+- REV 0 (initial draft, 2026-04-30) → 3-persona audit (RE 7.0 / Architecture
+  7.0 / CLI DX 7.0) returned 6 CRITICAL + 13 MAJOR + 10 minor.
+- REV 0.1 (folded REV 0 findings) → 2-persona re-audit returned 2 NEW
+  CRITICAL (ARCH-1 anchor + ARCH-2/RE-101 schema/touchHeartbeat) + 6
+  MAJOR. Bravo lens-audit (1 HOLD-WITH-FIX + 2 PASS-with-annotations).
+- REV 0.2 (folded REV 0.1 findings) → bounded re-audit on critical-fix
+  delta returned 0 CRITICAL + 5 spec-clarity (ARCH-7/8/9 + RE-201/202 +
+  Bravo F1/F2/F3/F4) — all folded inline. Bravo full-plan SHIP 9.0/10.
+
+---
+
+**Supersedes / superseded_by:** Decision D supersedes nothing; future
+worktree extensions (vault per-session worktrees, plugin per-session
+worktrees) will reference back to this decision as the substrate
+template.
+
+---

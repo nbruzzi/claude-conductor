@@ -49,10 +49,16 @@ import { registerBundled } from "../../src/hooks/checks/bundled-registrations.ts
 import { pass } from "../../src/hooks/types.ts";
 import type { HookEvent } from "../../src/hooks/types.ts";
 
-const EXPECTED_COUNT = 22;
+// Phase 3 Slice 2 — bumped from 22 to 25 with 3 new bundled hook checks
+// (dotfiles-worktree-provisioner, dotfiles-worktree-gc on session-start,
+// dotfiles-worktree-cleanup on stop). REV 0.2 ARCH-4 fix re-targets the
+// atomic-wiring count assertion from registry-primitives.test.ts (which
+// uses synthetic fixtures and never loads bundled-registrations) to this
+// file, where EXPECTED_COUNT actually pins production state.
+const EXPECTED_COUNT = 25;
 
 describe("bundled-registrations meta-test", () => {
-  it("BUNDLED_CHECK_NAMES has exactly 22 entries", () => {
+  it("BUNDLED_CHECK_NAMES has exactly 25 entries", () => {
     expect(BUNDLED_CHECK_NAMES.length).toBe(EXPECTED_COUNT);
   });
 
@@ -107,6 +113,29 @@ describe("bundled-registrations meta-test", () => {
 
     expect(new Set(allRegisteredNames).size).toBe(allRegisteredNames.length);
     expect(new Set(allRegisteredNames)).toEqual(new Set(BUNDLED_CHECK_NAMES));
+  });
+
+  // Phase 3 Slice 2 — REV 0.2 ARCH-4 sibling-parity assertions for the
+  // 3 new hook checks. Per Bravo lens-audit (a): each new hook contributes
+  // 5 dotfiles-side surface entries (shim + check-names + bundled-
+  // registrations + ORDER + count-test toContain) AND 4 plugin-side
+  // entries (the check itself + check-names + bundled-registrations +
+  // exports map). The toContain assertions below pin the bundled-check-
+  // names side; the dotfiles-lane registry test pins the sibling parity
+  // when Bravo's lane lands.
+  it("Phase 3 Slice 2 — provisioner registered on session-start", () => {
+    const names = BUNDLED_CHECKS_BY_EVENT["session-start"];
+    expect(names).toContain("dotfiles-worktree-provisioner");
+  });
+
+  it("Phase 3 Slice 2 — gc reaper registered on session-start", () => {
+    const names = BUNDLED_CHECKS_BY_EVENT["session-start"];
+    expect(names).toContain("dotfiles-worktree-gc");
+  });
+
+  it("Phase 3 Slice 2 — cleanup registered on stop", () => {
+    const names = BUNDLED_CHECKS_BY_EVENT["stop"];
+    expect(names).toContain("dotfiles-worktree-cleanup");
   });
 
   // TA-3 PARTIAL fix — pin narrowing at compile time, not just runtime.

@@ -54,14 +54,17 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 1. `test-gate` — refuses end-of-session if tests fail (when test-gate-on enabled).
 2. `handoff-latest-guard` — verifies LATEST.md symlink integrity.
 3. `session-presence-unregister` — drops session from active-sessions registry.
+4. **(Phase 3 Slice 2):** `dotfiles-worktree-cleanup` — fires BEFORE `session-presence-unregister` per array order; removes the per-session dotfiles worktree, calls `unregisterActiveSession` (RE-3 self-heal — explicit, not relying on downstream unregister), and clears the heartbeat-body sentinel. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
 
 ### `session-start`
 
 1. `channel-gc` — Phase 1 channel-archive gc.
 2. `active-channels-load` — Phase 1 active-channels surfacing.
 3. `session-presence-register` — registers session in active-sessions registry.
-4. **(Phase 2 Slice 4, PENDING):** `channels-gc-reaper` — Phase 2 sentinel/metadata reconciliation reaper.
-5. **(Phase 2 Slice 5, PENDING):** `identity-injector` — Phase 2 NATO-identity context surface.
+4. **(Phase 2 Slice 4):** `channels-gc-reaper` — Phase 2 sentinel/metadata reconciliation reaper.
+5. **(Phase 2 Slice 5):** `identity-injector` — Phase 2 NATO-identity context surface.
+6. **(Phase 3 Slice 2):** `dotfiles-worktree-provisioner` — feature-flag-gated per-session worktree provisioner. Anchor-pins canonical-claude-home heartbeat (REV 0.2 ARCH-1). RE-105 soft-ceiling reminder + RE-8 mixed-flag-state warning.
+7. **(Phase 3 Slice 2):** `dotfiles-worktree-gc` — orphan reaper for per-session worktrees. RE-102 single-threshold staleness (`GC_WINDOW_MS` = 60min). RE-103 mtime-filtered safety guards. RE-3 self-heal triple. Forensic-marker escape hatch. 5-min rate-gate cursor.
 
 ### `user-prompt-submit`
 

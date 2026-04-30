@@ -41,6 +41,11 @@
       "import": "./src/shared/disable-hooks.ts",
       "default": "./src/shared/disable-hooks.ts"
     },
+    "./shared/dotfiles-root": {
+      "types": "./src/shared/dotfiles-root.ts",
+      "import": "./src/shared/dotfiles-root.ts",
+      "default": "./src/shared/dotfiles-root.ts"
+    },
     "./shared/home": {
       "types": "./src/shared/home.ts",
       "import": "./src/shared/home.ts",
@@ -115,6 +120,21 @@
       "types": "./src/hooks/checks/channels-gc-reaper.ts",
       "import": "./src/hooks/checks/channels-gc-reaper.ts",
       "default": "./src/hooks/checks/channels-gc-reaper.ts"
+    },
+    "./hooks/checks/dotfiles-worktree-cleanup": {
+      "types": "./src/hooks/checks/dotfiles-worktree-cleanup.ts",
+      "import": "./src/hooks/checks/dotfiles-worktree-cleanup.ts",
+      "default": "./src/hooks/checks/dotfiles-worktree-cleanup.ts"
+    },
+    "./hooks/checks/dotfiles-worktree-gc": {
+      "types": "./src/hooks/checks/dotfiles-worktree-gc.ts",
+      "import": "./src/hooks/checks/dotfiles-worktree-gc.ts",
+      "default": "./src/hooks/checks/dotfiles-worktree-gc.ts"
+    },
+    "./hooks/checks/dotfiles-worktree-provisioner": {
+      "types": "./src/hooks/checks/dotfiles-worktree-provisioner.ts",
+      "import": "./src/hooks/checks/dotfiles-worktree-provisioner.ts",
+      "default": "./src/hooks/checks/dotfiles-worktree-provisioner.ts"
     },
     "./hooks/checks/config-protection": {
       "types": "./src/hooks/checks/config-protection.ts",
@@ -230,6 +250,21 @@
       "types": "./src/hooks/checks/test-gate.ts",
       "import": "./src/hooks/checks/test-gate.ts",
       "default": "./src/hooks/checks/test-gate.ts"
+    },
+    "./worktrees": {
+      "types": "./src/worktrees/index.ts",
+      "import": "./src/worktrees/index.ts",
+      "default": "./src/worktrees/index.ts"
+    },
+    "./cli/resolve-dotfiles-root": {
+      "types": "./src/cli/resolve-dotfiles-root.ts",
+      "import": "./src/cli/resolve-dotfiles-root.ts",
+      "default": "./src/cli/resolve-dotfiles-root.ts"
+    },
+    "./cli/worktrees-show": {
+      "types": "./src/cli/worktrees-show.ts",
+      "import": "./src/cli/worktrees-show.ts",
+      "default": "./src/cli/worktrees-show.ts"
     }
   }
 }

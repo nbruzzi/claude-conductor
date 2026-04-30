@@ -2,7 +2,7 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Bundled-check registrations (22 generic discipline-as-code checks).
+ * Bundled-check registrations (25 generic discipline-as-code checks).
  *
  * Per extraction-manifest §§ 194–225: this module owns the plugin-bound
  * registrations. In batch 4 it moves to the plugin alongside registry.ts and
@@ -37,6 +37,9 @@ import { check as checkSessionPresenceRegister } from "./session-presence-regist
 import { check as checkIdentityInjector } from "./identity-injector.ts";
 import { check as checkTaskCoordinator } from "./task-coordinator.ts";
 import { check as checkTeammateIdleReminder } from "./teammate-idle-reminder.ts";
+import { check as checkDotfilesWorktreeProvisioner } from "./dotfiles-worktree-provisioner.ts";
+import { check as checkDotfilesWorktreeGc } from "./dotfiles-worktree-gc.ts";
+import { check as checkDotfilesWorktreeCleanup } from "./dotfiles-worktree-cleanup.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -168,6 +171,14 @@ export function registerBundled(
     canBlock: false,
     profiles: ["standard", "strict"],
   });
+  builder.register("stop", {
+    name: "dotfiles-worktree-cleanup",
+    fn: checkDotfilesWorktreeCleanup,
+    description:
+      "Phase 3 Slice 2 — remove the per-session dotfiles worktree on session end (RE-2 safety guards + RE-3 self-heal + RE-104 reconciliation guard + CLI-DX-5 epilogue). Fires BEFORE session-presence-unregister so worktree teardown happens while heartbeat is still live.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
 
   // session-start
   builder.register("session-start", {
@@ -207,6 +218,22 @@ export function registerBundled(
     fn: checkIdentityInjector,
     description:
       "Phase 2 Slice 5 — surface NATO-identity context (identity, role, peer roster) for channels where this session has a claim. Per-session emission cursor avoids re-emitting unchanged context.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+  builder.register("session-start", {
+    name: "dotfiles-worktree-provisioner",
+    fn: checkDotfilesWorktreeProvisioner,
+    description:
+      "Phase 3 Slice 2 — provision a per-session dotfiles worktree at session-start when CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES=1. Anchor-pins the canonical-claude-home heartbeat (REV 0.2 ARCH-1 fix); soft-ceiling at 20 worktrees; mixed-flag-state warning when peers disagree. Default-off in this slice; flip-default lands as a follow-up commit on main after Bravo first-dogfood ack.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+  builder.register("session-start", {
+    name: "dotfiles-worktree-gc",
+    fn: checkDotfilesWorktreeGc,
+    description:
+      "Phase 3 Slice 2 — orphan-reaper for per-session dotfiles worktrees. Mirrors channels-gc-reaper rate-gate cursor pattern. Reaps when heartbeat absent OR ageMs > GC_WINDOW_MS=60min, with mtime-filtered safety guards (.git/index.lock < 1hr, node_modules/.bun-tmp-* < 5min) + forensic-marker escape hatch. RE-3 self-heal via unregisterActiveSession + clearSentinelDotfilesRoot.",
     canBlock: false,
     profiles: ["standard", "strict"],
   });
