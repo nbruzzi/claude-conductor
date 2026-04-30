@@ -1,0 +1,55 @@
+Phase 2 — Agent Teams hooks layer + heartbeat schema + cursor substrate
+
+Phase 2 ships 4 integration hooks (Slices 4–7), the heartbeat-body
+timestamp schema extension (Slice 7), and --since-mtime / --since-cursor
+cursor substrate (Slice 8) with companion forget-cursor / show-cursor
+verbs.
+
+11 implementation slices, 32 commits since v0.1.0-phase-1.5, 6,178 net
+insertions, 507 tests passing. Three audit waves: Wave 0 plan-time
+(3-persona; SLICE-CHANGE → REV 2.x), Wave 1 mid-phase (RE + ARCH on
+Slice 4–7), Wave 2 terminal (RE + ARCH + CLI DX on full Phase 2 diff:
+RE 8.2 / ARCH 8.0 / CLI DX 7.6 → all FOLD). Bravo verification round
+(bounded 1) on the integration commit: SHIP. Pre-tag self-audit on
+10.E/10.F/10.G found 11 fold-now items (runbook accuracy + count
+drift); all folded into the cap commit.
+
+Hooks (Slices 4–7):
+  - channels-gc-reaper (SessionStart) — orphan-sentinel sweep with
+    own-before-unlink discipline + race-against-claimIdentity guards.
+  - identity-injector (SessionStart) — NATO-identity + role + peer-
+    roster context emission with cadence-cursor suppression.
+  - task-coordinator (PreToolUse on Task) — role-gate (out blocks,
+    queue warns, pen passes); fail-open + breadcrumb.
+  - teammate-idle-reminder (UserPromptSubmit) — idle-peer reminder
+    with clock-skew sanity check (Slice-7 heartbeat-body schema).
+
+CLI surface (Slice 8):
+  - channels read --since-mtime <ms-or-iso>
+  - channels read --since-cursor (with bootstrap advisory)
+  - channels forget-cursor <id>
+  - channels show-cursor <id>
+
+Substrate additions:
+  - heartbeat body = integer epoch ms (Slice 7)
+  - last-seen/<sid>.json (Slice 8 cursor)
+  - gc-reap/ (Slice 4 reaper cursors)
+  - identity-emit/<sid>.json (Slice 5 cadence cursor)
+  - idle-emit/<sid>.json (Slice 7 rate-limit cursor)
+  - PresenceFailureKind: new clock-skew kind
+
+Operator runbook: docs/operations/phase-2-hooks.md (depth-3
+symptom/diagnose/recover/verify per hook + CLI surface section + per-
+channel substrate layout TABLE + 6-kind PresenceFailureKind taxonomy).
+
+Decision log: decisions/phase-2.md (Decisions A + B + C). Decision C
+records 22 Wave 2 dispositions (11 fold-now + 2 deferred Phase 3 + 2
+accepted-as-documented + 1 deferred Phase 4+ + 5 Phase-1 carryovers
+verified closed).
+
+Phase 3 starts from this tag with 7 first-slice candidates queued in
+wiki/backlog.md (dispatcher-kill-switch / claim-validation-primitive-
+lift / unreachable-channels-substrate / clock-skew-tsot / lock-domain-
+composition / substrate-rename / slash-cmd-path-convention).
+
+See CHANGELOG.md [0.2.0-phase-2] for full slice content.
