@@ -40,6 +40,7 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 - [docs/operations/\_index.md](docs/operations/_index.md) — tier scope statement + runbook catalog + topic-keyword cross-reference table.
 - [docs/operations/phase-2-hooks.md](docs/operations/phase-2-hooks.md) — Phase 2 hooks runbook: 4 hooks (channels-gc-reaper / identity-injector / task-coordinator / teammate-idle-reminder) + 2 CLI verbs (forget-cursor / show-cursor) + 2 read flags (--since-mtime / --since-cursor) + breadcrumb taxonomy + per-hook recovery (depth-3 symptom/diagnose/recover/verify).
 - [docs/operations/phase-3-kill-switch.md](docs/operations/phase-3-kill-switch.md) — Phase 3 Slice 1 dispatcher kill-switch runbook: `CLAUDE_CONDUCTOR_DISABLE_HOOKS` env var (parser semantics + composition rule + blocking-hook policy + cross-event hint + breadcrumb taxonomy + 4 recovery scenarios + visibility section "How to spot a malformed env var").
+- [docs/operations/phase-3-worktrees.md](docs/operations/phase-3-worktrees.md) — Phase 3 Slice 2 per-session dotfiles worktrees runbook: 3 hooks (provisioner / gc / cleanup) + 4-tier resolver precedence + heartbeat-body sentinel anchored at canonical-claude-home + 8 verbatim error drafts (E-1…E-8) + 10 depth-3 operator scenarios (1-disable / 2-wedged / 3-missed-cleanup / 4-migrate-uncommitted / 5-sid-collision / 6-provision-failure / 7-gc-reaped-while-active / 8-flip-revert / 9-second-terminal / 10-fresh-install) + Operational notes (Time Machine exclusion + path-walk discipline + soft-ceiling rationale + mixed-flag-state).
 
 ## API reference (`docs/api/`)
 
@@ -120,6 +121,8 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 ### CLI dispatcher (`src/cli/`)
 
 - [src/cli/dispatcher.ts](src/cli/dispatcher.ts) — Phase 1 Slice 0 verb router for `channels` and `todos` subcommands; pre-subcommand `--json`/`--quiet` partition with re-injection (Slice 4.5 CLI-B). `presence` subcommand deferred to Phase 2 per Decision C. Wave 2 CLI-W2-1 surfaced post-subcommand position-insensitivity gap (deferred to Slice 8.5).
+- [src/cli/resolve-dotfiles-root.ts](src/cli/resolve-dotfiles-root.ts) — Phase 3 Slice 2 D-ARCH5 slash-command prelude eval CLI. Prints `export CLAUDE_DOTFILES_ROOT_RESOLVED='<path>'` for shell `eval`. Single-quote-wrapped + `'\\''` shell-escape for paths with quotes. Failure-fallthrough is silent (REV 0.2 ARCH-5): if bun-run fails, eval consumes empty stdout and the slash command's downstream fallback chain (`$CLAUDE_DOTFILES_ROOT` → `$HOME/.claude-dotfiles`) takes over.
+- [src/cli/worktrees-show.ts](src/cli/worktrees-show.ts) — Phase 3 Slice 2 D-CLIDX2 read-only inspector. `bun run src/cli/worktrees-show.ts <session-id>` prints session, resolved DOTFILES_ROOT, heartbeat-body sentinel value, canonical, and the live worktree list (via `listWorktrees` from `src/worktrees`). Used in runbook §"Working from a second terminal" recipe.
 - [src/cli/flags.ts](src/cli/flags.ts) — Phase 1 Slice 4 shared flag parser for the GLOBAL CLI flags only: `--json`, `--quiet`, `--help`, `-h`. POSIX `--help` semantics: stdout, exit 0 (RE-7 closure). Verb-level flags (`--role`, `--peer`, `--force`, `--body-file`) are parsed inline by `src/channels/cli.ts` per-verb — see that catalog entry for the full per-verb surface. Per Phase 2 Slice 0 sub-step (ARCH-W0-1 drift fix): the prior catalog entry over-claimed flags.ts's responsibility; the verb-level flags never lived here. **Phase 2 Slice 8:** value-consuming `--since-mtime <ms-or-iso>` (epoch ms OR ISO 8601 via shape detection) + no-value `--since-cursor` (auto-resolves to per-session cursor) added; mutually exclusive (parser flags both → `parseErrors`). Strict integer validation + ISO-prefix regex; pure parser — callers surface errors via their domain-specific die() at use site.
 
 ### Top-level (`src/`)
@@ -131,7 +134,8 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 - [src/shared/paths.ts](src/shared/paths.ts) — per-component path resolvers with 3-layer env precedence (sub-step 0.5; FALLBACK_ROOT_SUFFIX `.claude` per Decision N — 6 components default to canonical, 2 plugin-internal default to `conductor/`).
 - [src/shared/home.ts](src/shared/home.ts) — `effectiveHome()` HOME-resolver with HOME-env-respecting + os.homedir() fallback (sub-step 0.8 hoist; canonical source per Decision I).
 - [src/shared/disable-hooks.ts](src/shared/disable-hooks.ts) — Phase 3 Slice 1 `CLAUDE_CONDUCTOR_DISABLE_HOOKS` parser. Pure primitive: takes `(raw, knownNames, blockingNames, nameToEvents, currentEvent)` and returns `{disabled, unknown, cross_event, stderrLines, breadcrumbs}`. Fail-OPEN with breadcrumb on any misuse (typo / blocking-disable / empty-after-trim). Levenshtein-1 fuzzy "did you mean" suggestion on unknowns; per-event skip application with cross-event hint surface. Composition rule documented as canonical source-of-truth in JSDoc; consumed by dotfiles dispatcher.
-- [src/shared/presence-failure-log.ts](src/shared/presence-failure-log.ts) — append-only JSONL log for hook gate failures (forensics + telemetry). Phase 1 extends `PresenceFailureSource` with `"channels-identity"` (Slice 2 NATO claim contention). Phase 2 Slice 7 adds `"clock-skew"` to `PresenceFailureKind`. **Phase 3 Slice 1** adds `"dispatcher"` to `PresenceFailureSource` + `"kill-switch"` to `PresenceFailureKind` (kill-switch breadcrumbs for dispatcher-boot env-var parse events).
+- [src/shared/dotfiles-root.ts](src/shared/dotfiles-root.ts) — Phase 3 Slice 2 dotfiles-root resolver per Bravo B8 spec. Memoized 4-tier precedence: `CLAUDE_DOTFILES_ROOT` (operator override; tier 1) → heartbeat-body sentinel via canonical-claude-home anchor (tier 2; per D-ARCH3) → `DOTFILES_ROOT` legacy with one-shot deprecation breadcrumb (tier 3) → `${HOME}/.claude-dotfiles` default (tier 4). Two reset hooks: `__resetDotfilesRootForTests` clears BOTH cache AND deprecation flag (test-isolation); `resetDotfilesRoot` clears ONLY the cache (T9 invariant — emit-once survives runtime cache resets). Consumed by hooks + slash commands + the `resolve-dotfiles-root` CLI verb.
+- [src/shared/presence-failure-log.ts](src/shared/presence-failure-log.ts) — append-only JSONL log for hook gate failures (forensics + telemetry). Phase 1 extends `PresenceFailureSource` with `"channels-identity"` (Slice 2 NATO claim contention). Phase 2 Slice 7 adds `"clock-skew"` to `PresenceFailureKind`. **Phase 3 Slice 1** adds `"dispatcher"` to `PresenceFailureSource` + `"kill-switch"` to `PresenceFailureKind` (kill-switch breadcrumbs for dispatcher-boot env-var parse events). **Phase 3 Slice 2** adds 6 new kinds: `"deprecation"` (legacy DOTFILES_ROOT one-shot), `"sentinel-corrupt"` (heartbeat-body parse fail), `"worktree-provision-failed"` / `"worktree-gc-reaped"` / `"worktree-cleanup-failed"` / `"worktree-cleanup-incomplete"` (per-session worktree lifecycle).
 - [src/shared/session-id-discovery.ts](src/shared/session-id-discovery.ts) — Phase 1 Slice 3a CLI-context session-id resolver (lifted from dotfiles canonical at `phase-1-lane-b-binary` step 1). Strict-UUID env precedence + ppid-tree walk + cold-start retry + mtime fallback + sentinel sanity-check + fail-loud. `assertNever` exhaustiveness gate per Wave 1 RE-4. ARCH-1 dual-resolver JSDoc documents the strict-UUID-only-here vs lenient-channels-internal split. Dotfiles' `src/shared/session-id-discovery.ts` is now a re-export shim per Slice 8 ARCH-W2-1 closure.
 
 ### Memory loader (`src/memory-loader/`)
@@ -149,7 +153,11 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ### Active sessions (`src/active-sessions/`)
 
-- [src/active-sessions/index.ts](src/active-sessions/index.ts) — session-presence registry with atomic meta + heartbeat + GC + `isValidSessionId` / `isValidArtifactId` predicates.
+- [src/active-sessions/index.ts](src/active-sessions/index.ts) — session-presence registry with atomic meta + heartbeat + GC + `isValidSessionId` / `isValidArtifactId` predicates. **Phase 3 Slice 2** extensions: REV 0.2 RE-1 mandatory canonicalization in `artifactIdFromPath` via `git rev-parse --git-common-dir` (worktree paths and canonical produce same artifact-id); `OwnerRecord` schema gains optional `dotfilesRoot?: string` field (D-ARCH3 sentinel anchor); `touchHeartbeat()` becomes read-merge-write so the field survives subsequent dispatcher fires (REV 0.2 ARCH-2 fix); 4 new exports — `setSentinelDotfilesRoot` (anchor-pin per REV 0.2 ARCH-1) / `readSentinelDotfilesRoot` (returns field or null + emits sentinel-corrupt breadcrumb on parse fail) / `clearSentinelDotfilesRoot` (Stop-hook + GC reaper) / `unregisterActiveSession` (RE-3 self-heal, idempotent cross-artifact sweep). `canonicalClaudeHomeArtifactId` uses `effectiveHome()` for test isolation.
+
+### Worktrees primitive (`src/worktrees/`)
+
+- [src/worktrees/index.ts](src/worktrees/index.ts) — Phase 3 Slice 2 pure primitives over `git worktree`. `worktreePathForSession(sid, canonical)` (sibling-at-home naming `<canonical>-<sid-prefix-8>`); `provisionWorktree(sid, opts)` (feature-flag gate via `CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES`; sentinel branch `worktree/<sid-prefix-8>`); `removeWorktree(sid, opts)` (force-removes; idempotent); `listWorktrees(canonical)` (porcelain parser; realpath-aware for macOS `/var ↔ /private/var`; filters canonical + non-convention worktrees). `ProvisionResult` / `RemoveResult` / `WorktreeEntry` tagged unions.
 
 ### Todos (`src/todos/`)
 
@@ -169,7 +177,7 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ### Hook checks (`src/hooks/checks/`)
 
-24 individual check implementations bundled per `bundled-registrations.ts`. Categorized:
+25 individual check implementations bundled per `bundled-registrations.ts` (was 24 pre-Phase-3-Slice-2; +3 worktree hooks). Categorized:
 
 **Pre-tool-use gates (blocking):**
 
@@ -187,6 +195,12 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 **Stop-time auxiliary:**
 
 - `test-gate.ts`, `bundled-registrations.ts` (the registration manifold itself), `handoff-latest-guard.ts`.
+
+**Phase 3 Slice 2 worktrees:**
+
+- `dotfiles-worktree-provisioner.ts` (session-start) — feature-flag-gated provisioner. Anchor-pins canonical-claude-home heartbeat (REV 0.2 ARCH-1 fix). RE-105 soft-ceiling reminder at 20+ live worktrees. RE-8 mixed-state warning when peers disagree on flag.
+- `dotfiles-worktree-gc.ts` (session-start) — orphan reaper. RE-102 single-threshold staleness (`GC_WINDOW_MS` = 60min, NOT `LIVE_WINDOW_MS`). RE-103 mtime-filtered safety guards (`.git/index.lock` < 1hr, `node_modules/.bun-tmp-*` < 5min). RE-3 self-heal triple (removeWorktree → unregisterActiveSession → clearSentinelDotfilesRoot). RE-104 reconciliation guard. Forensic-marker escape hatch at `~/.claude/session-state-forensic/<sid-prefix>`. 5-min rate-gate cursor at `~/.claude/logs/.worktree-gc-cursor`.
+- `dotfiles-worktree-cleanup.ts` (stop) — fires BEFORE `session-presence-unregister`. Same RE-2 safety pre-flight as GC reaper. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
 
 ## Tests (`test/`)
 
