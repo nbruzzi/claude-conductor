@@ -35,7 +35,10 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 
 ## Operations runbooks (`docs/operations/`)
 
-- _(none yet — Anthropic-overlap-response runbook is a Phase 2 deliverable; phase-rollback-procedure is a Phase 5 deliverable; incident-response is a Phase 4+ deliverable)_
+Operator-facing recovery + observability runbooks (commands to run, errors to triage, breadcrumbs to inspect) — distinct from `docs/architecture/` (component contracts, design rationale).
+
+- [docs/operations/\_index.md](docs/operations/_index.md) — tier scope statement + runbook catalog.
+- [docs/operations/phase-2-hooks.md](docs/operations/phase-2-hooks.md) — Phase 2 hooks runbook: 4 hooks (channels-gc-reaper / identity-injector / task-coordinator / teammate-idle-reminder) + 2 CLI verbs (forget-cursor / show-cursor) + 2 read flags (--since-mtime / --since-cursor) + breadcrumb taxonomy + per-hook recovery (depth-3 symptom/diagnose/recover/verify).
 
 ## API reference (`docs/api/`)
 
