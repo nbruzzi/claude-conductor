@@ -487,6 +487,7 @@ export function unlinkIdentitySentinelOrLogOrphan(
   channelId: string,
   identity: NatoIdentity,
   releasedClaim: IdentityClaim,
+  opts: { readonly suppressLog?: boolean } = {},
 ): UnlinkResult {
   if (!isValidArtifactId(channelId)) {
     throw new Error(
@@ -518,14 +519,24 @@ export function unlinkIdentitySentinelOrLogOrphan(
     // Log for operator visibility (presence-failure-log is the
     // breadcrumb channel); do NOT throw — propagation would obscure
     // the successful metadata removal.
-    appendPresenceFailure({
-      timestamp: new Date().toISOString(),
-      source: "channels-identity",
-      kind: "write-failed",
-      sessionId: releasedClaim.session_id,
-      artifactPath: sentinel,
-      detail: `orphan sentinel after metadata-release (reconcile on next claim): ${detail}`,
-    });
+    //
+    // Wave 2 RE-W2-3 closure: callers that wrap this primitive with
+    // their own appendPresenceFailure (e.g. channels-gc-reaper's
+    // `handleUnlinkFailure`) pass `suppressLog: true` to avoid the
+    // duplicate-breadcrumb pattern (~2,016 dupes per stuck orphan over
+    // 7-day suppression marker TTL). Default behavior preserves the
+    // logging discipline for direct callers (releaseIdentityClaim,
+    // close-peer CLI verb).
+    if (!opts.suppressLog) {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        source: "channels-identity",
+        kind: "write-failed",
+        sessionId: releasedClaim.session_id,
+        artifactPath: sentinel,
+        detail: `orphan sentinel after metadata-release (reconcile on next claim): ${detail}`,
+      });
+    }
     if (errno === "EACCES" || errno === "EBUSY") {
       return { ok: false, code: errno, detail };
     }

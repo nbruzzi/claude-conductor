@@ -25,8 +25,9 @@
  * - **Skip-on-error.** Per Phase 2 plan §Slice 5 sub-step 4 + RE-W0-7
  *   (corrupt-metadata error path), `readMetadata` failures are caught +
  *   skipped per channel; never throws upward. Failure is breadcrumb'd via
- *   `appendPresenceFailure` with `source: "channels-identity-context"` for
- *   forensics.
+ *   `appendPresenceFailure` with `source: "channels-identity"` (the shared
+ *   channel-identity category) for forensics. Filter by `kind` to
+ *   disambiguate from sibling hooks that share the same source category.
  *
  * - **Empty-result early return.** Sessions with no identity claims on
  *   any channel return `[]`. Consumers (hooks) detect this and emit
