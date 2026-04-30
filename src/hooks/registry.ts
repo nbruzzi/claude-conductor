@@ -196,4 +196,72 @@ export class SealedRegistry<Name extends string = string> {
     }
     return out;
   }
+
+  /**
+   * Full union of registered check names across all events.
+   *
+   * Phase 3 Slice 1 primitive — consumed by the `dispatcher-kill-switch`
+   * parser (`src/shared/disable-hooks.ts`) for `CLAUDE_CONDUCTOR_DISABLE_HOOKS`
+   * env-var validation. Lifted to plugin per TS-2 audit finding (V2
+   * anticipation pattern from `feedback-partial-v2-anticipation-primitives.md`)
+   * so the dotfiles dispatcher consumes one primitive instead of iterating
+   * `HOOK_EVENTS` and unioning per-event names ad-hoc.
+   *
+   * A check registered for multiple events appears once in the returned
+   * Set (deduped).
+   */
+  allCheckNames(): ReadonlySet<Name> {
+    const out = new Set<Name>();
+    for (const event of HOOK_EVENTS) {
+      for (const reg of this.checksFor(event).values()) {
+        out.add(reg.name);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Full union of blocking-check names (canBlock=true) across all events.
+   *
+   * Phase 3 Slice 1 primitive — consumed by the dispatcher-kill-switch
+   * parser to format the louder warning when an operator env-disables a
+   * blocking hook. Sibling to `allCheckNames` and `blockingNamesFor`.
+   */
+  allBlockingNames(): ReadonlySet<Name> {
+    const out = new Set<Name>();
+    for (const event of HOOK_EVENTS) {
+      for (const reg of this.checksFor(event).values()) {
+        if (reg.canBlock) out.add(reg.name);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Map: check name → events the check is registered for.
+   *
+   * Phase 3 Slice 1 primitive — consumed by the dispatcher-kill-switch
+   * parser's cross-event hint logic. When an operator lists a hook name
+   * that's valid in the registry but doesn't run on the dispatcher's
+   * current event, the parser surfaces the actual events via
+   * `cross_event` so the operator knows when the disable will apply.
+   *
+   * A check registered for multiple events has all its events listed.
+   * The order of events follows `HOOK_EVENTS` (lifecycle order:
+   * pre-tool-use, post-tool-use, stop, session-start, user-prompt-submit).
+   */
+  nameToEvents(): ReadonlyMap<Name, readonly HookEvent[]> {
+    const out = new Map<Name, HookEvent[]>();
+    for (const event of HOOK_EVENTS) {
+      for (const reg of this.checksFor(event).values()) {
+        const events = out.get(reg.name);
+        if (events === undefined) {
+          out.set(reg.name, [event]);
+        } else {
+          events.push(event);
+        }
+      }
+    }
+    return out;
+  }
 }
