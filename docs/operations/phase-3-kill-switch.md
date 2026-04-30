@@ -203,7 +203,7 @@ unset CLAUDE_CONDUCTOR_DISABLE_HOOKS
 
 ### Scenario 2 — unknown name typo (fail-open)
 
-**Symptom:** You set the env var but the expected hook is still firing. Stderr at SessionStart shows `unknown hook name`.
+**Symptom:** You set the env var but the expected hook is still firing. Stderr on **every dispatch** (every tool call, every SessionStart, every Stop event) shows `unknown hook name` — the warning repeats per-fire because the dispatcher re-reads the env var per process. Re-checking via `--list` is faster than waiting for the next event.
 
 **Diagnose:** the parser logs all unknown names + Levenshtein-1 fuzzy "did you mean" suggestions. Re-read the stderr or check breadcrumbs:
 
@@ -242,6 +242,7 @@ export CLAUDE_CONDUCTOR_DISABLE_HOOKS="channels-gc-reaper"   # was "channels-gc-
 ## Operational notes
 
 - **Env var is process-level, not session-level.** Every `bun run dispatcher.ts ...` is a new process; env is read fresh each time. To make a kill-switch persist for the duration of your session, `export` it. To make it survive `/resume`, set it in your shell profile (`~/.zshrc` / `~/.bashrc`) — but be careful: a persistent kill-switch in your profile is easy to forget about and can mask production hook behavior for weeks.
+- **Stderr emits on every dispatch.** When the env var is malformed (typo, cross-event, blocking-disable, empty-after-trim), the warning repeats on every hook fire — every tool call, every SessionStart, every Stop. This is intentional ("loud-on-every-fire" — fail-open with persistent visibility). If you have a real typo and are editing 50 files in 30 seconds, you'll see 50× repeated stderr; this is by design, not a bug. To silence repeated noise, fix the env var or `unset` it. A future `CLAUDE_CONDUCTOR_DISABLE_HOOKS_QUIET=1` opt-out is filed in the Phase 3 polish backlog.
 - **CI exposure**: if your CI workflow inadvertently inherits this env var (from a runner image or agent env), pre-commit / test-gate / branch-enforcement could be silently disabled in CI. Phase 3 polish backlog includes a `CI=true` loud-warning enhancement; until then, audit your CI env explicitly.
 - **Telemetry / observability**: deferred to Phase 3 polish backlog. No metric currently tracks how often the kill-switch is engaged.
 
