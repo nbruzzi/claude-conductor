@@ -37,8 +37,9 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 
 Operator-facing recovery + observability runbooks (commands to run, errors to triage, breadcrumbs to inspect) — distinct from `docs/architecture/` (component contracts, design rationale).
 
-- [docs/operations/\_index.md](docs/operations/_index.md) — tier scope statement + runbook catalog.
+- [docs/operations/\_index.md](docs/operations/_index.md) — tier scope statement + runbook catalog + topic-keyword cross-reference table.
 - [docs/operations/phase-2-hooks.md](docs/operations/phase-2-hooks.md) — Phase 2 hooks runbook: 4 hooks (channels-gc-reaper / identity-injector / task-coordinator / teammate-idle-reminder) + 2 CLI verbs (forget-cursor / show-cursor) + 2 read flags (--since-mtime / --since-cursor) + breadcrumb taxonomy + per-hook recovery (depth-3 symptom/diagnose/recover/verify).
+- [docs/operations/phase-3-kill-switch.md](docs/operations/phase-3-kill-switch.md) — Phase 3 Slice 1 dispatcher kill-switch runbook: `CLAUDE_CONDUCTOR_DISABLE_HOOKS` env var (parser semantics + composition rule + blocking-hook policy + cross-event hint + breadcrumb taxonomy + 4 recovery scenarios + visibility section "How to spot a malformed env var").
 
 ## API reference (`docs/api/`)
 
@@ -48,6 +49,8 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 
 - [phase-0.md](decisions/phase-0.md) — Phase 0 sequencing + design decisions (33 entries through sub-step 0.10; Decisions A–O ratified, Decision N supersedes J per ARCH-1 audit).
 - [phase-1.md](decisions/phase-1.md) — Phase 1 architectural + scope + api-shape decisions (8 entries: A MCP Mail integration deferral, B claimIdentity commit-after-claim ordering, C dispatcher scope, D reconcile-on-rejoin, E commitIdentityClaim boundary gate, F releaseIdentity ordering, G appendMessage auto-attach, H Slice 3b shim curation).
+- [phase-2.md](decisions/phase-2.md) — Phase 2 architectural + audit decisions: Decision A (heartbeat-body schema extension), Decision B (canBlock taxonomy), Decision C (Wave 2 audit dispositions — 22 findings: 11 fold-now + 2 deferred Phase 3 + 2 accepted-as-documented + 1 deferred Phase 4+ + 5 Phase-1 carryovers).
+- [phase-3.md](decisions/phase-3.md) — Phase 3 architectural decisions: Decision A (`CLAUDE_CONDUCTOR_DISABLE_HOOKS` env-var primitive choice), Decision B (composition + emergency-disable policy + catalog discoverability), Decision C (parser-vs-dispatcher cross-edge split + presence-failure variant extension).
 
 ## Audit transcripts (`audits/phase-0/`)
 
@@ -127,7 +130,8 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 - [src/shared/paths.ts](src/shared/paths.ts) — per-component path resolvers with 3-layer env precedence (sub-step 0.5; FALLBACK_ROOT_SUFFIX `.claude` per Decision N — 6 components default to canonical, 2 plugin-internal default to `conductor/`).
 - [src/shared/home.ts](src/shared/home.ts) — `effectiveHome()` HOME-resolver with HOME-env-respecting + os.homedir() fallback (sub-step 0.8 hoist; canonical source per Decision I).
-- [src/shared/presence-failure-log.ts](src/shared/presence-failure-log.ts) — append-only JSONL log for hook gate failures (forensics + telemetry). Phase 1 extends `PresenceFailureSource` with `"channels-identity"` (Slice 2 NATO claim contention).
+- [src/shared/disable-hooks.ts](src/shared/disable-hooks.ts) — Phase 3 Slice 1 `CLAUDE_CONDUCTOR_DISABLE_HOOKS` parser. Pure primitive: takes `(raw, knownNames, blockingNames, nameToEvents, currentEvent)` and returns `{disabled, unknown, cross_event, stderrLines, breadcrumbs}`. Fail-OPEN with breadcrumb on any misuse (typo / blocking-disable / empty-after-trim). Levenshtein-1 fuzzy "did you mean" suggestion on unknowns; per-event skip application with cross-event hint surface. Composition rule documented as canonical source-of-truth in JSDoc; consumed by dotfiles dispatcher.
+- [src/shared/presence-failure-log.ts](src/shared/presence-failure-log.ts) — append-only JSONL log for hook gate failures (forensics + telemetry). Phase 1 extends `PresenceFailureSource` with `"channels-identity"` (Slice 2 NATO claim contention). Phase 2 Slice 7 adds `"clock-skew"` to `PresenceFailureKind`. **Phase 3 Slice 1** adds `"dispatcher"` to `PresenceFailureSource` + `"kill-switch"` to `PresenceFailureKind` (kill-switch breadcrumbs for dispatcher-boot env-var parse events).
 - [src/shared/session-id-discovery.ts](src/shared/session-id-discovery.ts) — Phase 1 Slice 3a CLI-context session-id resolver (lifted from dotfiles canonical at `phase-1-lane-b-binary` step 1). Strict-UUID env precedence + ppid-tree walk + cold-start retry + mtime fallback + sentinel sanity-check + fail-loud. `assertNever` exhaustiveness gate per Wave 1 RE-4. ARCH-1 dual-resolver JSDoc documents the strict-UUID-only-here vs lenient-channels-internal split. Dotfiles' `src/shared/session-id-discovery.ts` is now a re-export shim per Slice 8 ARCH-W2-1 closure.
 
 ### Memory loader (`src/memory-loader/`)

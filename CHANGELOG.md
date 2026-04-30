@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 3 (in progress)
+
+- **Phase 3 Slice 1 — `dispatcher-kill-switch`** (in progress; plan `~/.claude/plans/curious-whistling-sparrow.md` REV 1.1; branch `phase-3-slice-1-dispatcher-kill-switch`). Operator emergency-stop primitive: `CLAUDE_CONDUCTOR_DISABLE_HOOKS` env var, comma-separated hook names, fail-OPEN with breadcrumb. Decisions A + B + C in `decisions/phase-3.md`. Closes Phase 2 CLI-W2-1 deferral.
+
 ## [0.2.0-phase-2] — 2026-04-30
 
 ### Phase 2 — Agent Teams hooks layer + heartbeat schema + cursor substrate
