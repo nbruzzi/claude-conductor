@@ -46,22 +46,27 @@ import { parseFlags } from "../cli/flags.ts";
 import {
   appendMessage,
   channelIdFromHandoff,
+  clearLastSeenCursor,
   closeChannel,
   closeStalePeerIdentity,
   createChannel,
   heartbeatMtime,
+  isChannelArchived,
   joinChannel,
   listChannels,
   newestHeartbeatMtime,
   readBodyFile,
+  readLastSeenCursor,
   readMessages,
   readMetadata,
   resolveSessionId,
   touchHeartbeat,
+  writeLastSeenCursor,
   type ChannelKind,
   type ChannelMessage,
   type ChannelRole,
 } from "./index.ts";
+import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   claimIdentity,
   getIdentityForSession,
@@ -106,7 +111,7 @@ const VERB_HELP: Record<string, string> = {
   join: "join <channel-id>\n  Join the channel + atomically claim the next available NATO identity.\n  Idempotent rejoin returns the existing claim.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
   send: "send <channel-id> <kind>\n  Append a message; body read from stdin. kind ∈ {note, question, handoff, status}.",
-  read: "read <channel-id>\n  Print messages as JSON (resolving body_ref'd large bodies).",
+  read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen/<sid>.json.\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
   list: "list [--include-archived]\n  Print active (or active+archived) channels as JSON.",
   meta: "meta <channel-id>\n  Print parsed metadata as JSON.",
   heartbeat:
@@ -120,6 +125,10 @@ const VERB_HELP: Record<string, string> = {
     "set-role <channel-id> --role <pen|queue|out>\n  Update the role of this session's claimed identity. Exits 5 if no\n  identity is held (per RE-6 — silent no-op is the failure mode).",
   "close-peer":
     "close-peer <channel-id> --peer <Identity> [--force]\n  Release a peer's NATO identity if its heartbeat is > 60 s stale.\n  --force overrides the staleness gate (operator escape hatch).",
+  "forget-cursor":
+    'forget-cursor <channel-id>\n  Reset this session\'s last-seen cursor on the channel.\n  Subsequent --since-cursor reads will return full history (then bootstrap a fresh cursor).\n  Idempotent: kind="cleared" if cursor existed, "absent" otherwise,\n              "archived" if channel is archived, "error" on EACCES/EBUSY.\n  Use \'show-cursor <channel-id>\' to inspect first.',
+  "show-cursor":
+    'show-cursor <channel-id>\n  Print this session\'s last-seen cursor as JSON.\n  kind="present" with {mtime, ts} if cursor exists; "absent" if not; "archived" if channel archived.\n  Use \'forget-cursor <channel-id>\' to reset.',
 };
 
 const TOP_LEVEL_HELP =
@@ -430,6 +439,43 @@ function parseBodyFileFlag(
 }
 
 /**
+ * Phase 2 Slice 8 cursor-write wrapper with RE-4 closure: in-memory
+ * per-process backoff for cursor-write failures (EROFS/ENOSPC/EACCES).
+ * Surfaces ONE breadcrumb + one stderr advisory per channel per session;
+ * subsequent failures are silently dropped (in-process retry would just
+ * spam logs).
+ */
+const cursorWriteFailureSurfaced = new Set<string>();
+
+function tryWriteLastSeenCursor(
+  channelId: string,
+  mtime: number,
+  ts: string,
+  quiet: boolean,
+): void {
+  try {
+    writeLastSeenCursor(channelId, sid(), mtime, ts);
+  } catch (err) {
+    if (cursorWriteFailureSurfaced.has(channelId)) return;
+    cursorWriteFailureSurfaced.add(channelId);
+    const detail = err instanceof Error ? err.message : String(err);
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "write-failed",
+      sessionId: sid(),
+      artifactPath: channelId,
+      detail: `since-cursor write failed: ${detail}`,
+    });
+    if (!quiet) {
+      process.stderr.write(
+        `[since-cursor] cursor write failed for ${channelId}; next --since-cursor will re-read same range. detail: ${detail}\n`,
+      );
+    }
+  }
+}
+
+/**
  * Entry point for the channels CLI. Exported so callers (dispatcher.ts,
  * tests, future cross-edge consumers) can invoke programmatically without
  * relying on the `import.meta.main` side-effect at the bottom of this file.
@@ -452,12 +498,31 @@ export async function runChannelsCli(
   // outputJson is a module-level toggle consumed by die(); writing it once
   // here means error paths emit structured JSON without needing each verb
   // to thread the flag through.
-  const { positional: rest, flags } = parseFlags([...rawRest]);
+  const {
+    positional: rest,
+    flags,
+    parseErrors,
+  } = parseFlags([...rawRest], {
+    json: true,
+    quiet: true,
+    help: true,
+    sinceMtime: true,
+    sinceCursor: true,
+  });
   // Phase 2 Slice 0 RE-W2-3 fix: per-invocation DieContext replaces the
   // prior module-level `outputJson` toggle. Threaded through every die()
   // call site so in-process callers (Phase 2 hooks) get isolated output
   // mode without state leak across invocations.
   const ctx: DieContext = { outputJson: flags.json };
+  // Phase 2 Slice 8: surface flag-parse errors via the standard die()
+  // path (RE-2/RE-14/CLI-3/CLI-9/CLI-10 closure — invalid --since-mtime,
+  // missing value, mutual exclusivity with --since-cursor, etc.).
+  if (parseErrors.length > 0) {
+    const first = parseErrors[0];
+    if (first !== undefined) {
+      die(ctx, first, { code: 2, category: "ARGS" });
+    }
+  }
   // Slice 5 RE-7 / RE-W1-3 closure — per-verb `--help` is POSIX-routed
   // (stdout, exit 0). When `cmd === undefined`, the switch's existing
   // no-cmd/help/--help/-h case prints top-level help. When `cmd` is a
@@ -611,24 +676,138 @@ export async function runChannelsCli(
       }
       case "read": {
         const channelId = requireChannelId(ctx, rest, 0);
-        const resolved = readMessages(channelId).map((m) => {
+        // Slice 8 since-cursor logic: resolve threshold + bootstrap state
+        // before filtering. flags.sinceMtime is the parsed numeric ms;
+        // flags.sinceCursor is the no-value alias that auto-resolves to
+        // the per-session cursor at <channel-dir>/last-seen/<sid>.json.
+        let sinceMtime: number | null = null;
+        let bootstrap = false;
+        if (flags.sinceMtime !== undefined) {
+          sinceMtime = flags.sinceMtime;
+        } else if (flags.sinceCursor) {
+          const cursor = readLastSeenCursor(channelId, sid());
+          if (cursor !== null) {
+            sinceMtime = cursor.mtime;
+          } else {
+            bootstrap = true;
+          }
+        }
+        const allMessages = readMessages(channelId);
+        // RE-1 closure: filter + maxTs both gate via Number.isFinite to
+        // prevent NaN poisoning a cursor. Malformed msg.ts → silently
+        // dropped from filter result + breadcrumb (one-per-channel-per-read).
+        let corruptTsSurfaced = false;
+        const filtered =
+          sinceMtime === null
+            ? allMessages
+            : allMessages.filter((m) => {
+                const ms = Date.parse(m.ts);
+                if (!Number.isFinite(ms)) {
+                  if (!corruptTsSurfaced) {
+                    appendPresenceFailure({
+                      timestamp: new Date().toISOString(),
+                      source: "channels-identity",
+                      kind: "registry-contention",
+                      sessionId: sid(),
+                      artifactPath: channelId,
+                      detail: `corrupt-cursor: malformed msg.ts during --since read: ${m.ts}`,
+                    });
+                    corruptTsSurfaced = true;
+                  }
+                  return false;
+                }
+                return ms > sinceMtime;
+              });
+        const resolved = filtered.map((m) => {
           if (m.body_ref && !m.body) {
             const body = readBodyFile(channelId, m.body_ref);
             return body !== null ? { ...m, body } : m;
           }
           return m;
         });
+        // CLI-2 bootstrap advisory: stderr + JSON meta field (suppressed
+        // stderr by --quiet; JSON meta retained regardless per CLI-NEW-3
+        // interaction matrix).
+        if (bootstrap && !flags.quiet) {
+          process.stderr.write(
+            `[since-cursor] no prior cursor for ${sid()} on ${channelId}; reading full history (${resolved.length} messages). Subsequent --since-cursor calls will be incremental.\n`,
+          );
+        }
+        // Cursor-write decision (RE-7 baseline closure):
+        // - non-empty filtered batch → write cursor with maxTs.
+        // - bootstrap (sinceCursor=true, no prior cursor) AND empty batch
+        //   → write baseline {mtime: 0, ts: "1970-..."} so subsequent reads
+        //   have a starting point.
+        if (sinceMtime !== null || flags.sinceCursor) {
+          const finiteMs = filtered
+            .map((m) => Date.parse(m.ts))
+            .filter((n): n is number => Number.isFinite(n));
+          if (finiteMs.length > 0) {
+            const maxTs = Math.max(...finiteMs);
+            tryWriteLastSeenCursor(
+              channelId,
+              maxTs,
+              new Date(maxTs).toISOString(),
+              flags.quiet,
+            );
+          } else if (bootstrap) {
+            tryWriteLastSeenCursor(
+              channelId,
+              0,
+              "1970-01-01T00:00:00.000Z",
+              flags.quiet,
+            );
+          }
+        }
         // Slice 6: default output is renderMessage one-per-line
         // (human-readable). `--json` (already extracted by parseFlags)
         // keeps the structured output for piping to jq / consumer apps
-        // that want raw `ChannelMessage[]`.
+        // that want raw `ChannelMessage[]`. Phase 2 Slice 8: --json
+        // bootstrap mode adds meta.since_cursor_status: "bootstrap" so
+        // scripts can detect the bootstrap read.
         if (flags.json) {
-          printJson(resolved);
+          if (bootstrap) {
+            printJson({
+              meta: { since_cursor_status: "bootstrap" },
+              messages: resolved,
+            });
+          } else {
+            printJson(resolved);
+          }
           return;
         }
         for (const m of resolved) {
           process.stdout.write(`${renderMessage(m)}\n`);
         }
+        return;
+      }
+      case "forget-cursor": {
+        const channelId = requireChannelId(ctx, rest, 0);
+        const sessionId = sid();
+        // RE-11 closure (round 2): symmetric idempotent archive handling.
+        // Archived channels can't have a live cursor; return kind:"archived"
+        // exit 0 (matches show-cursor's stance for the same precondition).
+        if (isChannelArchived(channelId)) {
+          printJson({ kind: "archived", channelId, sessionId });
+          return;
+        }
+        const result = clearLastSeenCursor(channelId, sessionId);
+        printJson({ ...result, channelId, sessionId });
+        return;
+      }
+      case "show-cursor": {
+        const channelId = requireChannelId(ctx, rest, 0);
+        const sessionId = sid();
+        if (isChannelArchived(channelId)) {
+          printJson({ kind: "archived", channelId, sessionId });
+          return;
+        }
+        const cursor = readLastSeenCursor(channelId, sessionId);
+        if (cursor === null) {
+          printJson({ kind: "absent", channelId, sessionId });
+          return;
+        }
+        printJson({ kind: "present", channelId, sessionId, cursor });
         return;
       }
       case "list": {
