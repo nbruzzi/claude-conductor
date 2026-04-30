@@ -53,7 +53,18 @@ export type PresenceFailureKind =
   | "operator-reset"
   | "unhandled"
   | "clock-skew"
-  | "kill-switch";
+  | "kill-switch"
+  // Phase 3 Slice 2 — substrate-level extensions (per Bravo C1: lands in
+  // Commit 2 alongside active-sessions extensions so Commit 3's resolver
+  // tests T3 (deprecation breadcrumb) and T7 (sentinel-corrupt) can fire).
+  | "deprecation"
+  | "sentinel-corrupt"
+  // Phase 3 Slice 2 — worktree lifecycle (consumed by provisioner / gc /
+  // cleanup hooks landing in Commit 4).
+  | "worktree-provision-failed"
+  | "worktree-gc-reaped"
+  | "worktree-cleanup-failed"
+  | "worktree-cleanup-incomplete";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -252,7 +263,15 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "operator-reset" ||
     k === "unhandled" ||
     k === "clock-skew" ||
-    k === "kill-switch"
+    k === "kill-switch" ||
+    // Phase 3 Slice 2 — substrate-level extensions (Bravo C1).
+    k === "deprecation" ||
+    k === "sentinel-corrupt" ||
+    // Phase 3 Slice 2 — worktree lifecycle.
+    k === "worktree-provision-failed" ||
+    k === "worktree-gc-reaped" ||
+    k === "worktree-cleanup-failed" ||
+    k === "worktree-cleanup-incomplete"
   );
 }
 

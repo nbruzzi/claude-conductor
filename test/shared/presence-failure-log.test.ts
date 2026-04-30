@@ -199,6 +199,36 @@ describe("presence-failure-log", () => {
     expect(events[0]?.source).toBe("channels-identity");
   });
 
+  // Phase 3 Slice 2 — REV 0.2 ARCH-8 / Bravo C1 substrate extension.
+  // Six new kinds land in Commit 2 alongside the active-sessions
+  // schema extensions so Commit 3's resolver tests T3 (deprecation
+  // breadcrumb) + T7 (sentinel-corrupt) + Commit 4's hook breadcrumbs
+  // can fire without referencing yet-undefined kinds.
+  const SLICE_2_KINDS = [
+    "deprecation",
+    "sentinel-corrupt",
+    "worktree-provision-failed",
+    "worktree-gc-reaped",
+    "worktree-cleanup-failed",
+    "worktree-cleanup-incomplete",
+  ] as const;
+
+  for (const kind of SLICE_2_KINDS) {
+    it(`round-trips kind=${kind} (Phase 3 Slice 2 substrate extension)`, () => {
+      const ev = sampleEvent({
+        source: "dispatcher",
+        kind,
+        detail: `Phase 3 Slice 2 ${kind} fixture`,
+      });
+      appendPresenceFailure(ev);
+
+      const events = readPresenceFailures();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.kind).toBe(kind);
+      expect(events[0]?.source).toBe("dispatcher");
+    });
+  }
+
   it("serializeWithinCap is idempotent on short lines", () => {
     const ev = sampleEvent();
     const a = INTERNAL.serializeWithinCap(ev);

@@ -38,6 +38,7 @@
  * never propagates as an exception. Writes use write-temp + rename-atomic.
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -95,6 +96,14 @@ export type OwnerRecord = {
   host: string;
   createdAt: number;
   touchedAt: number;
+  // Phase 3 Slice 2 — per-session worktree sentinel (anchored at the
+  // canonical-claude-home heartbeat per D-ARCH3). Optional + additive: old
+  // readers tolerate missing field; new writers preserve any earlier value
+  // through `touchHeartbeat`'s read-merge-write semantics. The provisioner
+  // hook explicitly pins this anchor at session-start (ARCH-1 fix) so the
+  // resolver's heartbeat-body sentinel read path is reachable regardless
+  // of CWD.
+  dotfilesRoot?: string;
 };
 
 export type PeerInfo = {
@@ -245,12 +254,72 @@ function walkUpForGit(startPath: string): string | null {
  * paths and pass boundary validation. Uniqueness is carried by the hash —
  * two distinct roots with basenames that sanitize to the same string still
  * produce distinct ids because the hash is computed over the full path.
+ *
+ * REV 0.2 RE-1 (mandatory canonicalization): when `root` resolves to a
+ * directory inside a git working tree, the hash is computed over
+ * `git rev-parse --show-toplevel` instead of the raw input. This maps
+ * worktree paths (`~/.claude-dotfiles-<sid>/...`) to their canonical
+ * toplevel (`~/.claude-dotfiles`), so cross-worktree collision detection
+ * still works under Phase 3 Slice 2's per-session-worktree substrate.
+ *
+ * Falls back to raw root + breadcrumb if rev-parse fails (root is not
+ * inside a git tree, git is unavailable, etc.). Never throws.
  */
 export function artifactIdFromPath(root: string): string {
-  const hash = createHash("sha1").update(root).digest("hex").slice(0, 12);
-  const rawBase = basename(root) || "root";
+  const canonical = canonicalizeViaGit(root);
+  const hash = createHash("sha1").update(canonical).digest("hex").slice(0, 12);
+  const rawBase = basename(canonical) || "root";
   const safeBase = rawBase.replace(/[^a-zA-Z0-9._-]/g, "-");
   return `${hash}-${safeBase}`;
+}
+
+/**
+ * Map a path to its canonical-worktree root when possible. Falls back
+ * to the input unchanged on any error — git not installed, root outside
+ * any git tree, root non-existent. Errors are silent here because
+ * `artifactIdFromPath` is on the hot path (every PreToolUse fires it)
+ * and a breadcrumb-on-fallback would be too noisy.
+ *
+ * Uses `--git-common-dir` (NOT `--show-toplevel`) so a path inside a
+ * worktree resolves to the CANONICAL toplevel, not the worktree's own
+ * toplevel. `--show-toplevel` returns the worktree's path; the goal of
+ * the RE-1 canonicalization is to map worktree paths to their canonical
+ * counterpart, so we read the common gitdir (always points at the
+ * canonical's `.git`) and strip the trailing `/.git` to get the path.
+ *
+ * The common-dir output is `.git` for the canonical itself when run
+ * from the canonical's working tree; we resolve that to absolute via
+ * `--path-format=absolute` so callers don't get the bare relative form.
+ */
+function canonicalizeViaGit(root: string): string {
+  try {
+    const result = spawnSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd: root,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    if (result.status === 0) {
+      const common = result.stdout.toString("utf-8").trim();
+      if (common.length > 0) return stripTrailingGitDir(common);
+    }
+  } catch {
+    /* git missing / cwd doesn't exist / etc — fall through */
+  }
+  return root;
+}
+
+/**
+ * Convert `/path/to/repo/.git` → `/path/to/repo`. If the path doesn't
+ * end in `/.git`, return it unchanged (defensive for bare repos or
+ * non-standard layouts).
+ */
+function stripTrailingGitDir(path: string): string {
+  if (path.endsWith("/.git")) return path.slice(0, -"/.git".length);
+  if (path.endsWith("/.git/")) return path.slice(0, -"/.git/".length);
+  return path;
 }
 
 /**
@@ -313,13 +382,30 @@ export function touchHeartbeat(args: {
 
   const existing = readOwnerRecord(heartbeatPath(artifactId, sessionId));
   const createdAt = existing?.createdAt ?? now;
-  const record: OwnerRecord = {
-    sessionId,
-    pid: process.pid,
-    host: hostname(),
-    createdAt,
-    touchedAt: now,
-  };
+  // REV 0.2 ARCH-2 / RE-101 — read-merge-write semantics. Existing
+  // touchHeartbeat callers don't set `dotfilesRoot`; the merge preserves
+  // any value the provisioner wrote earlier in the session so subsequent
+  // dispatcher fires don't clobber the sentinel. Per Bravo B8 + the
+  // bounded re-audit RE 9.0 verdict, the only field the merge actively
+  // preserves is `dotfilesRoot` (the rare-write field); common-write
+  // fields (touchedAt/pid/host) come from the current call's context.
+  const record: OwnerRecord =
+    existing?.dotfilesRoot !== undefined
+      ? {
+          sessionId,
+          pid: process.pid,
+          host: hostname(),
+          createdAt,
+          touchedAt: now,
+          dotfilesRoot: existing.dotfilesRoot,
+        }
+      : {
+          sessionId,
+          pid: process.pid,
+          host: hostname(),
+          createdAt,
+          touchedAt: now,
+        };
   writeAtomic(
     heartbeatPath(artifactId, sessionId),
     `${JSON.stringify(record)}\n`,
@@ -472,7 +558,14 @@ function readOwnerRecord(path: string): OwnerRecord | null {
     ) {
       return null;
     }
-    return { sessionId, pid, host, createdAt, touchedAt };
+    // REV 0.2 ARCH-2 — carry the optional `dotfilesRoot` field through.
+    // Older heartbeats written before Slice 2 don't have this field; the
+    // typeof-string guard accepts both shapes. Empty-string is treated as
+    // absent (defensive — write paths never produce empty strings).
+    const dotfilesRoot = obj["dotfilesRoot"];
+    return typeof dotfilesRoot === "string" && dotfilesRoot.length > 0
+      ? { sessionId, pid, host, createdAt, touchedAt, dotfilesRoot }
+      : { sessionId, pid, host, createdAt, touchedAt };
   } catch {
     return null;
   }
@@ -840,4 +933,164 @@ export function resetArtifactRegistry(artifactId: string): {
   });
 
   return { metaRemoved, heartbeatsRemoved };
+}
+
+// ─── Phase 3 Slice 2: heartbeat-body sentinel extension (D-ARCH3) ──
+
+/**
+ * Compute the canonical-claude-home artifact-id used as the sentinel anchor
+ * for per-session `dotfilesRoot`. Always resolvable from `homedir()`; no
+ * dependency on whether the session has touched `~/.claude/` yet.
+ *
+ * The anchor is intentionally NOT artifactPathFromFile-derived — that
+ * function walks CWD upward to the first git toplevel, which for a
+ * worktree-CWD session resolves to the worktree, not `~/.claude`. The
+ * provisioner hook (Phase 3 Slice 2 Commit 4) explicitly pins this
+ * anchor at session-start so the resolver's read path is reachable
+ * regardless of CWD (REV 0.2 ARCH-1 fix).
+ */
+function canonicalClaudeHomeArtifactId(): string {
+  return artifactIdFromPath(join(homedir(), ".claude"));
+}
+
+/**
+ * Anchor `dotfilesRoot` for the session at the canonical-claude-home
+ * heartbeat. Force-creates the heartbeat record if absent (the provisioner
+ * hook calls this at session-start regardless of whether the session has
+ * touched `~/.claude/` yet). Idempotent — re-pinning with the same value
+ * is a no-op merge through `touchHeartbeat`'s read-merge-write semantics.
+ */
+export function setSentinelDotfilesRoot(args: {
+  sessionId: string;
+  dotfilesRoot: string;
+}): void {
+  const { sessionId, dotfilesRoot } = args;
+  if (!isValidSessionId(sessionId)) return;
+  if (dotfilesRoot.length === 0) return;
+
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return;
+
+  mkdirSync(heartbeatsDir(artifactId), { recursive: true });
+
+  const path = heartbeatPath(artifactId, sessionId);
+  const existing = readOwnerRecord(path);
+  const now = Date.now();
+  const createdAt = existing?.createdAt ?? now;
+  const record: OwnerRecord = {
+    sessionId,
+    pid: process.pid,
+    host: hostname(),
+    createdAt,
+    touchedAt: now,
+    dotfilesRoot,
+  };
+
+  // Ensure meta.json exists for this artifact — first-write path mirrors
+  // touchHeartbeat. Without this, a fresh-install session whose first
+  // active-sessions interaction is the anchor pin would leave meta absent.
+  const metaFile = metaPath(artifactId);
+  if (!existsSync(metaFile)) {
+    writeMetaIfMissing(metaFile, {
+      artifactPath: join(homedir(), ".claude"),
+      createdAt: now,
+    });
+  }
+
+  writeAtomic(path, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * Read the per-session `dotfilesRoot` sentinel from the canonical-
+ * claude-home heartbeat. Returns the field or `null` if the heartbeat
+ * is absent, the body is corrupt, or the field is unset.
+ *
+ * On parse failure, emits a `sentinel-corrupt` breadcrumb so operators
+ * can correlate downstream resolver fall-throughs with the corruption.
+ * Parse-failure path is rare in practice — `writeAtomic` is tmp+rename
+ * atomic, so corruption only happens on disk-corruption-class failures.
+ */
+export function readSentinelDotfilesRoot(sessionId: string): string | null {
+  if (!isValidSessionId(sessionId)) return null;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return null;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  if (!existsSync(path)) return null;
+
+  const record = readOwnerRecord(path);
+  if (record === null) {
+    // readOwnerRecord swallows JSON.parse errors and returns null; we can't
+    // distinguish "missing file" from "corrupt body" by return value alone.
+    // Use existsSync above as the gate for "missing"; reaching here with
+    // existsSync=true and record=null implies a parse / shape failure.
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId,
+      source: "active-sessions-registry",
+      kind: "sentinel-corrupt",
+      artifactPath: join(homedir(), ".claude"),
+      detail: `heartbeat body parse failed at ${path}`,
+    });
+    return null;
+  }
+
+  return record.dotfilesRoot ?? null;
+}
+
+/**
+ * Clear the `dotfilesRoot` sentinel from the canonical-claude-home
+ * heartbeat. Stop-hook + GC reaper invoke this between worktree-remove
+ * and `unregisterActiveSession`. Idempotent — no-op if the heartbeat is
+ * absent or the field is unset.
+ */
+export function clearSentinelDotfilesRoot(sessionId: string): void {
+  if (!isValidSessionId(sessionId)) return;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  if (!existsSync(path)) return;
+
+  const existing = readOwnerRecord(path);
+  if (existing === null) return;
+  if (existing.dotfilesRoot === undefined) return;
+
+  const now = Date.now();
+  const record: OwnerRecord = {
+    sessionId: existing.sessionId,
+    pid: process.pid,
+    host: hostname(),
+    createdAt: existing.createdAt,
+    touchedAt: now,
+  };
+  writeAtomic(path, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * Self-heal entry point for GC reaper + Stop-hook abnormal-exit recovery.
+ * Removes ALL heartbeat entries for the given sessionId across all
+ * artifact-ids in the registry. Returns the count of heartbeats unlinked.
+ *
+ * Idempotent — never throws on already-cleared, returns 0 if the session
+ * has no heartbeats. Best-effort per-entry: ENOENT is silent (already
+ * gone), other unlink failures are logged via the existing registry-
+ * contention path but do not propagate. The reconciliation guard at the
+ * call site (provisioner / cleanup hook) is responsible for surfacing
+ * partial-completion to the operator.
+ */
+export function unregisterActiveSession(sessionId: string): number {
+  if (!isValidSessionId(sessionId)) return 0;
+  const root = resolveActiveSessionsDir();
+  if (!existsSync(root)) return 0;
+
+  let cleared = 0;
+  for (const artifactId of listArtifactIds()) {
+    const path = heartbeatPath(artifactId, sessionId);
+    if (!existsSync(path)) continue;
+    if (tryReapHeartbeat(artifactId, sessionId, path)) {
+      cleared++;
+    }
+  }
+  return cleared;
 }
