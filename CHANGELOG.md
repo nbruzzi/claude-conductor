@@ -12,6 +12,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-phase-2] — 2026-04-30
+
+### Phase 2 — Agent Teams hooks layer + heartbeat schema + cursor substrate
+
+Phase 2 ships 4 integration hooks (Slices 4–7), the heartbeat-body timestamp schema extension (Slice 7), and `--since-mtime` / `--since-cursor` cursor substrate (Slice 8) with companion `forget-cursor` / `show-cursor` verbs. 11 implementation slices, 32 commits since v0.1.0-phase-1.5, 6,178 net insertions, 507 tests passing. Three audit waves: Wave 0 plan-time (3-persona on parent plan; SLICE-CHANGE → REV 2.x), Wave 1 mid-phase (RE + ARCH on Slice 4–7), Wave 2 terminal (RE + ARCH + CLI DX on full Phase 2 diff: RE 8.2 / ARCH 8.0 / CLI DX 7.6 → all FOLD). Bravo verification round (bounded 1) on the integration commit: SHIP. Pre-tag self-audit (CLI DX + Test Architect) on Slice 10.E + 10.F + 10.G found 11 fold-now items (runbook accuracy + count drift); all folded into the cap commit.
+
+#### Added
+
+- **`channels-gc-reaper` hook** (Slice 4) — SessionStart sweep of orphan channel-identity sentinels (per-letter sentinel files with no matching `metadata.identities[<letter>]` entry). Own-sentinel-before-unlink discipline via the same `linkSync` ownership protocol `claimIdentity` uses; mtime gate (90 s = 3 × `LOCK_STALE_MS`) + sweep-phase invariant re-check + `.reaper-acked.<Identity>` 7-day suppression marker layer to prevent racing in-flight `claimIdentity`. Fail-loud + breadcrumb on true unlink failures (operator-actionable); fail-open + breadcrumb on transient skip conditions.
+- **`identity-injector` hook** (Slice 5) — SessionStart NATO-identity + role + peer-roster context emission for each claimed channel. Per-session cadence cursor at `<channel-dir>/identity-emit/<sid>.json`; emission suppressed when `(identity, role, peer-letter-set)` tuple unchanged. Fail-open + breadcrumb. Companion helper `getIdentityContextForSession` lifted to `src/channels/identity-context.ts` (NEW, shared with `task-coordinator` + `teammate-idle-reminder`).
+- **`task-coordinator` hook** (Slice 6) — PreToolUse Task-only role-gate. `role=out` → hard-BLOCK (exit 2); `role=queue` → soft-warn (exit 0 + system-reminder); `role=pen` → no emission. Multi-channel evaluation: any `out` blocks; else any `queue` warns. No-claim sessions: zero emission (subagent dispatch outside any channel is the dominant case). Fail-open + breadcrumb.
+- **`teammate-idle-reminder` hook** (Slice 7) — UserPromptSubmit idle-peer reminder with clock-skew sanity check. Reads heartbeat mtime + Slice-7 heartbeat body (`Date.now()` written at write instant); divergence > 5 min suppresses reminder + logs `clock-skew` breadcrumb. Per-(channel, observer-session) rate-limit cursor at `<channel-dir>/idle-emit/<sid>.json` keyed by peer letter (30-min suppression). `CLAUDE_CONDUCTOR_IDLE_THRESHOLD_MS` env var override (regex pre-check + `Number.isFinite` guard).
+- **Heartbeat-body schema extension** (Slice 7) — `touchHeartbeat` writes integer epoch-ms into the heartbeat body alongside the kernel-set mtime. Backwards-compat: pre-Slice-7 heartbeats with empty body resolve via mtime-only; Slice-7+ heartbeats unlock the clock-skew sanity check. New `readHeartbeatBody` reader with strict integer-ms validation.
+- **`channels read --since-mtime <value>`** (Slice 8) — filter messages where `Date.parse(msg.ts) > value`. Value shape: epoch ms OR ISO 8601 (shape-detected via `/^\d{4}-\d{2}-\d{2}/`).
+- **`channels read --since-cursor`** (Slice 8) — per-session cursor at `~/.claude/channels/<id>/last-seen/<sid>.json` (`{mtime, ts}` shape). First use bootstraps from full history with stderr advisory; successful filtered reads advance the cursor. Mutually exclusive with `--since-mtime` (exit 2 ARGS).
+- **`channels forget-cursor <id>`** (Slice 8) — reset this session's last-seen cursor. JSON discriminator `kind: "cleared" | "absent" | "archived" | "error"`. Idempotent (exit 0 across `cleared`/`absent`/`archived`).
+- **`channels show-cursor <id>`** (Slice 8) — read-only cursor inspection. JSON discriminator `kind: "present" | "absent" | "archived"` with `{mtime, ts}` for `present`.
+- **`PresenceFailureKind` extension** — new `clock-skew` kind on `~/.claude/logs/.presence-gate-failures.log`; six kinds total (`lock-timeout`, `write-failed`, `registry-contention`, `operator-reset`, `unhandled`, `clock-skew`).
+- **Operator runbook** `docs/operations/phase-2-hooks.md` — depth-3 symptom/diagnose/recover/verify procedures for all 4 hooks + `read --since-cursor` substrate; Phase 2 hook catalog; firing order matrix; CLI surface section; debug breadcrumb taxonomy + tail+jq examples; per-channel substrate layout TABLE.
+- **Architecture doc** `docs/architecture/hooks-layer.md` — operator mental model for hook firing order, failure-mode classification (fail-open silent / fail-open + breadcrumb / fail-loud), `system-reminder` composition rules, add-a-hook checklist. Phase 2 catalog table + per-hook recovery section (CLI-W2-1 disposition).
+- **Decision log** `decisions/phase-2.md` — Decision A (heartbeat schema), Decision B (canBlock taxonomy), Decision C (Wave 2 audit dispositions: 11 fold-now + 2 deferred Phase 3 + 2 accepted-as-documented + 1 deferred Phase 4+ + 5 Phase-1 carryovers).
+- **Smoke matrix v2** — `scripts/smoke-phase-2.sh` (19 scenarios #9–#27) + `scripts/smoke-common.sh` (extracted shared helpers); `package.json` adds `smoke:phase-1` / `smoke:phase-2` / `smoke:all`. RE-14 closure: pre-extraction `smoke-phase-1.sh` reference output verified byte-identical to post-extraction.
+- **Cross-edge dotfiles shims** — `~/.claude-dotfiles/src/hooks/checks/{channels-gc-reaper,identity-injector,task-coordinator,teammate-idle-reminder}.ts` re-export shims; bundled-name registrations + JSDoc count (22) + check-names parity surfaces extended in plugin's `check-bundled-registrations-parity.sh` (ARCH-W2-3 closure: now covers 4 surfaces — registrations + bundled-name-set + cross-edge count + JSDoc count freshness).
+
+#### Changed
+
+- **`appendMessage` async + in-lock cascade** (Slice 1+2) — body resolution + reference write happen INSIDE `withMetadataLock` to eliminate the post-lock interleave that allowed stale identity reads. All callers awaited.
+- **`unlinkIdentitySentinelOrLogOrphan` `{suppressLog}` flag** (Wave 2 RE-W2-3 closure) — channels-gc-reaper passes `suppressLog: true` to close the 2,016-dupe-per-orphan growth pattern.
+- **`identity-context` source-name correction** (Wave 2 ARCH-W2-1 closure) — SOURCE constant resolves to `channels-identity` consistently across the helper + the 3 hooks consuming it.
+- **`channels close-peer` orphan-sentinel JSON** (Slice 3) — discriminated `UnlinkResult` with explicit `orphan_sentinel: boolean` field; tolerant of EACCES/EBUSY persistence.
+- **Atomic-wiring discipline** (cross-edge) — every Phase 2 hook lands plugin-side (registration + check-name + JSDoc count + cross-edge count) and dotfiles-side (re-export shim + bundled-registrations + ALL_CHECK_NAMES) atomically. Cross-edge audit script `check-bundled-registrations-parity.sh` extended to 4 surfaces; CI parity check is now load-bearing for catching this drift.
+
+#### Architecture / Boundaries
+
+- **Plugin exports map** widened: `./hooks/checks/channels-gc-reaper`, `./hooks/checks/identity-injector`, `./hooks/checks/task-coordinator`, `./hooks/checks/teammate-idle-reminder`, `./channels/identity-context` (NEW), `./shared/presence-failure-log` (already exported, type extension).
+- **Per-channel substrate** gains 4 new subdirs: `last-seen/` (Slice 8), `gc-reap/` (Slice 4), `identity-emit/` (Slice 5), `idle-emit/` (Slice 7). All sibling-pattern with Phase 1's `identities/` + `heartbeat/`.
+- **Heartbeat semantics** extended additively: mtime-only readers continue to work (Phase 1); body-aware readers gain clock-skew detection (Phase 2 Slice 7).
+
+#### Operator impact
+
+- **2 new CLI verbs:** `claude-conductor channels forget-cursor <id>`, `claude-conductor channels show-cursor <id>`.
+- **2 new CLI flags:** `--since-mtime <ms-or-iso>`, `--since-cursor` (mutually exclusive on `channels read`).
+- **1 new tunable:** `CLAUDE_CONDUCTOR_IDLE_THRESHOLD_MS=<integer-ms>` overrides the 5-min teammate-idle-reminder threshold.
+- **1 new breadcrumb kind:** `clock-skew` in `~/.claude/logs/.presence-gate-failures.log`.
+- **4 new substrate subdirs per channel:** `last-seen/`, `gc-reap/`, `identity-emit/`, `idle-emit/`. See `docs/operations/phase-2-hooks.md` §Per-channel substrate layout for the full table.
+- **SessionStart firing order:** `channel-gc` → **`channels-gc-reaper`** → `active-channels-load` → `session-presence-register` → **`identity-injector`** (Phase 2 hooks bolded; `channels-gc-reaper` interleaved at #2 so orphan reconciliation precedes the live-channels briefing, `identity-injector` appended at #5 so its NATO + role + peer-roster context reflects post-reaper authoritative state). Source: `src/hooks/bundled-check-names.ts:BUNDLED_CHECKS_BY_EVENT["session-start"]`.
+- **Per-hook recovery:** `docs/operations/phase-2-hooks.md` §Per-hook recovery has depth-3 symptom/diagnose/recover/verify procedures for all 4 hooks plus the cursor substrate. A dispatcher-level kill-switch (`CLAUDE_CONDUCTOR_DISABLE_HOOKS`) is deferred to Phase 3 (CLI-W2-1 disposition).
+
+#### Deferred (Phase 3 backlog)
+
+Wave 2 + Slice 8 round-2 deferrals routed to `wiki/backlog.md` `claude-conductor — Phase 3 first-slice candidates`:
+
+- `dispatcher-kill-switch` — CLAUDE_CONDUCTOR_DISABLE_HOOKS env var + cross-edge atomic-wiring (CLI-W2-1).
+- `claim-validation-primitive-lift` — lift `validateIdentityClaim` into `src/channels/claim.ts`; update 4 readers (RE-W2-4 + ARCH-W2-2).
+- `unreachable-channels-substrate` — extend `listChannels()` to surface corrupt-metadata channels as placeholders (RE-W2-1).
+- `clock-skew-tsot` — single time-source-of-truth for heartbeat freshness (RE-W2-2).
+- `lock-domain-composition` — explicit `LockDomainPhase[]` registry pattern for SessionStart sweep phases (RE-W2-5).
+- `substrate-rename` — standardize subdir naming on noun-form; live-substrate migration (ARCH-W2-4 partial).
+- `slash-cmd-path-convention` — Phase-1 CLI-W2-4 carryover; deferred to public-launch boundary.
+
 ## [0.1.0-phase-1.5] — 2026-04-29
 
 ### Phase 1 follow-on — CLI-DX consistency closure + RE polish
@@ -104,7 +164,8 @@ Phase 1 ships the identity + role + display layer that lets multiple Claude sess
 - Initial repo creation. License (Apache-2.0), README skeleton with the 6 MUST-contains sections, CHANGELOG (this file), CONTRIBUTING, INDEX (master catalog), SECURITY, .gitignore, package.json with `engines` pinning Claude Code minimum version, tsconfig.json with strict mode and lint config, decisions/phase-0.md (first decision-log entry), audits/ directory scaffolded, docs/ tree (architecture/conventions/operations/api), memories/ directory scaffolded, dependencies-rationale.md, ADR-001 documenting the extraction strategy.
 - Phase 0 starts here. Subsequent commits ship the extraction-manifest, generic-paths primitives, file extraction with refactor, test scaffolding, plugin-managed memory loader, dotfiles-side `claude-conductor-extraction` feature branch updates, and CI gates.
 
-[Unreleased]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1.5...HEAD
+[Unreleased]: https://github.com/nbruzzi/claude-conductor/compare/v0.2.0-phase-2...HEAD
+[0.2.0-phase-2]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1.5...v0.2.0-phase-2
 [0.1.0-phase-1.5]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-1...v0.1.0-phase-1.5
 [0.1.0-phase-1]: https://github.com/nbruzzi/claude-conductor/compare/v0.1.0-phase-0...v0.1.0-phase-1
 [0.1.0-phase-0]: https://github.com/nbruzzi/claude-conductor/compare/v0.0.0...v0.1.0-phase-0

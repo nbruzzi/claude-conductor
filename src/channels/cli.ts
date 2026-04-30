@@ -135,7 +135,8 @@ const TOP_LEVEL_HELP =
   "channels CLI — see src/channels/cli.ts header for full usage.\n" +
   "\n" +
   "Subcommands: from-handoff | create | join | close | send | read | list |\n" +
-  "             meta | heartbeat | peers | body | whoami | set-role | close-peer\n" +
+  "             meta | heartbeat | peers | body | whoami | set-role | close-peer |\n" +
+  "             forget-cursor | show-cursor\n" +
   "\n" +
   "Run '<subcommand> --help' for verb-specific usage.";
 

@@ -126,29 +126,24 @@ The `(diagnostic)` prefix on the breadcrumb line tells the operator the line is 
 
 ---
 
-## Opt-out path
+## Per-hook recovery
 
-Operators can disable individual hooks via the `CLAUDE_CONDUCTOR_DISABLE_HOOKS` environment variable. Comma-separated list of hook names; hooks in the list are skipped at dispatch time.
+Phase 2 hooks fail-soft (fail-open + breadcrumb) by design except for `channels-gc-reaper` (fail-loud — substrate corruption needs operator action). When a hook gets the operator into a wedged state, recovery is per-hook rather than via a global kill-switch — each hook owns substrate with different correctness implications, so a universal "disable all" toggle would be a footgun. The procedures below resolve the dominant wedge cases.
 
-```bash
-# Disable identity-injector and teammate-idle-reminder for one session:
-CLAUDE_CONDUCTOR_DISABLE_HOOKS=identity-injector,teammate-idle-reminder claude
+| Hook                     | Wedge symptom                                      | Recovery                                                                                                                 |
+| ------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `channels-gc-reaper`     | Persistent stuck-orphan breadcrumbs                | `claude-conductor channels close-peer <id> --peer <Identity> --force` (releases the sentinel).                           |
+| `channels-gc-reaper`     | Reaper logs settled but `.reaper-acked` marker old | `rm ~/.claude/channels/<id>/identities/.reaper-acked.<Identity>` (rare; the marker auto-clears on reap).                 |
+| `identity-injector`      | Stale claim or cadence-cursor stuck                | `claude-conductor channels join <id>` (rejoin idempotently re-resolves the claim).                                       |
+| `task-coordinator`       | Task tool blocked under a role you don't intend    | `claude-conductor channels set-role <id> --role pen` (rotate to pen-holder; reverses the block).                         |
+| `teammate-idle-reminder` | Suspected stale-peer false positive                | `claude-conductor channels peers <id>` shows the underlying heartbeat ages; clock-skew breadcrumb is informational only. |
+| `read --since-cursor`    | Cursor stuck on a since-cursor read                | `claude-conductor channels forget-cursor <id>` (resets cursor; next read bootstraps from full history).                  |
 
-# Persist for all sessions in a directory: drop into ~/.claude/settings.json or .claude/settings.local.json
-{
-  "env": {
-    "CLAUDE_CONDUCTOR_DISABLE_HOOKS": "identity-injector"
-  }
-}
-```
+A dispatcher-level universal kill-switch (`CLAUDE_CONDUCTOR_DISABLE_HOOKS`) is deferred to Phase 3 as its own focused slice — the cross-edge atomic-wiring + per-hook correctness review is substrate-amendment work that deserves explicit scope, not a Phase 2 closure feature.
 
-The variable is read once per hook event by the dispatcher. Hooks listed in the variable are SKIPPED — they never run, no breadcrumb is emitted, no system-reminder is composed for the disabled hook.
+**Cannot fail-open via skip (substrate-level invariants):**
 
-**Phase 2 implementation note:** the `CLAUDE_CONDUCTOR_DISABLE_HOOKS` plumbing through the dispatcher is part of Slice 4 (first hook-skip implementation lands with the GC reaper). Until Slice 4 ships, the variable is documented here but inert.
-
-**Cannot disable:**
-
-- `pre-commit` (gate-of-record for the commit pipeline; opt-out via `--no-verify` flag at commit time, NOT via this env var).
+- `pre-commit` (gate-of-record for the commit pipeline; opt-out via `--no-verify` flag at commit time only).
 - `session-presence-register` / `session-presence-unregister` (substrate-level; sessions without registry presence break peer-coordination).
 
 ---
@@ -211,9 +206,9 @@ Phase 2's hooks read substrate that Phase 1 established. The composition rules:
 
 Every hook event end-to-end is observable via:
 
-1. **`appendPresenceFailure` log:** `~/.claude/presence-failures.jsonl`. Filter by `source: "<hook-name>"`. Each entry has timestamp, kind, sessionId (if known), and detail.
+1. **`appendPresenceFailure` log:** `~/.claude/logs/.presence-gate-failures.log` (JSONL). Filter by `source: "<hook-name>"` (or `source: "channels-identity"` for the channels-identity hook category). Each entry has timestamp, kind, sessionId (if known), and detail. Tail with `tail -f ~/.claude/logs/.presence-gate-failures.log | jq .`.
 2. **system-reminder output:** captured in the agent's session transcript at `~/.claude/projects/<project>/<sid>.jsonl`. Search for `[<source>]` tags.
-3. **Disable to isolate:** set `CLAUDE_CONDUCTOR_DISABLE_HOOKS=<hook-name>` and re-run; if the symptom resolves, that hook owned the issue.
+3. **Per-hook recovery to isolate:** if a hook is wedged, run the per-hook recovery procedure from §Per-hook recovery above and re-run; if the symptom resolves, that hook owned the issue.
 
 For Phase 2 hook-specific debugging, see also:
 

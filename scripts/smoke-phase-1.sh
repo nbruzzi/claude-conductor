@@ -5,12 +5,16 @@
 # Phase 1 smoke matrix — 8 scenarios per parent plan §331.
 #
 # End-to-end via the top-level binary (`bin/claude-conductor`); complements
-# the in-process bun:test suite (405 tests). Run from plugin root post-build,
-# pre-tag. Each scenario runs in an isolated sandbox channels-dir.
+# the in-process bun:test suite. Run from plugin root post-build, pre-tag.
+# Each scenario runs in an isolated sandbox channels-dir.
 #
 # Exit code: 0 on full pass, non-zero on first failure (failure point printed).
 #
 # Plan: ~/.claude/plans/generic-floating-hanrahan.md §331 Cross-slice smoke matrix.
+# Extraction: ~/.claude/plans/lovely-dreaming-willow.md REV 2.1 §10.E moved
+# the helpers (scenario/ok/fail/report/SID constants/counters) to
+# smoke-common.sh. Output is byte-identical to the pre-extraction version
+# (verified against captured /tmp/smoke-phase-1-reference.out).
 
 set -euo pipefail
 
@@ -23,36 +27,14 @@ BIN="${ROOT}/bin/claude-conductor"
 SANDBOX="$(mktemp -d -t smoke-phase-1)"
 export CLAUDE_CONDUCTOR_CHANNELS_DIR="${SANDBOX}/channels"
 
-# UUID-shape session ids (channels CLI is UUID-strict per Phase 1 contract).
-SID_A="11111111-1111-4111-8111-111111111111"
-SID_B="22222222-2222-4222-8222-222222222222"
-
-PASS=0
-FAIL=0
-FAILED_SCENARIOS=()
-
 cleanup() {
   rm -rf "${SANDBOX}"
 }
 trap cleanup EXIT
 
-scenario() {
-  local n="$1"
-  local desc="$2"
-  echo ""
-  echo "──── Scenario ${n}: ${desc} ────"
-}
-
-ok() {
-  echo "  ✓ $1"
-  PASS=$((PASS + 1))
-}
-
-fail() {
-  echo "  ✗ $1" >&2
-  FAIL=$((FAIL + 1))
-  FAILED_SCENARIOS+=("$1")
-}
+# Source shared helpers (SID_A/B/C, PASS/FAIL counters, scenario/ok/fail/report).
+# shellcheck disable=SC1091
+source "${HERE}/smoke-common.sh"
 
 # ─── Scenario 1: Single-session join + whoami round-trip via binary ───
 scenario 1 "Single-session join + whoami round-trip"
@@ -60,12 +42,12 @@ CH="smoke-1-${RANDOM}"
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels create "${CH}" "${CH}" >/dev/null
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels join "${CH}" >/dev/null
 WHOAMI="$(CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels whoami "${CH}" --json)"
-if [[ "$(echo "${WHOAMI}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("identity",""))')" == "Alpha" ]]; then
+if [[ "$(json_field "${WHOAMI}" identity)" == "Alpha" ]]; then
   ok "whoami returns Alpha for first claimant"
 else
   fail "whoami JSON did not contain identity=Alpha — got: ${WHOAMI}"
 fi
-if [[ "$(echo "${WHOAMI}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("role",""))')" == "queue" ]]; then
+if [[ "$(json_field "${WHOAMI}" role)" == "queue" ]]; then
   ok "whoami returns default role=queue"
 else
   fail "whoami JSON did not contain role=queue — got: ${WHOAMI}"
@@ -79,8 +61,8 @@ CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels join "${CH}" >/dev/null
 CLAUDE_SESSION_ID="${SID_B}" "${BIN}" channels join "${CH}" >/dev/null
 WHOAMI_A="$(CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels whoami "${CH}" --json)"
 WHOAMI_B="$(CLAUDE_SESSION_ID="${SID_B}" "${BIN}" channels whoami "${CH}" --json)"
-ID_A="$(echo "${WHOAMI_A}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("identity",""))')"
-ID_B="$(echo "${WHOAMI_B}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("identity",""))')"
+ID_A="$(json_field "${WHOAMI_A}" identity)"
+ID_B="$(json_field "${WHOAMI_B}" identity)"
 if [[ "${ID_A}" == "Alpha" && "${ID_B}" == "Bravo" ]]; then
   ok "two sessions get Alpha + Bravo in NATO order"
 else
@@ -113,14 +95,14 @@ CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels create "${CH}" "${CH}" >/dev/null
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels join "${CH}" >/dev/null
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels set-role "${CH}" --role pen >/dev/null
 WHOAMI="$(CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels whoami "${CH}" --json)"
-if [[ "$(echo "${WHOAMI}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("role",""))')" == "pen" ]]; then
+if [[ "$(json_field "${WHOAMI}" role)" == "pen" ]]; then
   ok "queue → pen transition succeeded"
 else
   fail "queue → pen transition broken — got: ${WHOAMI}"
 fi
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels set-role "${CH}" --role out >/dev/null
 WHOAMI="$(CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels whoami "${CH}" --json)"
-if [[ "$(echo "${WHOAMI}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("role",""))')" == "out" ]]; then
+if [[ "$(json_field "${WHOAMI}" role)" == "out" ]]; then
   ok "pen → out transition succeeded"
 else
   fail "pen → out transition broken — got: ${WHOAMI}"
@@ -148,10 +130,9 @@ CLAUDE_SESSION_ID="${SID_B}" "${BIN}" channels join "${CH}" >/dev/null
 # Wait beyond STALE_THRESHOLD_MS=60s would be too slow for smoke; use --force.
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels close-peer "${CH}" --peer Bravo --force >/dev/null
 # Now Bravo's letter (B) should be available — re-claim should succeed.
-SID_C="33333333-3333-4333-8333-333333333333"
 CLAUDE_SESSION_ID="${SID_C}" "${BIN}" channels join "${CH}" >/dev/null
 WHOAMI_C="$(CLAUDE_SESSION_ID="${SID_C}" "${BIN}" channels whoami "${CH}" --json)"
-ID_C="$(echo "${WHOAMI_C}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("identity",""))')"
+ID_C="$(json_field "${WHOAMI_C}" identity)"
 if [[ "${ID_C}" == "Bravo" ]]; then
   ok "close-peer Bravo + re-join → Bravo letter recovered"
 else
@@ -178,16 +159,4 @@ else
 fi
 
 # ─── Final report ───
-echo ""
-echo "──────────────────────────────"
-echo "  Phase 1 smoke matrix: ${PASS} pass / ${FAIL} fail"
-echo "──────────────────────────────"
-if [[ ${FAIL} -gt 0 ]]; then
-  echo ""
-  echo "Failed scenarios:"
-  for s in "${FAILED_SCENARIOS[@]}"; do
-    echo "  - ${s}"
-  done
-  exit 1
-fi
-exit 0
+report_and_exit "Phase 1"

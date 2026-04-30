@@ -431,10 +431,15 @@ async function sweepPhase(
 
       if (isAckedMarkerFresh(candidate.sentinelPath)) continue;
 
+      // Wave 2 RE-W2-3 closure: pass suppressLog so the primitive does
+      // not duplicate the appendPresenceFailure that handleUnlinkFailure
+      // emits below — `gc-reaper stuck orphan` is the more informative
+      // breadcrumb for operator triage of reaper-driven failures.
       const result = unlinkIdentitySentinelOrLogOrphan(
         channelId,
         candidate.letter,
         candidate.markedClaim,
+        { suppressLog: true },
       );
 
       if (result.ok) {

@@ -27,7 +27,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 ## Architecture Decision Records (`docs/architecture/`)
 
 - [ADR-001 — Extraction strategy](docs/architecture/ADR-001-extraction-strategy.md) — coordinated branches, dotfiles-side vendoring, atomic flip on Phase 5 pass.
-- [hooks-layer.md](docs/architecture/hooks-layer.md) — Phase 2 Slice 4.5 operator mental-model doc for the hook layer. Firing order per BUNDLED_CHECKS_BY_EVENT, system-reminder composition, 3-tier failure-mode classification (fail-open silent / fail-open + breadcrumb / fail-loud), opt-out via CLAUDE_CONDUCTOR_DISABLE_HOOKS env var, Phase 1 ↔ Phase 2 hook composition rules, hook catalog (Phase 1 SHIPPED + Phase 2 PENDING-by-slice).
+- [hooks-layer.md](docs/architecture/hooks-layer.md) — Phase 2 Slice 4.5 operator mental-model doc for the hook layer. Firing order per BUNDLED_CHECKS_BY_EVENT, system-reminder composition, 3-tier failure-mode classification (fail-open silent / fail-open + breadcrumb / fail-loud), per-hook recovery procedures (forget-cursor / set-role / close-peer --force / rejoin), Phase 1 ↔ Phase 2 hook composition rules, hook catalog (Phase 1 SHIPPED + Phase 2 PENDING-by-slice).
 
 ## Conventions (`docs/conventions/`)
 
@@ -35,7 +35,10 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 
 ## Operations runbooks (`docs/operations/`)
 
-- _(none yet — Anthropic-overlap-response runbook is a Phase 2 deliverable; phase-rollback-procedure is a Phase 5 deliverable; incident-response is a Phase 4+ deliverable)_
+Operator-facing recovery + observability runbooks (commands to run, errors to triage, breadcrumbs to inspect) — distinct from `docs/architecture/` (component contracts, design rationale).
+
+- [docs/operations/\_index.md](docs/operations/_index.md) — tier scope statement + runbook catalog.
+- [docs/operations/phase-2-hooks.md](docs/operations/phase-2-hooks.md) — Phase 2 hooks runbook: 4 hooks (channels-gc-reaper / identity-injector / task-coordinator / teammate-idle-reminder) + 2 CLI verbs (forget-cursor / show-cursor) + 2 read flags (--since-mtime / --since-cursor) + breadcrumb taxonomy + per-hook recovery (depth-3 symptom/diagnose/recover/verify).
 
 ## API reference (`docs/api/`)
 
@@ -223,7 +226,10 @@ Static-analysis CI gates. All bash 3.2+ portable, compiler-style `<file>:<line>:
 
 - [scripts/check-generic-paths.sh](scripts/check-generic-paths.sh) — P1 (`nbruzzi` substrate-id), P2 (`/Users/<name>/`), P3 (`\.claude/` literal under `src/`) detector with 3-layer allowlist (file pathspec / SPDX header / comment-narration). Per Slice 1 + Slice-1 follow-up.
 - [scripts/check-import-extensions.sh](scripts/check-import-extensions.sh) — TS relative imports must end in `.ts` (Slice 7 / TS-A3).
-- [scripts/check-bundled-registrations-parity.sh](scripts/check-bundled-registrations-parity.sh) — diff plugin's `bundled-registrations.ts` against dotfiles' canonical via `${CLAUDE_DOTFILES_ROOT}` (Slice 7 / ARCH-2). Pre-strip + prettier-normalize + graceful skip when canonical absent.
+- [scripts/check-bundled-registrations-parity.sh](scripts/check-bundled-registrations-parity.sh) — diff plugin's `bundled-registrations.ts` against dotfiles' canonical via `${CLAUDE_DOTFILES_ROOT}` (Slice 7 / ARCH-2). Pre-strip + prettier-normalize + graceful skip when canonical absent. Phase 2 Slice 10 / ARCH-W2-3 extension covers 4 surfaces (registrations + bundled-name-set + cross-edge count + JSDoc count freshness).
+- [scripts/smoke-common.sh](scripts/smoke-common.sh) — sourced helpers (path discovery, SID constants, PASS/FAIL counters, scenario/ok/fail/report, jq-free JSON field extractor) shared by smoke-phase-1.sh + smoke-phase-2.sh. Per Phase 2 Slice 10.E (RE-14 closure: extraction preserves smoke-phase-1 byte-identical pre-extraction output).
+- [scripts/smoke-phase-1.sh](scripts/smoke-phase-1.sh) — Phase 1 smoke matrix (8 scenarios end-to-end via `bin/claude-conductor`). Run via `bun run smoke:phase-1`.
+- [scripts/smoke-phase-2.sh](scripts/smoke-phase-2.sh) — Phase 2 smoke matrix (19 scenarios #9-#27 covering Slice 8 CLI verbs + substrate file shapes + cross-slice integration + dotfiles cross-edge). Run via `bun run smoke:phase-2`. Combined: `bun run smoke:all`.
 
 ## CI / GitHub Actions (`.github/workflows/`)
 

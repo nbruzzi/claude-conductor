@@ -113,25 +113,103 @@ DOTFILES_FMT=$(cat "$DOTFILES_FILE" | bun run prettier --stdin-filepath=bundled-
 # --- 7. Diff (ignore blank-line-only differences) ---
 DRIFT=$(diff -B <(echo "$PLUGIN_FMT") <(echo "$DOTFILES_FMT") || true)
 
-if [[ -z "$DRIFT" ]]; then
-  echo "check-bundled-registrations-parity: clean (plugin and dotfiles canonical agree on registration logic)"
-  exit 0
+if [[ -n "$DRIFT" ]]; then
+  echo "check-bundled-registrations-parity: DRIFT detected between plugin and dotfiles canonical" >&2
+  echo "" >&2
+  echo "Plugin: ${PLUGIN_FILE} (with SPDX + BundledCheckName generic stripped)" >&2
+  echo "Dotfiles canonical: ${DOTFILES_FILE}" >&2
+  echo "Both prettier-normalized via plugin's config." >&2
+  echo "" >&2
+  echo "Drift (— plugin / + dotfiles canonical):" >&2
+  printf '%s\n' "$DRIFT" >&2
+  echo "" >&2
+  echo "Resolution: edit one side to match the other, OR if intentional, extend pre-strip rules in scripts/check-bundled-registrations-parity.sh and document in decisions/phase-0.md." >&2
+
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::error file=${PLUGIN_FILE}::bundled-registrations.ts drifts from dotfiles canonical — check-bundled-registrations-parity.sh failed"
+  fi
+
+  exit 1
 fi
 
-# --- 8. Drift detected — emit diff + exit 1 ---
-echo "check-bundled-registrations-parity: DRIFT detected between plugin and dotfiles canonical" >&2
-echo "" >&2
-echo "Plugin: ${PLUGIN_FILE} (with SPDX + BundledCheckName generic stripped)" >&2
-echo "Dotfiles canonical: ${DOTFILES_FILE}" >&2
-echo "Both prettier-normalized via plugin's config." >&2
-echo "" >&2
-echo "Drift (— plugin / + dotfiles canonical):" >&2
-printf '%s\n' "$DRIFT" >&2
-echo "" >&2
-echo "Resolution: edit one side to match the other, OR if intentional, extend pre-strip rules in scripts/check-bundled-registrations-parity.sh and document in decisions/phase-0.md." >&2
+# --- 8. Bundled-name-set parity (Wave 2 ARCH-W2-3 §1) ---
+# Verify the plugin's BUNDLED_CHECK_NAMES list and the dotfiles canonical
+# bundled-section name list are byte-equal as sorted sets. Catches the case
+# where one repo adds a new bundled hook but the other lags — the
+# registration-logic diff would not surface a name-list-only mismatch
+# because the registration block would still reference an existing name.
+PLUGIN_BUNDLED_NAMES=$(bun -e "
+import { BUNDLED_CHECK_NAMES } from './src/hooks/bundled-check-names.ts';
+console.log([...BUNDLED_CHECK_NAMES].sort().join('\n'));
+" 2>/dev/null) || {
+  echo "check-bundled-registrations-parity: error: failed to load plugin BUNDLED_CHECK_NAMES" >&2
+  exit 2
+}
 
-if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-  echo "::error file=${PLUGIN_FILE}::bundled-registrations.ts drifts from dotfiles canonical — check-bundled-registrations-parity.sh failed"
+# Extract dotfiles bundled names: grep names between '// Bundled' and
+# '// Keep-in-dotfiles' markers in src/hooks/check-names.ts. Markers are
+# load-bearing — JSDoc-count-freshness check below verifies they're sane.
+DOTFILES_BUNDLED_NAMES=$(awk '
+  /\/\/ Bundled \(/ { in_bundled = 1; next }
+  /\/\/ Keep-in-dotfiles/ { in_bundled = 0 }
+  in_bundled && /^[[:space:]]*"[^"]+",?[[:space:]]*$/ {
+    gsub(/[[:space:]"]/, "", $0); gsub(/,$/, "", $0); print $0
+  }
+' "${DOTFILES_ROOT}/src/hooks/check-names.ts" | sort)
+
+NAMES_DRIFT=$(diff <(echo "$PLUGIN_BUNDLED_NAMES") <(echo "$DOTFILES_BUNDLED_NAMES") || true)
+if [[ -n "$NAMES_DRIFT" ]]; then
+  echo "check-bundled-registrations-parity: BUNDLED NAME SET DRIFT (Wave 2 ARCH-W2-3 §1)" >&2
+  echo "" >&2
+  echo "Plugin BUNDLED_CHECK_NAMES vs dotfiles bundled section in check-names.ts." >&2
+  echo "" >&2
+  echo "Drift (— plugin / + dotfiles):" >&2
+  printf '%s\n' "$NAMES_DRIFT" >&2
+  echo "" >&2
+  echo "Resolution: add the missing name to the lagging side (atomic-wiring per feedback-atomic-wiring-discipline.md)." >&2
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::error file=src/hooks/bundled-check-names.ts::bundled name set drifts from dotfiles canonical"
+  fi
+  exit 1
 fi
 
-exit 1
+# --- 9. Cross-edge count agreement (Wave 2 ARCH-W2-3 §3) ---
+# Both repos must agree on total bundled count via runtime computation.
+PLUGIN_COUNT=$(echo "$PLUGIN_BUNDLED_NAMES" | grep -c .)
+DOTFILES_COUNT=$(echo "$DOTFILES_BUNDLED_NAMES" | grep -c .)
+if [[ "$PLUGIN_COUNT" -ne "$DOTFILES_COUNT" ]]; then
+  echo "check-bundled-registrations-parity: COUNT DRIFT (Wave 2 ARCH-W2-3 §3): plugin=${PLUGIN_COUNT} dotfiles=${DOTFILES_COUNT}" >&2
+  exit 1
+fi
+
+# --- 10. JSDoc count freshness (Wave 2 ARCH-W2-3 §4) ---
+# Catch stale "Bundled (N)" comments in both repos. ARCH-W2-1 caught this
+# at Wave 2 audit time when dotfiles still claimed (19) / (18) / (21)
+# while live count was 22.
+declare -a JSDOC_FILES=(
+  "src/hooks/bundled-check-names.ts"
+  "src/hooks/checks/bundled-registrations.ts"
+  "${DOTFILES_ROOT}/src/hooks/check-names.ts"
+  "${DOTFILES_ROOT}/src/hooks/checks/bundled-registrations.ts"
+)
+JSDOC_DRIFT=""
+for f in "${JSDOC_FILES[@]}"; do
+  if [[ ! -f "$f" ]]; then continue; fi
+  STALE=$(grep -nE 'Bundled \([0-9]+' "$f" | grep -vE "Bundled \(${PLUGIN_COUNT}\b" || true)
+  if [[ -n "$STALE" ]]; then
+    JSDOC_DRIFT="${JSDOC_DRIFT}${f}:\n${STALE}\n"
+  fi
+done
+if [[ -n "$JSDOC_DRIFT" ]]; then
+  echo "check-bundled-registrations-parity: JSDOC COUNT DRIFT (Wave 2 ARCH-W2-3 §4): live count=${PLUGIN_COUNT} but stale comment(s) found:" >&2
+  printf '%b' "$JSDOC_DRIFT" >&2
+  echo "" >&2
+  echo "Resolution: update the JSDoc 'Bundled (N)' comments in the offending files to N=${PLUGIN_COUNT}." >&2
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::error::JSDoc 'Bundled (N)' count drift — see stderr for files"
+  fi
+  exit 1
+fi
+
+echo "check-bundled-registrations-parity: clean (registrations + names + count + JSDoc all agree; ${PLUGIN_COUNT} bundled checks)"
+exit 0
