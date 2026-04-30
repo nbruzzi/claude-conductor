@@ -48,11 +48,10 @@ beforeEach(() => {
   prevActiveSessionsDir = process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
   prevHome = process.env["HOME"];
   process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = tmpDir;
-  // Redirect HOME so the breadcrumb log lands in the test sandbox, not
-  // the real ~/.claude/logs/. The active-sessions canonical-claude-home
-  // anchor still computes against the real homedir() (cached at module
-  // load), so tests interact with a stable artifact-id derived from the
-  // real path.
+  // Redirect HOME so the breadcrumb log + canonical-claude-home anchor
+  // artifact-id both compute under the test sandbox. The plugin's
+  // canonicalClaudeHomeArtifactId now uses effectiveHome() (which honors
+  // process.env.HOME); tests can rely on tmp-rooted artifact-ids.
   process.env["HOME"] = base;
   // appendPresenceFailure uses appendFileSync without mkdir; create the
   // ~/.claude/logs/ dir under the test sandbox so breadcrumbs aren't
@@ -79,7 +78,10 @@ afterEach(() => {
 });
 
 function canonicalArtifactId(): string {
-  return artifactIdFromPath(join(homedir(), ".claude"));
+  // Match production's effectiveHome() — process.env.HOME first, then
+  // os.homedir(). The beforeEach sets HOME to the test sandbox.
+  const home = process.env["HOME"] ?? homedir();
+  return artifactIdFromPath(join(home, ".claude"));
 }
 
 describe("setSentinelDotfilesRoot + readSentinelDotfilesRoot", () => {

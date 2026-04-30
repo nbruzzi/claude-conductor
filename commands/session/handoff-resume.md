@@ -166,7 +166,8 @@ Present a concise summary:
 Before waiting on the user, derive `channel-id = channelIdFromHandoff(handoff-path)` and open a channel for coordination with the other session. Only run after confirming parallel mode.
 
 ```bash
-cd "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
+eval "$(bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/cli/resolve-dotfiles-root.ts" --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || true)"
+cd "${CLAUDE_DOTFILES_ROOT_RESOLVED:-${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}}"
 
 # Canonicalize handoff path → channel id.
 channel_id="$(bun run src/channels/cli.ts from-handoff "$handoff_path")"
@@ -194,7 +195,8 @@ Surface the channel ID in the briefing: "Channel `<id>` — peer status: `<live|
 Derive `handoff-id` from the filename (strip `HANDOFF_` and `.md`). Before picking up any next-step item, rehydrate the TaskList from the todo file:
 
 ```bash
-cd "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
+eval "$(bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/cli/resolve-dotfiles-root.ts" --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || true)"
+cd "${CLAUDE_DOTFILES_ROOT_RESOLVED:-${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}}"
 handoff_id="<derived-id>"
 
 if bun run src/todos/cli.ts exists "$handoff_id"; then

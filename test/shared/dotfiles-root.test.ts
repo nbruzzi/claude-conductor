@@ -112,6 +112,10 @@ describe("dotfilesRoot — Bravo B8 4-tier precedence (T1–T5)", () => {
   });
 
   it("T4: all 3 unset → tier 4 (${HOME}/.claude-dotfiles)", () => {
+    // dotfilesRoot's tier 4 uses os.homedir() directly (not effectiveHome),
+    // so this asserts against the real homedir() value — the production
+    // tier-4 fallback is the canonical install location and intentionally
+    // ignores HOME mutation per src/shared/dotfiles-root.ts §tier 4.
     expect(dotfilesRoot(SID)).toBe(`${homedir()}/.claude-dotfiles`);
   });
 
@@ -142,13 +146,18 @@ describe("dotfilesRoot — corruption (T7)", () => {
   it("T7: malformed sentinel → falls through + sentinel-corrupt breadcrumb", () => {
     // Pin a sentinel, then corrupt it on disk.
     setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: TIER2_PATH });
-    const artifactId = artifactIdFromPath(join(homedir(), ".claude"));
+    // Active-sessions canonicalClaudeHomeArtifactId now uses effectiveHome()
+    // (process.env.HOME first, then os.homedir()) — match here so the
+    // heartbeat path resolves to where setSentinelDotfilesRoot wrote it.
+    const home = process.env["HOME"] ?? homedir();
+    const artifactId = artifactIdFromPath(join(home, ".claude"));
     const heartbeatFile = join(tmpDir, artifactId, "heartbeats", SID);
     writeFileSync(heartbeatFile, "{not-json", "utf-8");
 
     // With CLAUDE_DOTFILES_ROOT unset and sentinel corrupted, resolver should
-    // fall through to tier 4 (default) — tier 2's read returns null after
-    // emitting the sentinel-corrupt breadcrumb.
+    // fall through to tier 4 (default = os.homedir() + /.claude-dotfiles).
+    // Tier 2's read returns null after emitting the sentinel-corrupt
+    // breadcrumb.
     expect(dotfilesRoot(SID)).toBe(`${homedir()}/.claude-dotfiles`);
 
     const events = readPresenceFailures();
@@ -160,7 +169,8 @@ describe("dotfilesRoot — cross-session isolation (T8)", () => {
   it("T8: sentinel for a DIFFERENT sessionId is ignored", () => {
     setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: TIER2_PATH });
     // Resolving for SID2 (different sid) should NOT see SID's sentinel.
-    // With no other tiers populated, falls through to tier 4.
+    // With no other tiers populated, falls through to tier 4 — which uses
+    // os.homedir() directly (real home).
     expect(dotfilesRoot(SID2)).toBe(`${homedir()}/.claude-dotfiles`);
   });
 });

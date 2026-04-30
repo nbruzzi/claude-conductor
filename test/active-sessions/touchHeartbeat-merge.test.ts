@@ -52,7 +52,11 @@ afterEach(() => {
 });
 
 function canonicalClaudeHomePath(): string {
-  return join(homedir(), ".claude");
+  // Match production's effectiveHome() — process.env.HOME first, then
+  // os.homedir(). The beforeEach doesn't override HOME for this test,
+  // so this resolves the same in test + production.
+  const home = process.env["HOME"] ?? homedir();
+  return join(home, ".claude");
 }
 
 describe("touchHeartbeat — REV 0.2 ARCH-2 read-merge-write", () => {

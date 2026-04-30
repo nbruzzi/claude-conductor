@@ -57,6 +57,7 @@ import {
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { effectiveHome } from "../shared/home.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import { activeSessionsDir } from "../shared/paths.ts";
 
@@ -950,7 +951,11 @@ export function resetArtifactRegistry(artifactId: string): {
  * regardless of CWD (REV 0.2 ARCH-1 fix).
  */
 function canonicalClaudeHomeArtifactId(): string {
-  return artifactIdFromPath(join(homedir(), ".claude"));
+  // Use effectiveHome() so tests that mutate $HOME for isolation see a
+  // tmp-rooted artifact-id (matching what they'd compute via the same
+  // helper). Production behavior unchanged — when $HOME is unset/empty,
+  // effectiveHome() falls back to os.homedir().
+  return artifactIdFromPath(join(effectiveHome(), ".claude"));
 }
 
 /**
@@ -992,7 +997,7 @@ export function setSentinelDotfilesRoot(args: {
   const metaFile = metaPath(artifactId);
   if (!existsSync(metaFile)) {
     writeMetaIfMissing(metaFile, {
-      artifactPath: join(homedir(), ".claude"),
+      artifactPath: join(effectiveHome(), ".claude"),
       createdAt: now,
     });
   }
@@ -1029,7 +1034,7 @@ export function readSentinelDotfilesRoot(sessionId: string): string | null {
       sessionId,
       source: "active-sessions-registry",
       kind: "sentinel-corrupt",
-      artifactPath: join(homedir(), ".claude"),
+      artifactPath: join(effectiveHome(), ".claude"),
       detail: `heartbeat body parse failed at ${path}`,
     });
     return null;
