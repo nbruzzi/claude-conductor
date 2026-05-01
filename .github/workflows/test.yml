@@ -20,7 +20,7 @@ jobs:
       - name: Lint workflows
         uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
         with:
-          fail_on_error: true
+          fail_level: error
           # github-check reporter uses the Checks API (read-only on PRs);
           # github-pr-review needs `pull-requests: write` which we don't grant
           # at workflow scope (Decision Q SHA-pin operations runbook =>
