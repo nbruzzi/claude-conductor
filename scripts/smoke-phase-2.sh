@@ -261,14 +261,7 @@ else
   fail "close-peer JSON missing orphan_sentinel — output: ${CLOSE_OUT}"
 fi
 
-# ─── Scenario 23: bundled-check-names parity script reports 22 across all surfaces ───
-scenario 23 "bundled-check-names parity reports 22 across all 4 surfaces"
-PARITY_OUT="$(cd "${ROOT}" && ./scripts/check-bundled-registrations-parity.sh 2>&1 || true)"
-if echo "${PARITY_OUT}" | grep -q "22 bundled checks"; then
-  ok "parity script reports 22 bundled checks (registrations + names + count + JSDoc agree)"
-else
-  fail "parity script doesn't report 22 — output: ${PARITY_OUT}"
-fi
+# ─── Scenario 23: removed in Phase 4 — parity script retired (replaced by §4.7 invariants) ───
 
 # ─── Scenario 24: identity-injector source-class is channels-identity (ARCH-W2-1 fix) ───
 scenario 24 "identity-context emits source: channels-identity (ARCH-W2-1 closure)"

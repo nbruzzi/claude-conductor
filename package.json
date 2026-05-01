@@ -20,7 +20,6 @@
     "test": "bun test",
     "check-generic-paths": "./scripts/check-generic-paths.sh",
     "check-import-extensions": "./scripts/check-import-extensions.sh",
-    "check-bundled-registrations-parity": "./scripts/check-bundled-registrations-parity.sh",
     "smoke:phase-1": "./scripts/smoke-phase-1.sh",
     "smoke:phase-2": "./scripts/smoke-phase-2.sh",
     "smoke:all": "./scripts/smoke-phase-1.sh && ./scripts/smoke-phase-2.sh",
