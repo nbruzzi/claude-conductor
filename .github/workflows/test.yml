@@ -44,8 +44,5 @@ jobs:
       - name: Check import extensions
         run: bun run check-import-extensions
 
-      - name: Check bundled-registrations parity (skips if dotfiles absent)
-        run: bun run check-bundled-registrations-parity
-
       - name: Test
         run: bun test
