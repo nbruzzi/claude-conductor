@@ -257,11 +257,13 @@ function walkUpForGit(startPath: string): string | null {
  * produce distinct ids because the hash is computed over the full path.
  *
  * REV 0.2 RE-1 (mandatory canonicalization): when `root` resolves to a
- * directory inside a git working tree, the hash is computed over
- * `git rev-parse --show-toplevel` instead of the raw input. This maps
+ * directory inside a git working tree, the hash is computed over the
+ * canonical toplevel derived from `git rev-parse --git-common-dir` (NOT
+ * `--show-toplevel`, which returns the worktree's own path). This maps
  * worktree paths (`~/.claude-dotfiles-<sid>/...`) to their canonical
  * toplevel (`~/.claude-dotfiles`), so cross-worktree collision detection
  * still works under Phase 3 Slice 2's per-session-worktree substrate.
+ * See `canonicalizeViaGit` below for the exact derivation.
  *
  * Falls back to raw root + breadcrumb if rev-parse fails (root is not
  * inside a git tree, git is unavailable, etc.). Never throws.
