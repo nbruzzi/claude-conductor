@@ -229,7 +229,7 @@ describe("identity claim — in-process property-based fuzz", () => {
     // (1000 * avg(N=2,3,4)=3 = ~3000 total claims.)
     expect(totalClaims).toBeGreaterThanOrEqual(2000);
     expect(totalClaims).toBeLessThanOrEqual(4000);
-  }, 90_000); // headroom for slow CI runners. // 90s timeout — 1000 iterations × ~30ms per iter = ~30s typical;
+  }, 180_000); // 180s timeout. 1000 iterations × ~30ms typical = ~30s normal; observed 90132ms on slow GitHub Actions runner (CI run 25216032584 on plugin main e5b5e9d, 2026-05-01) — bumped from 90s to 180s for ample headroom. Test asserts structural invariants (distinct letters per claim batch); timing is incidental.
 
   it("50 iterations of N=20 concurrent claims yield distinct letters (high-N coverage)", async () => {
     // High-N branch: smaller iteration count but exercises the
