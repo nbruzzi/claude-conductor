@@ -32,6 +32,27 @@ echo "=== Recent commits ===" && git log --oneline -10
 
 Include the results in the handoff. Skip this step if not in a git repo.
 
+## Step 2.5: Capture CI state — MANDATORY when this session pushed any branch
+
+If this session ran `git push` to any branch with an open PR (or pushed to `main`), CI verification is part of the handoff payload. The handoff must answer "did this code actually land green?" not just "was it transmitted?" — see CLAUDE.md §"After Every Push — CI verification is mandatory."
+
+For each branch this session pushed:
+
+```bash
+gh run list --branch <branch> --limit 1 --json databaseId,status,conclusion,headSha \
+  --jq '{branch: "<branch>", run: .[0].databaseId, sha: .[0].headSha, status: .[0].status, conclusion: .[0].conclusion}'
+```
+
+Include the JSON output in the handoff under a "## CI verification" section. If `status` is anything other than `completed` (e.g., `in_progress`, `queued`), the handoff is **NOT READY TO WRITE** — wait for completion via `gh run watch <id> --exit-status`, then capture the conclusion. **Do not write the handoff in a "CI pending" state without flagging it loudly to the user as an unverified claim.**
+
+If `conclusion` is anything other than `success` (e.g., `failure`, `cancelled`, `timed_out`), the handoff must:
+
+- Title-line the failure: "Phase / Slice X — CI RED on <branch> at <sha>"
+- Document the failing job + first error in the handoff body's failure section
+- Treat any "shipped / merged / landed / done" claim about the affected commits as PROVISIONAL until the failure is resolved
+
+Skip this entire step if no `git push` was issued this session.
+
 ## Step 3: Read session telemetry
 
 If `~/.claude/sessions/<session_id>.json` exists (written by the `session-telemetry-tracker` PostToolUse hook), read it and include its fields as YAML frontmatter at the top of the handoff file (before the `# Handoff:` title). This gives the next session a machine-readable snapshot of what was touched and which verifications ran.
