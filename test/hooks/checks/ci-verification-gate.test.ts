@@ -32,6 +32,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -455,6 +456,58 @@ describe("ci-verification-gate", () => {
         "push(es) detected without a shipped-claim",
       );
       expect(result.stdout).toContain("git push origin feature-x");
+    });
+  });
+
+  describe("mtime-GC for stale sentinels", () => {
+    it("reaps any sentinel >24h old regardless of state or session-id", async () => {
+      // Stale sentinel from a different session, never resolved (claimed=false)
+      const stalePath = join(
+        tmpHome,
+        ".claude",
+        ".flags",
+        "ci-verification-armed-99999999-aaaa-4bbb-8ccc-dddddddddddd-2026-04-01T00-00-00-000Z.json",
+      );
+      writeFileSync(
+        stalePath,
+        JSON.stringify({
+          push_ts: "2026-04-01T00:00:00Z",
+          command_preview: "git push origin old-branch",
+          sessionId: "99999999-aaaa-4bbb-8ccc-dddddddddddd",
+          claimed: false,
+          evidenced: false,
+        }),
+      );
+      // Backdate mtime to 25h ago
+      const past = Date.now() - 25 * 60 * 60 * 1000;
+      utimesSync(stalePath, past / 1000, past / 1000);
+
+      // Run TIER 2 (no transcript matches needed; just trigger cleanup pass)
+      const transcript = writeTranscript([
+        assistantTurn("2026-05-02T10:05:00Z", [
+          { type: "text", text: "Just doing some other work." },
+        ]),
+      ]);
+      const result = await check(
+        inputFor({ sessionId: SID, transcriptPath: transcript }),
+      );
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(stalePath)).toBe(false); // reaped
+    });
+
+    it("preserves sentinels < 24h old even if unresolved", async () => {
+      writeSentinel({ pushTs: "2026-05-02T10:00:00Z" });
+      const transcript = writeTranscript([
+        assistantTurn("2026-05-02T10:05:00Z", [
+          { type: "text", text: "Just doing some other work." },
+        ]),
+      ]);
+      const result = await check(
+        inputFor({ sessionId: SID, transcriptPath: transcript }),
+      );
+      expect(result.exitCode).toBe(0);
+      // Sentinel still present (push-without-claim warn fired but sentinel preserved)
+      expect(sentinelCount()).toBe(1);
     });
   });
 

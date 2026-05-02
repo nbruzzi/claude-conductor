@@ -34,6 +34,16 @@
  * Detection regex constants are VERBATIM copies from compound-bash-detector
  * for chain-op split + quoted-region strip. Phase-v lift candidate to
  * plugin/bash-parser.ts (per ARCH-8 / B-PR-2 dispositions in the plan audit).
+ *
+ * Known limitations (documented; will not block merge):
+ *   - Multi-remote / tag pushes match same as PR pushes — `git push origin
+ *     tag v1.0` and `git push fork main` both trigger the reminder. Accept
+ *     noise post-launch; tune via filter on tracked-upstream-with-CI if it
+ *     becomes a real issue.
+ *   - Pipe-separated commands (`git push | tee`, `git push 2>&1 | grep ...`)
+ *     match the push segment and emit the reminder; intent there is usually
+ *     output capture, not delivery, but the reminder is still informative.
+ *     Accept noise; covered by test fixture for piped pushes.
  */
 
 import { existsSync } from "node:fs";
