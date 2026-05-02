@@ -50,9 +50,13 @@
  *     → propagate to dispatcher's safety net (run-checks.ts:80-96
  *       fail-CLOSED-on-block-throw)
  *
- * Cleanup: when a sentinel is fully resolved (claimed && evidenced) the gate
- * deletes it on Stop pass. SessionEnd reaper + >24h mtime-GC at next
- * SessionStart handle residuals.
+ * Cleanup (Decision #2): two layered mechanisms run on every Stop —
+ *   (1) delete-on-resolve: sentinels with claimed && evidenced removed.
+ *   (2) >24h mtime-GC: any sentinel older than SENTINEL_MAX_AGE_MS is reaped
+ *       regardless of session-id or state (catches orphans from sessions that
+ *       ended without TIER 2 firing — kill-switch present, transcript
+ *       missing, hook crash). Folded into the same Stop-time cleanup pass
+ *       rather than a separate SessionStart check.
  *
  * Kill switches:
  *   - Session-scoped: ~/.claude/.flags/ci-verification-gate-disabled-<sessionId>
@@ -68,12 +72,12 @@
  * instrumented from day 1; 1-week soak before relying on BUDGET_MS=200ms guard.
  *
  * Known limitations (documented; will not block merge):
- *   - Multi-remote / tag pushes match same as PR pushes — accept noise.
- *   - Pipe-separated commands (`git push | tee`) trigger reminder.
  *   - Subagent-launched pushes inherit parent's discipline via TIER 4
  *     sentinel; deeply-nested-subagent edges may slip — accept and document.
  *   - Schema-drift canary applies to claim/evidence detection only; push
  *     detection is sentinel-driven (immune to transcript schema changes).
+ *   - (Multi-remote / tag pushes + pipe-separated commands are TIER 3
+ *     concerns — see ci-verification-reminder.ts for those limitations.)
  */
 
 import {
@@ -97,6 +101,7 @@ const SOURCE = "ci-verification-gate";
 const BUDGET_MS = 200;
 const MAX_BYTES = 20 * 1024 * 1024; // 20 MB tail cap
 const ZERO_SCAN_THRESHOLD = 5;
+const SENTINEL_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h mtime-GC cap (Decision #2)
 
 const CLAIM_WORD_RE = /\b(shipped|merged|landed|deployed|done)\b/iu;
 const FIRST_PERSON_CLAIM_RE =
@@ -205,6 +210,38 @@ function deleteSentinel(file: SentinelFile): void {
   } catch {
     // Idempotent — if already gone, fine.
   }
+}
+
+/**
+ * Reap any sentinel file >24h old, regardless of session-id or claimed/evidenced
+ * state. Closes plan Decision #2's mtime-GC obligation: prior-session sentinels
+ * (orphans from sessions that ended without TIER 2 firing — kill-switch present,
+ * transcript missing, hook crash) leak into ~/.claude/.flags/ otherwise.
+ *
+ * 24h was chosen because Claude Code sessions don't last that long; anything
+ * older is from a session that's never coming back. Folded into TIER 2's
+ * Stop-time cleanup (rather than a separate SessionStart check) so the cadence
+ * matches the rest of the cleanup discipline.
+ */
+function reapStaleSentinels(nowMs: number): number {
+  const dir = homeFlagsDir();
+  if (!existsSync(dir)) return 0;
+  let reaped = 0;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith("ci-verification-armed-") || !name.endsWith(".json"))
+      continue;
+    const path = join(dir, name);
+    try {
+      const stat = statSync(path);
+      if (nowMs - stat.mtimeMs > SENTINEL_MAX_AGE_MS) {
+        unlinkSync(path);
+        reaped++;
+      }
+    } catch {
+      // Ignore unreadable / vanished sentinels.
+    }
+  }
+  return reaped;
 }
 
 // LIFTED-FROM: ~/.claude-dotfiles/src/hooks/checks/feedback-minimal-output-detector.ts:77-94
@@ -628,6 +665,10 @@ export async function check(input: HookInput): Promise<HookResult> {
   for (const s of sentinels) {
     if (s.data.claimed && s.data.evidenced) deleteSentinel(s);
   }
+
+  // Mtime-GC: reap any sentinel >24h old regardless of session-id or state.
+  // Closes plan Decision #2's mtime-GC obligation.
+  reapStaleSentinels(Date.now());
 
   if (violations.length > 0) {
     return block(
