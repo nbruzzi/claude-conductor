@@ -55,7 +55,12 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // atomic-wiring count assertion from registry-primitives.test.ts (which
 // uses synthetic fixtures and never loads bundled-registrations) to this
 // file, where EXPECTED_COUNT actually pins production state.
-const EXPECTED_COUNT = 25;
+//
+// CI verification cycle (TIER 2/3/3a/4) — bumped from 25 to 29 with 4 new
+// bundled hook checks (ci-verification-pre-push-arm on pre-tool-use,
+// ci-verification-reminder on post-tool-use, ci-verification-gate on stop,
+// ci-verification-auth-warn on session-start). Plan ~/.claude/plans/typed-sleeping-snowglobe.md.
+const EXPECTED_COUNT = 29;
 
 describe("bundled-registrations meta-test", () => {
   it("BUNDLED_CHECK_NAMES has exactly 25 entries", () => {
@@ -136,6 +141,30 @@ describe("bundled-registrations meta-test", () => {
   it("Phase 3 Slice 2 — cleanup registered on stop", () => {
     const names = BUNDLED_CHECKS_BY_EVENT["stop"];
     expect(names).toContain("dotfiles-worktree-cleanup");
+  });
+
+  // CI verification cycle (TIER 2/3/3a/4) belt-and-suspenders to EXPECTED_COUNT
+  // per plan audit ARCH-6 (catches "wrong event bucket" not just "wrong count").
+  it("ci-verification-pre-push-arm registered on pre-tool-use", () => {
+    expect(BUNDLED_CHECKS_BY_EVENT["pre-tool-use"]).toContain(
+      "ci-verification-pre-push-arm",
+    );
+  });
+
+  it("ci-verification-reminder registered on post-tool-use", () => {
+    expect(BUNDLED_CHECKS_BY_EVENT["post-tool-use"]).toContain(
+      "ci-verification-reminder",
+    );
+  });
+
+  it("ci-verification-gate registered on stop", () => {
+    expect(BUNDLED_CHECKS_BY_EVENT["stop"]).toContain("ci-verification-gate");
+  });
+
+  it("ci-verification-auth-warn registered on session-start", () => {
+    expect(BUNDLED_CHECKS_BY_EVENT["session-start"]).toContain(
+      "ci-verification-auth-warn",
+    );
   });
 
   // TA-3 PARTIAL fix — pin narrowing at compile time, not just runtime.

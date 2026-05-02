@@ -49,10 +49,17 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "config-protection",
     "sensitive-files",
     "task-coordinator",
+    "ci-verification-pre-push-arm",
   ],
-  "post-tool-use": ["auto-format", "no-any", "no-enum"],
+  "post-tool-use": [
+    "auto-format",
+    "no-any",
+    "no-enum",
+    "ci-verification-reminder",
+  ],
   stop: [
     "test-gate",
+    "ci-verification-gate",
     "handoff-latest-guard",
     "session-presence-unregister",
     "dotfiles-worktree-cleanup",
@@ -65,6 +72,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "identity-injector",
     "dotfiles-worktree-provisioner",
     "dotfiles-worktree-gc",
+    "ci-verification-auth-warn",
   ],
   "user-prompt-submit": ["teammate-idle-reminder"],
 } as const satisfies Record<HookEvent, readonly string[]>;
