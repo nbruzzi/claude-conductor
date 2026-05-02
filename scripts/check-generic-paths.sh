@@ -103,6 +103,15 @@ P3_FILE_ALLOWLIST=(
   "src/hooks/checks/session-collision-gate.ts"
   "src/hooks/checks/test-gate.ts"
   "src/hooks/checks/bundled-registrations.ts"
+  # CI verification cycle (TIER 2/3/3a/4) — kill-switch + sentinel + telemetry
+  # path literals appear in operator-facing reminder strings (block messages,
+  # warn messages). Routing via paths.ts would obscure the exact path the
+  # operator needs to copy. Same rationale as disable-hooks.ts (line 114-117)
+  # and channels/cli.ts (line 107-113).
+  "src/hooks/checks/ci-verification-pre-push-arm.ts"
+  "src/hooks/checks/ci-verification-reminder.ts"
+  "src/hooks/checks/ci-verification-gate.ts"
+  "src/hooks/checks/ci-verification-auth-warn.ts"
   "src/channels/index.ts"
   # Phase 2 Slice 8 — `read` verb help text references the per-channel
   # cursor path `~/.claude/channels/<id>/last-seen/<sid>.json` in
