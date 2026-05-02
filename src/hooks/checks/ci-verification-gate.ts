@@ -207,6 +207,10 @@ function deleteSentinel(file: SentinelFile): void {
   }
 }
 
+// LIFTED-FROM: ~/.claude-dotfiles/src/hooks/checks/feedback-minimal-output-detector.ts:77-94
+// Phase-v lift candidate: consolidate transcript-scanner helpers (readTail +
+// tryParse + stripFencedCode) in plugin/transcript-scanner.ts per plan
+// decision ARCH-7 + B-PR-2 / PHASE-GATE-3 condition #12.
 async function readTail(path: string, maxBytes: number): Promise<string> {
   const stat = statSync(path);
   const size = stat.size;
@@ -226,6 +230,8 @@ async function readTail(path: string, maxBytes: number): Promise<string> {
   }
 }
 
+// LIFTED-FROM: ~/.claude-dotfiles/src/hooks/checks/feedback-minimal-output-detector.ts:127-133
+// Phase-v lift candidate: plugin/transcript-scanner.ts (paired with readTail).
 function tryParse(line: string): Record<string, unknown> | undefined {
   try {
     return JSON.parse(line) as Record<string, unknown>;
@@ -242,6 +248,10 @@ function getString(
   return typeof v === "string" ? v : undefined;
 }
 
+// LIFTED-FROM (pattern): ~/.claude-dotfiles/src/hooks/checks/feedback-minimal-output-detector.ts:135-161
+// Adapted to a simpler line-based fence-skip (we only need outside-fence text,
+// not the diff-prose detection feedback-minimal-output-detector also performs).
+// Phase-v lift candidate: plugin/transcript-scanner.ts.
 function stripFencedCode(text: string): string {
   const lines = text.split("\n");
   let inFence = false;
