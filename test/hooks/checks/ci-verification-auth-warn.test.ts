@@ -145,7 +145,12 @@ describe("ci-verification-auth-warn", () => {
 
   describe("not installed → warn", () => {
     it("empty PATH → warn (gh not found, install message)", async () => {
-      process.env["PATH"] = "";
+      // Use stubDir (which has no `gh` written) rather than empty PATH —
+      // Bun.spawnSync on Linux may fall back to a default PATH when the
+      // env var is empty, causing the system gh to resolve and break the
+      // ENOENT branch test (CI macOS-vs-Linux divergence per memory
+      // feedback-cross-platform-tmpdir-divergence).
+      process.env["PATH"] = stubDir;
       const result = await check(inputFor(SID));
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("not found in PATH");
@@ -158,7 +163,12 @@ describe("ci-verification-auth-warn", () => {
       const ks = INTERNAL.killSwitchPaths(SID);
       if (ks.session === undefined) throw new Error("session ks expected");
       writeFileSync(ks.session, "");
-      process.env["PATH"] = "";
+      // Use stubDir (which has no `gh` written) rather than empty PATH —
+      // Bun.spawnSync on Linux may fall back to a default PATH when the
+      // env var is empty, causing the system gh to resolve and break the
+      // ENOENT branch test (CI macOS-vs-Linux divergence per memory
+      // feedback-cross-platform-tmpdir-divergence).
+      process.env["PATH"] = stubDir;
       const result = await check(inputFor(SID));
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe("");
@@ -167,7 +177,12 @@ describe("ci-verification-auth-warn", () => {
     it("global kill-switch → pass (no spawn)", async () => {
       const ks = INTERNAL.killSwitchPaths(SID);
       writeFileSync(ks.global, "");
-      process.env["PATH"] = "";
+      // Use stubDir (which has no `gh` written) rather than empty PATH —
+      // Bun.spawnSync on Linux may fall back to a default PATH when the
+      // env var is empty, causing the system gh to resolve and break the
+      // ENOENT branch test (CI macOS-vs-Linux divergence per memory
+      // feedback-cross-platform-tmpdir-divergence).
+      process.env["PATH"] = stubDir;
       const result = await check(inputFor(SID));
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe("");
