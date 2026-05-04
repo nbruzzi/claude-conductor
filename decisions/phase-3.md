@@ -312,3 +312,77 @@ worktrees) will reference back to this decision as the substrate
 template.
 
 ---
+
+## Decision E — Provisioner observability (post-Slice-2 follow-up, 2026-05-04)
+
+**Status:** Decided + landed (this PR).
+
+**Context:** Phase 3 Slice 2 shipped per-session worktree substrate
+(Decision D). Empirical state observed across multiple sessions: the
+provisioner hook emits `[dotfiles-worktree-provisioner] created
+<path>`, but `git worktree list` shows only canonical and the directory
+does not exist on disk at later inspection. Three `worktree-gc-reaped`
+entries from 2026-05-01/02 in `~/.claude/logs/.presence-gate-failures.log`
+attribute the reaping to `(orphan; no anchor)`. The silent-failure is
+partially observable today, but at GC-time and attributed to the wrong
+session — the causal link "X was just provisioned, then reaped due to Y
+mismatch" is missing.
+
+**Decision:** add post-`provisionWorktree` verification to the provisioner
+hook. Three facets capture the failure modes:
+
+1. **stat-errno** (replaces v2 plan's `existsSync`): distinguishes
+   ENOENT, EACCES, ELOOP, etc. so diagnostic logs preserve the actual
+   filesystem error.
+2. **realpath-mismatch** (the load-bearing H2 hypothesis detector):
+   compute `realpathSync(worktreePath)` post-creation; if the realpath
+   form differs from the raw `worktreePath` AND starts with the realpath
+   form of `dotfilesCanonical`, GC's `byDotfilesRoot.get()` lookup will
+   miss the raw-keyed sentinel → orphan → reap. Source-trace confirmed
+   via `worktrees/index.ts:202` (GC realpath-resolves canonical) +
+   `dotfiles-worktree-provisioner.ts:88` (provisioner stores raw). H2
+   is a confirmed bug, not a hypothesis.
+3. **sentinel-readback-null**: defensive-tautology within a single hook
+   execution (the value was just written), but kept cheap (~5 LOC) for
+   cross-session diagnostic — a sentinel-readback-null in production
+   would indicate the registry write itself failed silently.
+
+A 12th `PresenceFailureKind` value `worktree-provision-incomplete` is
+added to the type union AND to the hand-rolled `isPresenceFailureKind`
+runtime guard at `presence-failure-log.ts:258-276`. Both edits are
+required: the runtime guard is NOT literal-derived; without the guard
+extension, `parseEvent` silently rejects every newly-written event —
+the exact silent-failure pattern this slice exists to fix, built into
+the slice itself.
+
+**Verification placement:** hook-level (caller of `provisionWorktree`),
+not in the worktrees primitive. The primitive trusts `git worktree add`'s
+exit code; the policy of "verify post-create + emit anomaly" belongs at
+the hook layer alongside the other reconciliation patterns the cleanup
+hook + GC reaper already use (`worktree-cleanup-incomplete` is the
+sibling pattern).
+
+**Out of scope of this slice (next slice):** the actual race fix
+(realpath-mismatch mitigation in either `setSentinelDotfilesRoot` or
+the worktrees primitive). This slice provides the LOUD diagnostic; the
+race fix uses accumulated logs across N sessions to design targeted
+mitigation.
+
+**Audit lineage:** plan v1 → ARCH + RE subagent audits (8 findings v2
+fold) → Bravo cross-audit + Architecture Auditor outside-view (3
+findings v3 fold catching v2 tautological folds) → ship-without-v4-audit
+per tight-fold criteria.
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/soft-churning-allen.md` v3
+- Channel: `2026-05-03_20-31` Round 2 (2026-05-04)
+- Empirical baseline: `~/.claude/logs/.presence-gate-failures.log`
+  3 `worktree-gc-reaped` entries (2026-05-01/02)
+- Memory candidate (post-Round-2): substrate-fix candidates need
+  explicit upstream-coverage check + same-event-chain ordering audit +
+  literal-derived-guard verification BEFORE convergence framing — Bravo
+  - Alpha both hit this on Round 2, both via subagent-distance catches
+    that peer-audits missed.
+
+---

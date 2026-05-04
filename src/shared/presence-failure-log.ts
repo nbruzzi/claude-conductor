@@ -64,7 +64,13 @@ export type PresenceFailureKind =
   | "worktree-provision-failed"
   | "worktree-gc-reaped"
   | "worktree-cleanup-failed"
-  | "worktree-cleanup-incomplete";
+  | "worktree-cleanup-incomplete"
+  // Phase 3 Slice 2 follow-up — provisioner observability (provisionWorktree
+  // returned ok but post-create state is incomplete: stat-errno, realpath
+  // mismatch with canonical, or sentinel-readback null). Mirrors the
+  // `<lifecycle-stage>-incomplete` naming established by `worktree-cleanup-
+  // incomplete`. Consumed by the provisioner hook only.
+  | "worktree-provision-incomplete";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -271,7 +277,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "worktree-provision-failed" ||
     k === "worktree-gc-reaped" ||
     k === "worktree-cleanup-failed" ||
-    k === "worktree-cleanup-incomplete"
+    k === "worktree-cleanup-incomplete" ||
+    k === "worktree-provision-incomplete"
   );
 }
 

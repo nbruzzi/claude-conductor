@@ -36,12 +36,14 @@
  * MUST NOT break session-start.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { effectiveHome } from "../../shared/home.ts";
 import {
   artifactIdFromPath,
   listLivePeers,
+  readSentinelDotfilesRoot,
   setSentinelDotfilesRoot,
 } from "../../active-sessions/index.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
@@ -96,11 +98,49 @@ export async function check(input: HookInput): Promise<HookResult> {
 
     const result = provisionWorktree(sessionId, { dotfilesCanonical });
     if (result.kind === "ok") {
-      messages.push(`[${SOURCE}] created ${worktreePath}`);
+      const verdict = verifyProvision({
+        sessionId,
+        worktreePath,
+        dotfilesCanonical,
+      });
+      if (verdict.complete) {
+        messages.push(`[${SOURCE}] created and verified ${worktreePath}`);
+        return warn(SOURCE, messages.join("\n"));
+      }
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        source: "dispatcher",
+        kind: "worktree-provision-incomplete",
+        artifactPath: worktreePath,
+        detail: verdict.detail,
+      });
+      messages.push(
+        `[${SOURCE}] INCOMPLETE: ${verdict.facet}; logged to presence-failure-log for substrate diagnosis`,
+      );
       return warn(SOURCE, messages.join("\n"));
     }
     if (result.kind === "exists") {
-      messages.push(`[${SOURCE}] using existing ${result.path}`);
+      const verdict = verifyProvision({
+        sessionId,
+        worktreePath,
+        dotfilesCanonical,
+      });
+      if (verdict.complete) {
+        messages.push(`[${SOURCE}] using existing ${result.path}`);
+        return warn(SOURCE, messages.join("\n"));
+      }
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        source: "dispatcher",
+        kind: "worktree-provision-incomplete",
+        artifactPath: worktreePath,
+        detail: verdict.detail,
+      });
+      messages.push(
+        `[${SOURCE}] INCOMPLETE on idempotent re-run: ${verdict.facet}; logged to presence-failure-log`,
+      );
       return warn(SOURCE, messages.join("\n"));
     }
     if (result.kind === "feature-disabled") {
@@ -169,3 +209,149 @@ function detectMixedFlagState(self: string): string | null {
     return null;
   }
 }
+
+type VerifyResult =
+  | { complete: true; detail: string; facet: null }
+  | { complete: false; detail: string; facet: string };
+
+/**
+ * Post-provisionWorktree verification.
+ *
+ * Returns `complete: true` when post-provision state matches what a future
+ * GC reaper would expect (path is statable, no realpath-vs-raw drift,
+ * sentinel readback returns the worktreePath). Otherwise returns the
+ * incomplete facet that fired and a stable key=value detail string for
+ * presence-failure-log ingestion.
+ *
+ * The realpath-vs-raw mismatch facet is the load-bearing diagnostic for
+ * the H2 hypothesis (provisioner stores raw `dotfilesRoot` at the sentinel;
+ * GC's `listWorktrees` realpath-resolves the canonical → drift → orphan →
+ * reap). One realpathSync call directly answers "will GC reap us?"
+ *
+ * Sentinel-readback is a defensive-tautology within a single hook execution
+ * (the value was just written by `setSentinelDotfilesRoot`), but kept for
+ * cross-session diagnostic — a sentinel-readback-null in production would
+ * indicate the registry write itself failed silently.
+ */
+function verifyProvision(args: {
+  sessionId: string;
+  worktreePath: string;
+  dotfilesCanonical: string;
+}): VerifyResult {
+  const { sessionId, worktreePath, dotfilesCanonical } = args;
+
+  let statErrno = "none";
+  try {
+    statSync(worktreePath);
+  } catch (err: unknown) {
+    statErrno = (err as NodeJS.ErrnoException).code ?? "EUNKNOWN";
+  }
+
+  let pathRealpath: string | null = null;
+  if (statErrno === "none") {
+    try {
+      pathRealpath = realpathSync(worktreePath);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  let canonicalRealpath: string | null = null;
+  try {
+    canonicalRealpath = realpathSync(dotfilesCanonical);
+  } catch {
+    /* best-effort */
+  }
+
+  const realpathMismatch =
+    pathRealpath !== null &&
+    canonicalRealpath !== null &&
+    pathRealpath !== worktreePath &&
+    pathRealpath.startsWith(`${canonicalRealpath}-`);
+
+  let sentinelReadback: string | null = null;
+  try {
+    sentinelReadback = readSentinelDotfilesRoot(sessionId);
+  } catch {
+    /* best-effort */
+  }
+
+  let facet: string | null = null;
+  if (statErrno !== "none") {
+    facet = `stat-errno=${statErrno}`;
+  } else if (realpathMismatch) {
+    facet = "realpath-mismatch";
+  } else if (sentinelReadback === null) {
+    facet = "sentinel-readback-null";
+  }
+
+  let branchExists = false;
+  if (facet !== null) {
+    const sidPrefix = sessionId.slice(0, 8);
+    try {
+      const probe = spawnSync(
+        "git",
+        [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `refs/heads/worktree/${sidPrefix}`,
+        ],
+        { cwd: dotfilesCanonical, stdio: ["ignore", "ignore", "ignore"] },
+      );
+      branchExists = probe.status === 0;
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  const detail = formatIncompleteDetail({
+    sessionId,
+    worktreePath,
+    dotfilesCanonical,
+    canonicalRealpath,
+    statErrno,
+    sentinelReadback,
+    realpathMismatch,
+    branchExists,
+  });
+
+  if (facet === null) {
+    return { complete: true, detail, facet: null };
+  }
+  return { complete: false, detail, facet };
+}
+
+/**
+ * Stable key=value detail string for `worktree-provision-incomplete` events.
+ *
+ * Key order is locked via the parseEvent round-trip unit test —
+ * downstream parsers in the next-slice race-fix design depend on this
+ * being stable.
+ */
+function formatIncompleteDetail(args: {
+  sessionId: string;
+  worktreePath: string;
+  dotfilesCanonical: string;
+  canonicalRealpath: string | null;
+  statErrno: string;
+  sentinelReadback: string | null;
+  realpathMismatch: boolean;
+  branchExists: boolean;
+}): string {
+  return [
+    `sid=${args.sessionId}`,
+    `path=${args.worktreePath}`,
+    `canonical=${args.dotfilesCanonical}`,
+    `realpath=${args.canonicalRealpath ?? "null"}`,
+    `stat-errno=${args.statErrno}`,
+    `sentinel-readback=${args.sentinelReadback ?? "null"}`,
+    `realpath-mismatch=${String(args.realpathMismatch)}`,
+    `branch-exists=${String(args.branchExists)}`,
+  ].join(" ");
+}
+
+export const INTERNAL = {
+  formatIncompleteDetail,
+  verifyProvision,
+};
