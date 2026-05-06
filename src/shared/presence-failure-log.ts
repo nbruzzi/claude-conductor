@@ -177,6 +177,16 @@ function redactEvent(event: PresenceFailureEvent): PresenceFailureEvent {
  * inversion. When a third consumer of the rotation pattern appears, lift
  * the helper to `shared/log-rotation.ts` per
  * `feedback-partial-v2-anticipation-primitives.md`.
+ *
+ * Race window (per RE-2 audit fold): the `statSync → renameSync` composition
+ * is NOT atomic. Two concurrent appenders crossing the threshold within the
+ * same instant can both observe `size >= MAX_BYTES` and both call
+ * `renameSync`. POSIX `rename(2)` is atomic per-call, but the second rename
+ * clobbers the first writer's `.log.1` archive. Realistic likelihood is low
+ * (per-line writes via O_APPEND are atomic ≤ PIPE_BUF; only the rotation
+ * boundary races). Acceptable per single-slot retention contract — operators
+ * who need durable history ship the archive between sessions. Sibling concern
+ * to `sync-common.ts:53-57` which has the identical race documented or not.
  */
 export function appendPresenceFailure(event: PresenceFailureEvent): void {
   const line = serializeWithinCap(redactEvent(event));
@@ -205,8 +215,20 @@ export function appendPresenceFailure(event: PresenceFailureEvent): void {
       }
     }
     appendFileSync(path, line, "utf-8");
-  } catch {
-    /* nothing more we can do — caller is already on a failure path */
+  } catch (err: unknown) {
+    // Outer catch: preserves best-effort contract (caller is on a failure path
+    // and cannot do anything useful with a second failure). RE-3 audit fold:
+    // surface the failure to stderr so silent data loss (e.g., disk-full
+    // ENOSPC AFTER a successful rotation rename) is observable to operators.
+    // Stderr-only — never throws back to the caller.
+    const code =
+      err instanceof Error && "code" in err
+        ? String((err as { code: unknown }).code ?? "")
+        : "";
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[presence-failure-log] append failed (${path}, errno=${code || "unknown"}): ${msg}`,
+    );
   }
 }
 
@@ -217,19 +239,36 @@ export function appendPresenceFailure(event: PresenceFailureEvent): void {
  *
  * Used by the SessionStart briefing (Slice 4) to surface fail-soft
  * history at the start of a new session.
+ *
+ * Reads BOTH `<path>.1` (rotated archive, oldest) AND `<path>` (current,
+ * newest) and concatenates oldest→newest before tailing. Per RE-1 audit
+ * fold: rotation must not silently invalidate the operator-promise that
+ * kill-switch + structural-failure events are visible at next session-
+ * start. With single-slot rotation each file is bounded at 1 MiB, so
+ * reading both is cheap (worst case ~2 MiB total). Lines outside the
+ * tail-window are filtered after concatenation, so the limit semantic is
+ * preserved across the rotation boundary.
  */
 export function readPresenceFailures(
   limit: number = 20,
 ): PresenceFailureEvent[] {
   const path = failureLogPath();
-  if (!existsSync(path)) return [];
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf-8");
-  } catch {
-    return [];
+  const archivePath = `${path}.1`;
+  const lines: string[] = [];
+  // Order: archive (older) first, current (newer) second — preserves
+  // chronological oldest→newest contract on the concatenated stream.
+  for (const readPath of [archivePath, path]) {
+    if (!existsSync(readPath)) continue;
+    let raw: string;
+    try {
+      raw = readFileSync(readPath, "utf-8");
+    } catch {
+      continue;
+    }
+    for (const line of raw.split("\n")) {
+      if (line.length > 0) lines.push(line);
+    }
   }
-  const lines = raw.split("\n").filter((l) => l.length > 0);
   const tail = lines.slice(-limit);
   const events: PresenceFailureEvent[] = [];
   for (const line of tail) {

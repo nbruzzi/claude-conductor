@@ -360,5 +360,75 @@ describe("presence-failure-log", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]?.detail).toBe("fresh-log-append");
     });
+
+    it("readPresenceFailures includes events from .log.1 archive (RE-1 fold)", () => {
+      // Plant 3 archived events in .log.1 + 2 fresh events in .log.
+      // Reader should return all 5 oldest→newest within the tail window.
+      const path = failureLogPath();
+      mkdirSync(dirname(path), { recursive: true });
+      const archive = [
+        sampleEvent({
+          detail: "archived-1",
+          timestamp: "2026-04-19T00:00:00Z",
+        }),
+        sampleEvent({
+          detail: "archived-2",
+          timestamp: "2026-04-19T01:00:00Z",
+        }),
+        sampleEvent({
+          detail: "archived-3",
+          timestamp: "2026-04-19T02:00:00Z",
+        }),
+      ]
+        .map((ev) => INTERNAL.serializeWithinCap(INTERNAL.redactEvent(ev)))
+        .join("");
+      writeFileSync(`${path}.1`, archive);
+
+      // Append 2 fresh events to current log via the public API.
+      appendPresenceFailure(
+        sampleEvent({ detail: "current-1", timestamp: "2026-04-20T00:00:00Z" }),
+      );
+      appendPresenceFailure(
+        sampleEvent({ detail: "current-2", timestamp: "2026-04-20T01:00:00Z" }),
+      );
+
+      const rows = readPresenceFailures();
+      expect(rows).toHaveLength(5);
+      expect(rows.map((r) => r.detail)).toEqual([
+        "archived-1",
+        "archived-2",
+        "archived-3",
+        "current-1",
+        "current-2",
+      ]);
+    });
+
+    it("readPresenceFailures applies limit AFTER archive concatenation (chronological tail)", () => {
+      // 3 archived + 3 current; limit=4 should return last 4 chronologically
+      // (archived-3, current-1, current-2, current-3).
+      const path = failureLogPath();
+      mkdirSync(dirname(path), { recursive: true });
+      const archive = [
+        sampleEvent({ detail: "archived-1" }),
+        sampleEvent({ detail: "archived-2" }),
+        sampleEvent({ detail: "archived-3" }),
+      ]
+        .map((ev) => INTERNAL.serializeWithinCap(INTERNAL.redactEvent(ev)))
+        .join("");
+      writeFileSync(`${path}.1`, archive);
+
+      for (let i = 1; i <= 3; i++) {
+        appendPresenceFailure(sampleEvent({ detail: `current-${i}` }));
+      }
+
+      const rows = readPresenceFailures(4);
+      expect(rows).toHaveLength(4);
+      expect(rows.map((r) => r.detail)).toEqual([
+        "archived-3",
+        "current-1",
+        "current-2",
+        "current-3",
+      ]);
+    });
   });
 });
