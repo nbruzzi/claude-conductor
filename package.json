@@ -35,6 +35,11 @@
   },
   "dependencies": {},
   "exports": {
+    "./active-sessions": {
+      "types": "./src/active-sessions/index.ts",
+      "import": "./src/active-sessions/index.ts",
+      "default": "./src/active-sessions/index.ts"
+    },
     "./shared/disable-hooks": {
       "types": "./src/shared/disable-hooks.ts",
       "import": "./src/shared/disable-hooks.ts",
