@@ -63,7 +63,7 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 
 ## Bundled memories (`memories/`)
 
-18 cross-session feedback memories bundled in batch 7a per `memories-to-bundle.md` (V2 schema: `cadence`, `scope`, `updated`, `origin: extracted`). Cross-reference graph: clean. CI substrate-leak grep: passes (with documented allowed-in-frontmatter false positives).
+22 cross-session feedback memories — 18 in batch 7a + 4 in wind-down batch (per `decisions/phase-5.md` Decision B) — bundled per `memories-to-bundle.md` (V2 schema: `cadence`, `scope`, `updated`, `origin: extracted`). Cross-reference graph: clean. CI substrate-leak grep: passes (with documented allowed-in-frontmatter false positives).
 
 - `feedback-confidence-as-verification-output.md` — verification loop produces confidence; no separate "confident-sounding output" pattern.
 - `feedback-encode-while-context-fresh.md` — receipt-in-hand framing; encode lessons in the same session that produced them.
@@ -83,6 +83,10 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 - `feedback-self-monitoring-is-architectural.md` — self-status disagreement with ground truth is architectural, not housekeeping.
 - `feedback-surface-merge-decisions.md` — strategy-level merges to main need a one-sentence check-in first.
 - `feedback-convergent-instances.md` — convergent agents replicate principle, not artifacts; counter-case on shared faulty priors.
+- `feedback-signoff-checklist.md` — discipline of walking the wind-down checklist before any handoff; never bare `/handoff`.
+- `feedback-wind-down-ordering.md` — three composing rules: checklist first (DEFAULT), early snapshot for >30-min reconstruction risk (EXCEPTION), no infrastructure teardown before explicit stop signal.
+- `feedback-tiered-wind-down.md` — Quick (~5–10 min) vs Full (~15–30 min) wind-down tier selection by session character.
+- `feedback-wind-down-backlog-consolidation.md` — backlog scan as wind-down step before handoff write; mark resolved with PR/SHA evidence, cross-link siblings, file new debt.
 
 ## Bundled agents (`agents/`)
 
@@ -107,7 +111,7 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 
 Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}` for cross-edge invocation per Slice 3 / Decision N convention; v0.1.0 ships these as `.md` bodies (Phase 1 introduces standalone CLI verbs).
 
-- `commands/session/handoff.md` — `/handoff` end-of-session handoff writer with Next Steps + decisions trail.
+- `commands/session/handoff.md` — `/handoff` end-of-session handoff writer with Wind-down rules preflight (tier selection + backlog scan + ordering + teardown gate) before capturing Next Steps + decisions trail.
 - `commands/session/handoff-resume.md` — `/handoff-resume` resume-from-handoff with Step 1a concurrent-pair detection + parallel-mode context-load.
 - `commands/session/channel.md` — `/channel` cross-session channel verbs (create, join, send, read, peers).
 - `commands/session/presence.md` — `/presence` active-sessions registry verbs.
