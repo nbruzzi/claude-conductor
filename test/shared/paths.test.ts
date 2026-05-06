@@ -22,6 +22,9 @@ const ENV_KEYS = [
   "CLAUDE_CONDUCTOR_TODOS_DIR",
   "CLAUDE_CONDUCTOR_HANDOFFS_DIR",
   "CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR",
+  // Legacy alias for active-sessions (cross-edge migration support — see
+  // ComponentSpec doc-comment in paths.ts).
+  "CLAUDE_ACTIVE_SESSIONS_DIR",
   "CLAUDE_CONDUCTOR_DECISION_LOGS_DIR",
   "CLAUDE_CONDUCTOR_AUDITS_DIR",
   "CLAUDE_CONDUCTOR_MEMORIES_DIR",
@@ -170,5 +173,40 @@ describe("paths — coverage smoke tests for remaining resolvers", () => {
 
   test("auditsDir resolves with conductor-namespaced suffix 'conductor/audits' (plugin-internal)", () => {
     expect(auditsDir()).toBe(join(FALLBACK_ROOT, "conductor", "audits"));
+  });
+});
+
+describe("paths — legacy env-var alias (active-sessions cross-edge migration)", () => {
+  let snapshot: Map<string, string | undefined>;
+
+  beforeEach(() => {
+    snapshot = snapshotEnv();
+    clearEnv();
+  });
+
+  afterEach(() => {
+    restoreEnv(snapshot);
+  });
+
+  test("activeSessionsDir uses CLAUDE_ACTIVE_SESSIONS_DIR when current env is unset (layer 1.5 fallback)", () => {
+    process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] = "/legacy/active-sessions";
+    expect(activeSessionsDir()).toBe("/legacy/active-sessions");
+  });
+
+  test("activeSessionsDir prefers current CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR over legacy alias", () => {
+    process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = "/current/path";
+    process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] = "/legacy/should-be-ignored";
+    expect(activeSessionsDir()).toBe("/current/path");
+  });
+
+  test("activeSessionsDir prefers legacy alias over CLAUDE_CONDUCTOR_ROOT (layer 1.5 beats layer 2)", () => {
+    process.env["CLAUDE_ACTIVE_SESSIONS_DIR"] = "/legacy/wins";
+    process.env["CLAUDE_CONDUCTOR_ROOT"] = "/root/should-be-ignored";
+    expect(activeSessionsDir()).toBe("/legacy/wins");
+  });
+
+  test("legacy alias only applies to active-sessions — channelsDir does NOT honor a CLAUDE_CHANNELS_DIR alias", () => {
+    process.env["CLAUDE_CHANNELS_DIR"] = "/should-be-ignored";
+    expect(channelsDir()).toBe(join(FALLBACK_ROOT, "channels"));
   });
 });
