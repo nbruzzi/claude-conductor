@@ -18,6 +18,12 @@ type ComponentName =
 type ComponentSpec = {
   readonly defaultSuffix: string;
   readonly envVar: string;
+  // Optional legacy env-var name accepted as a deprecated alias for envVar.
+  // Used during cross-edge migrations where consumers (e.g., dotfiles forks
+  // not yet shimmed) still set the legacy name. Resolution precedence:
+  // envVar > legacyEnvVar > root > fallback. Only declared on components
+  // with active legacy consumers; absent on plugin-native components.
+  readonly legacyEnvVar?: string;
 };
 
 const COMPONENT_SPECS: { readonly [K in ComponentName]: ComponentSpec } = {
@@ -37,6 +43,13 @@ const COMPONENT_SPECS: { readonly [K in ComponentName]: ComponentSpec } = {
   "active-sessions": {
     defaultSuffix: "active-sessions",
     envVar: "CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR",
+    // Legacy alias — dotfiles fork at src/active-sessions/index.ts (and its
+    // 5 test files) reads CLAUDE_ACTIVE_SESSIONS_DIR. Accepted here as a
+    // deprecated fallback so post-shim test isolation continues to work
+    // before the dotfiles-side env-var fan-out. Per fork-inventory at
+    // ~/.claude/notes/dotfiles-fork-inventory-2026-05-06.md (TS-1 fold from
+    // Item #1 audit) + memory feedback-cross-edge-via-shim-env-var-trap.md.
+    legacyEnvVar: "CLAUDE_ACTIVE_SESSIONS_DIR",
   },
   // Plugin-internal artifacts (no dotfiles canonical) — keep conductor namespace
   // in the layer-3 fallback to avoid colliding with shared ~/.claude/ state.
@@ -72,6 +85,14 @@ function resolveComponent(component: ComponentName): string {
   const componentEnv = process.env[spec.envVar];
   if (componentEnv && componentEnv.length > 0) {
     return componentEnv;
+  }
+  // Legacy env-var fallback — only fires when component declares a legacyEnvVar
+  // AND the current envVar is unset/empty. Documented in ComponentSpec doc-comment.
+  if (spec.legacyEnvVar !== undefined) {
+    const legacyEnv = process.env[spec.legacyEnvVar];
+    if (legacyEnv && legacyEnv.length > 0) {
+      return legacyEnv;
+    }
   }
   const rootEnv = process.env[ROOT_ENV_VAR];
   if (rootEnv && rootEnv.length > 0) {
