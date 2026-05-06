@@ -19,9 +19,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
+import { dirname } from "node:path";
 import { makeTmpHome, type TmpHome } from "../../test-utils/index.ts";
 import {
   appendPresenceFailure,
@@ -272,5 +276,89 @@ describe("presence-failure-log", () => {
     const ev = sampleEvent({ artifactPath: null });
     const redacted = INTERNAL.redactEvent(ev);
     expect(redacted.artifactPath).toBeNull();
+  });
+
+  describe("size-based rotation", () => {
+    it("rotates the log to .1 when size is at or over PRESENCE_LOG_MAX_BYTES", () => {
+      const path = failureLogPath();
+      // Pre-fill the log to exactly PRESENCE_LOG_MAX_BYTES (1 MiB) — the
+      // rotation gate fires when size >= max.
+      const filler = "x".repeat(INTERNAL.PRESENCE_LOG_MAX_BYTES);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, filler);
+      expect(statSync(path).size).toBe(INTERNAL.PRESENCE_LOG_MAX_BYTES);
+
+      // Append an event — should rename old log to .1 + write fresh.
+      appendPresenceFailure(sampleEvent({ detail: "post-rotation entry" }));
+
+      expect(existsSync(`${path}.1`)).toBe(true);
+      expect(statSync(`${path}.1`).size).toBe(INTERNAL.PRESENCE_LOG_MAX_BYTES);
+      const newRows = readPresenceFailures();
+      expect(newRows).toHaveLength(1);
+      expect(newRows[0]?.detail).toBe("post-rotation entry");
+    });
+
+    it("does not rotate when size is below PRESENCE_LOG_MAX_BYTES", () => {
+      const path = failureLogPath();
+      // Pre-fill to one byte under the threshold.
+      const filler = "x".repeat(INTERNAL.PRESENCE_LOG_MAX_BYTES - 1);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, filler);
+
+      appendPresenceFailure(sampleEvent({ detail: "no-rotation entry" }));
+
+      expect(existsSync(`${path}.1`)).toBe(false);
+      // Original content + appended event should both be in the log.
+      const raw = readFileSync(path, "utf-8");
+      expect(raw.length).toBeGreaterThan(INTERNAL.PRESENCE_LOG_MAX_BYTES);
+      expect(raw).toContain("no-rotation entry");
+    });
+
+    it("clobbers an existing .1 archive on subsequent rotation (single-slot)", () => {
+      const path = failureLogPath();
+      mkdirSync(dirname(path), { recursive: true });
+      // Plant a stale .1 from an earlier rotation.
+      writeFileSync(`${path}.1`, "stale archive content");
+      expect(statSync(`${path}.1`).size).toBe(21);
+
+      // Pre-fill main log to threshold to force rotation.
+      const filler = "x".repeat(INTERNAL.PRESENCE_LOG_MAX_BYTES);
+      writeFileSync(path, filler);
+
+      appendPresenceFailure(sampleEvent({ detail: "rotation clobber test" }));
+
+      // .1 should now be the just-rotated 1 MiB content, NOT the stale 21-byte one.
+      expect(statSync(`${path}.1`).size).toBe(INTERNAL.PRESENCE_LOG_MAX_BYTES);
+      expect(readFileSync(`${path}.1`, "utf-8")).toBe(filler);
+    });
+
+    it("creates parent directories on first append when log directory does not exist", () => {
+      const path = failureLogPath();
+      // Remove the logs dir to force the mkdir branch (tmpHome may pre-create
+      // some structure under .claude/).
+      rmSync(dirname(path), { recursive: true, force: true });
+      expect(existsSync(dirname(path))).toBe(false);
+
+      appendPresenceFailure(sampleEvent({ detail: "first-append" }));
+
+      expect(existsSync(dirname(path))).toBe(true);
+      const rows = readPresenceFailures();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.detail).toBe("first-append");
+    });
+
+    it("appends a single event when log is fresh (rotation gate's ENOENT branch)", () => {
+      // No pre-existing log file. statSync inside rotation throws ENOENT,
+      // which should be silently caught — append still runs cleanly.
+      const path = failureLogPath();
+      expect(existsSync(path)).toBe(false);
+
+      appendPresenceFailure(sampleEvent({ detail: "fresh-log-append" }));
+
+      expect(existsSync(`${path}.1`)).toBe(false);
+      const rows = readPresenceFailures();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.detail).toBe("fresh-log-append");
+    });
   });
 });

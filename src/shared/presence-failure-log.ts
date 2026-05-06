@@ -30,13 +30,31 @@
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  statSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const MAX_LINE_BYTES = 4096;
 const TRUNCATION_MARKER = "...[truncated]";
+
+/**
+ * Single-slot rotation threshold for the shared presence-failure log. Mirrors
+ * the `SYNC_LOG_MAX_BYTES` (1 MiB) convention from
+ * `~/claude-conductor/src/hooks/checks/sync-common.ts:21-69`. The current log
+ * baseline is ~28 KB/day across 5 known event kinds; Phase 1 telemetry from
+ * the worktree-provisioner race-fix slice will add ~5-15 events per
+ * SessionStart, plus high-frequency reap events from `tryReapHeartbeat`. At
+ * 1 MiB the file can hold months of routine activity AND survives a
+ * multi-week failure-loop without growing unbounded. SessionStart's
+ * `readPresenceFailures` reads the whole file — keeping it bounded preserves
+ * sub-100ms briefing reads. Operators who want deeper history should ship
+ * the `.1` archive to durable storage between sessions.
+ */
+const PRESENCE_LOG_MAX_BYTES = 1_048_576;
 
 export type PresenceFailureSource =
   | "session-collision-gate"
@@ -145,11 +163,48 @@ function redactEvent(event: PresenceFailureEvent): PresenceFailureEvent {
  * should skip the log and use their own channel — this function is the
  * one authoritative write path for the shared log and intentionally
  * does the redaction itself rather than trusting each caller.
+ *
+ * Single-slot rotation: before appending, stat the current log; if it's at
+ * or over `PRESENCE_LOG_MAX_BYTES`, rename to `<path>.1` (overwriting any
+ * prior `.1`) and let the append create a fresh file. This keeps the file
+ * bounded at roughly `maxBytes + one entry` peak. Rotation errors other
+ * than ENOENT (log doesn't exist yet) are non-fatal: stderr'd and the
+ * append still runs. The append itself remains best-effort under the outer
+ * catch — log-write failures must never mask the original failure path.
+ *
+ * Mirrors `appendLogWithRotation` in `sync-common.ts:47-74`. Implemented
+ * inline rather than imported to avoid a `shared/` → `hooks/checks/` layer
+ * inversion. When a third consumer of the rotation pattern appears, lift
+ * the helper to `shared/log-rotation.ts` per
+ * `feedback-partial-v2-anticipation-primitives.md`.
  */
 export function appendPresenceFailure(event: PresenceFailureEvent): void {
   const line = serializeWithinCap(redactEvent(event));
+  const path = failureLogPath();
   try {
-    appendFileSync(failureLogPath(), line, "utf-8");
+    mkdirSync(dirname(path), { recursive: true });
+    try {
+      const st = statSync(path);
+      if (st.size >= PRESENCE_LOG_MAX_BYTES) {
+        renameSync(path, `${path}.1`);
+      }
+    } catch (err: unknown) {
+      const code =
+        err instanceof Error && "code" in err
+          ? String((err as { code: unknown }).code ?? "")
+          : "";
+      // ENOENT = log doesn't exist yet, first append will create it. All good.
+      // Other errors (EACCES on stat, rename target on a different device,
+      // etc.) shouldn't block the append — log through to stderr and keep
+      // going. Mirrors the sync-common.ts non-fatal-rotation contract.
+      if (code !== "ENOENT") {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[presence-failure-log] log rotation check failed (${path}): ${msg}`,
+        );
+      }
+    }
+    appendFileSync(path, line, "utf-8");
   } catch {
     /* nothing more we can do — caller is already on a failure path */
   }
@@ -284,6 +339,7 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
 
 export const INTERNAL = {
   MAX_LINE_BYTES,
+  PRESENCE_LOG_MAX_BYTES,
   TRUNCATION_MARKER,
   serializeWithinCap,
   parseEvent,
