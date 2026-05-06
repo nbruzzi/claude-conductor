@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 nbruzzi
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, mock } from "bun:test";
+import * as fs from "node:fs";
 import {
   existsSync,
   mkdirSync,
@@ -10,11 +11,11 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
-import { tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  LockIOError,
   LockTimeoutError,
   withLock,
   withLockAsync,
@@ -315,6 +316,347 @@ describe("withLock", () => {
         }),
       ).toThrow(LockTimeoutError);
     } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+// RE-5 fold backported from dotfiles substrate 2026-05-06 — see
+// `feedback-substrate-fix-pattern-must-self-mirror.md` for the recursive lens
+// applied during the original substrate work + this backport. Discriminates
+// non-EEXIST errno on mkdirSync from EEXIST contention path. Pre-fix: every
+// errno fell through into the contention/stale logic and treated as
+// contention, so operators saw misleading LockTimeoutErrors after retry
+// exhaustion — these tests pin the post-fix behavior.
+//
+// Mock cleanup invariant: `mock.restore()` does NOT undo `mock.module` in
+// Bun. Each test that mocks must capture `origFs = { ...fs }` before mocking
+// and re-mock with `origFs` in `try/finally` to unstub every fs export.
+// Skipping this leaks the stub into subsequent tests in source order.
+
+describe("LockIOError discrimination", () => {
+  it("EACCES on discriminating mkdirSync throws LockIOError, NOT LockTimeoutError, immediately (no retry)", () => {
+    const base = makeTmpBase("lock-eacces-");
+    const parentDir = join(base, "parent");
+    const lockDir = join(parentDir, "lock");
+    mkdirSync(parentDir, { recursive: true });
+    let innerCalls = 0;
+    const origFs = { ...fs };
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        mkdirSync: (
+          path: fs.PathLike,
+          opts?: fs.MakeDirectoryOptions | fs.Mode,
+        ) => {
+          if (String(path) === lockDir) {
+            innerCalls++;
+            const err = new Error("permission denied") as NodeJS.ErrnoException;
+            err.code = "EACCES";
+            throw err;
+          }
+          return origFs.mkdirSync(path, opts as never);
+        },
+      }));
+      let caught: unknown = null;
+      try {
+        withLock(() => {}, {
+          lockDir,
+          retries: 5,
+          backoffMs: 1,
+          ownerTag: "eacces",
+        });
+      } catch (err: unknown) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(LockIOError);
+      expect(caught instanceof LockTimeoutError).toBe(false);
+      expect((caught as LockIOError).code).toBe("EACCES");
+      // Immediate-throw: no retry loop, exactly 1 call to discriminating mkdirSync
+      expect(innerCalls).toBe(1);
+    } finally {
+      mock.module("node:fs", () => origFs);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("ENOSPC on discriminating mkdirSync throws LockIOError with err.code === 'ENOSPC'", () => {
+    const base = makeTmpBase("lock-enospc-");
+    const lockDir = join(base, "lock");
+    const origFs = { ...fs };
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        mkdirSync: (
+          path: fs.PathLike,
+          opts?: fs.MakeDirectoryOptions | fs.Mode,
+        ) => {
+          if (String(path) === lockDir) {
+            const err = new Error(
+              "no space left on device",
+            ) as NodeJS.ErrnoException;
+            err.code = "ENOSPC";
+            throw err;
+          }
+          return origFs.mkdirSync(path, opts as never);
+        },
+      }));
+      let caught: unknown = null;
+      try {
+        withLock(() => {}, {
+          lockDir,
+          retries: 5,
+          backoffMs: 1,
+          ownerTag: "enospc",
+        });
+      } catch (err: unknown) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(LockIOError);
+      expect(caught instanceof LockTimeoutError).toBe(false);
+      expect((caught as LockIOError).code).toBe("ENOSPC");
+    } finally {
+      mock.module("node:fs", () => origFs);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("EEXIST + stale owner reaps and acquires successfully (regression — EEXIST stays in contention path)", () => {
+    const base = makeTmpBase("lock-eexist-stale-");
+    const lockDir = join(base, "lock");
+    try {
+      // Pre-create lockDir with a stale owner (ts in the deep past).
+      mkdirSync(lockDir, { recursive: true });
+      writeFileSync(
+        join(lockDir, "owner"),
+        JSON.stringify({
+          pid: 999_999,
+          host: hostname(),
+          ts: Date.now() - 120_000, // older than default 60s maxAge
+          tag: "stale",
+        }),
+      );
+      // First attempt sees EEXIST → reaps → second attempt acquires.
+      const result = withLock(() => "ok", {
+        lockDir,
+        retries: 3,
+        backoffMs: 1,
+        ownerTag: "fresh",
+      });
+      expect(result).toBe("ok");
+      expect(existsSync(lockDir)).toBe(false); // released
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("EEXIST + non-stale live-pid owner exhausts retries and throws LockTimeoutError (regression)", () => {
+    const base = makeTmpBase("lock-eexist-live-");
+    const lockDir = join(base, "lock");
+    try {
+      mkdirSync(lockDir, { recursive: true });
+      writeFileSync(
+        join(lockDir, "owner"),
+        JSON.stringify({
+          pid: process.pid, // live process, not stale-reapable
+          host: hostname(),
+          ts: Date.now(),
+          tag: "live",
+        }),
+      );
+      let caught: unknown = null;
+      try {
+        withLock(() => {}, {
+          lockDir,
+          retries: 2,
+          backoffMs: 1,
+          ownerTag: "blocked",
+        });
+      } catch (err: unknown) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(LockTimeoutError);
+      expect(caught instanceof LockIOError).toBe(false);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("ENOENT on parent dir is healed by parent-ensure — acquire succeeds without throwing", () => {
+    // The parent dir is missing on first run (fresh-install / test-isolated
+    // tmpdir / log-dir-cleaned-externally). `parent-ensure`
+    // mkdirSync(dirname, { recursive: true }) creates it; lock proceeds.
+    const base = makeTmpBase("lock-enoent-parent-");
+    const missingParent = join(base, "does-not-yet-exist", "either");
+    const lockDir = join(missingParent, "lock");
+    try {
+      expect(existsSync(missingParent)).toBe(false);
+      const result = withLock(() => "ok", {
+        lockDir,
+        retries: 1,
+        backoffMs: 1,
+        ownerTag: "fresh",
+      });
+      expect(result).toBe("ok");
+      expect(existsSync(missingParent)).toBe(true); // parent-ensure created it
+      expect(existsSync(lockDir)).toBe(false); // released after fn
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("call-counter on discriminating mkdirSync — mock fires ONLY on inner call, parent-ensure passes through", () => {
+    // Assert immediate-throw on the discriminating mkdirSync specifically.
+    // Mock targets ONLY the inner mkdirSync call (path === lockDir);
+    // parent-ensure call (path === dirname(lockDir)) passes through to real
+    // fs so we can verify the ratio "1 parent-ensure call : 1 discriminating
+    // call : 0 retries".
+    const base = makeTmpBase("lock-counter-inner-");
+    const parent = join(base, "parent");
+    const lockDir = join(parent, "lock");
+    let parentCalls = 0;
+    let innerCalls = 0;
+    const origFs = { ...fs };
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        mkdirSync: (
+          path: fs.PathLike,
+          opts?: fs.MakeDirectoryOptions | fs.Mode,
+        ) => {
+          const p = String(path);
+          if (p === parent) {
+            parentCalls++;
+            return origFs.mkdirSync(path, opts as never);
+          }
+          if (p === lockDir) {
+            innerCalls++;
+            const err = new Error("permission denied") as NodeJS.ErrnoException;
+            err.code = "EACCES";
+            throw err;
+          }
+          return origFs.mkdirSync(path, opts as never);
+        },
+      }));
+      try {
+        withLock(() => {}, {
+          lockDir,
+          retries: 10,
+          backoffMs: 1,
+          ownerTag: "counter-inner",
+        });
+      } catch {
+        /* expected LockIOError */
+      }
+      expect(parentCalls).toBe(1); // parent-ensure ran once
+      expect(innerCalls).toBe(1); // immediate-throw, no retry
+    } finally {
+      mock.module("node:fs", () => origFs);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("call-counter on parent-ensure mkdirSync — mock fires ONLY on outer call, inner never reached", () => {
+    // Assert immediate-throw on the parent-ensure mkdirSync. Mock targets
+    // ONLY the outer call; inner mkdirSync should never run because
+    // parent-ensure throws first.
+    const base = makeTmpBase("lock-counter-parent-");
+    const parent = join(base, "parent");
+    const lockDir = join(parent, "lock");
+    let parentCalls = 0;
+    let innerCalls = 0;
+    const origFs = { ...fs };
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        mkdirSync: (
+          path: fs.PathLike,
+          opts?: fs.MakeDirectoryOptions | fs.Mode,
+        ) => {
+          const p = String(path);
+          if (p === parent) {
+            parentCalls++;
+            const err = new Error("permission denied") as NodeJS.ErrnoException;
+            err.code = "EACCES";
+            throw err;
+          }
+          if (p === lockDir) {
+            innerCalls++;
+            return origFs.mkdirSync(path, opts as never);
+          }
+          return origFs.mkdirSync(path, opts as never);
+        },
+      }));
+      let caught: unknown = null;
+      try {
+        withLock(() => {}, {
+          lockDir,
+          retries: 10,
+          backoffMs: 1,
+          ownerTag: "counter-parent",
+        });
+      } catch (err: unknown) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(LockIOError);
+      expect((caught as LockIOError).code).toBe("EACCES");
+      expect(parentCalls).toBe(1); // parent-ensure ran exactly once
+      expect(innerCalls).toBe(0); // inner mkdirSync never reached
+    } finally {
+      mock.module("node:fs", () => origFs);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("kill-switch (filesystem sentinel) downgrades non-EEXIST errors to contended, no LockIOError thrown", () => {
+    // Kill-switch claim ("effective in seconds") must be tested. Mock
+    // `existsSync` to selectively return true for the kill-switch suffix;
+    // rest of fs passes through. Then attempt acquire on a path that would
+    // normally throw EACCES on the discriminating mkdirSync. Expected:
+    // returns LockTimeoutError after retries (pre-RE-5-fix behavior),
+    // NOT LockIOError.
+    const base = makeTmpBase("lock-killswitch-");
+    const lockDir = join(base, "lock");
+    const origFs = { ...fs };
+    const KILL_SUFFIX = `${join(homedir(), ".claude")}/.lock-io-error-downgrade`;
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        existsSync: (p: fs.PathLike) => {
+          if (String(p) === KILL_SUFFIX) return true;
+          return origFs.existsSync(p);
+        },
+        mkdirSync: (
+          path: fs.PathLike,
+          opts?: fs.MakeDirectoryOptions | fs.Mode,
+        ) => {
+          // This SHOULD never be called for the lockDir because kill-switch
+          // returns contended at the TOP of tryAcquireOnce, before any mkdir.
+          if (String(path) === lockDir) {
+            const err = new Error("permission denied") as NodeJS.ErrnoException;
+            err.code = "EACCES";
+            throw err;
+          }
+          return origFs.mkdirSync(path, opts as never);
+        },
+      }));
+      let caught: unknown = null;
+      try {
+        withLock(() => {}, {
+          lockDir,
+          retries: 2,
+          backoffMs: 1,
+          ownerTag: "kill-switch",
+        });
+      } catch (err: unknown) {
+        caught = err;
+      }
+      // Kill-switch active → tryAcquireOnce returns contended (no mkdir
+      // called) → retries exhaust → LockTimeoutError. NOT LockIOError.
+      expect(caught).toBeInstanceOf(LockTimeoutError);
+      expect(caught instanceof LockIOError).toBe(false);
+    } finally {
+      mock.module("node:fs", () => origFs);
       rmSync(base, { recursive: true, force: true });
     }
   });

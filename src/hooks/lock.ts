@@ -18,6 +18,23 @@
  * silently ran the protected function when acquire failed (bypassing mutual
  * exclusion). Fail-closed is required for the dotfiles commit path; fact-force
  * callers choose to catch the error and fail-soft.
+ *
+ * Errno discrimination (RE-5 fold, backported from dotfiles 2026-05-06 — see
+ * `feedback-substrate-fix-pattern-must-self-mirror.md` for the recursive lens
+ * that caught the homedir-cache trap during the original substrate work):
+ * - mkdirSync EEXIST → contention/stale path (existing behavior — retry)
+ * - mkdirSync non-EEXIST (EACCES, ENOSPC, EROFS, EMFILE, ...) → throw
+ *   LockIOError immediately so operators see the actual errno instead of
+ *   a misleading LockTimeoutError after retries
+ * - Parent-ensure: `mkdirSync(dirname(lockDir), { recursive: true })` runs
+ *   BEFORE the discriminating mkdirSync to eliminate fresh-install /
+ *   test-isolated tmpdir / log-dir-cleaned-externally false-positive
+ *   LockIOErrors on ENOENT-on-parent
+ * - Kill switch: filesystem sentinel `~/.claude/.lock-io-error-downgrade`,
+ *   checked at TOP of tryAcquireOnce before any mkdirSync — when present,
+ *   downgrade non-EEXIST errors to `{kind: "contended", holder: null}` to
+ *   restore pre-fix behavior. Filesystem (not env var) so in-flight IDE
+ *   sessions see the toggle without process restart.
  */
 
 import {
@@ -30,8 +47,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
-import { join } from "node:path";
+import { homedir, hostname } from "node:os";
+import { dirname, join } from "node:path";
 
 export type OwnerInfo = {
   pid: number;
@@ -61,6 +78,60 @@ export class LockTimeoutError extends Error {
   }
 }
 
+/**
+ * Thrown when `mkdirSync` for the lock dir (or its parent) fails for reasons
+ * OTHER than EEXIST (lock-already-held). Discriminated from LockTimeoutError
+ * so operators see the actual errno (EACCES, ENOSPC, EROFS, ENOENT, EMFILE,
+ * ...) instead of a misleading "lock held by another process" diagnostic
+ * after retries.
+ *
+ * Wraps the original errno via native ES2022 `Error(message, { cause })`
+ * pass-through — `this.cause` is set by the superclass (no field shadow that
+ * would trigger TS2611 / TS4114 under strict + noImplicitOverride). Exposes
+ * `code` and `path` directly so consumers don't need to re-cast `cause`.
+ */
+export class LockIOError extends Error {
+  readonly lockDir: string;
+  readonly code: string | undefined;
+  readonly path: string | undefined;
+
+  constructor(lockDir: string, cause: unknown) {
+    const errno = cause as NodeJS.ErrnoException | undefined;
+    const code = errno?.code;
+    const path = errno?.path;
+    super(
+      `I/O error acquiring lock at ${lockDir} (errno: ${code ?? "unknown"})`,
+      { cause },
+    );
+    this.name = "LockIOError";
+    this.lockDir = lockDir;
+    this.code = code;
+    this.path = path;
+  }
+}
+
+/**
+ * Filesystem-sentinel kill-switch. When this file exists, `tryAcquireOnce`
+ * downgrades non-EEXIST errors to `{kind: "contended", holder: null}` —
+ * effectively restoring pre-RE-5-fix behavior. Operator workflow:
+ *   touch ~/.claude/.lock-io-error-downgrade   # immediate effect
+ *   rm    ~/.claude/.lock-io-error-downgrade   # immediate revert
+ * Filesystem (not env var) because env vars are read at process start;
+ * sentinel is read each call so in-flight Claude Code IDE sessions see
+ * the toggle without process restart.
+ *
+ * Reads `process.env["HOME"]` live so in-process tests that mutate HOME
+ * for isolation see the override (per `feedback-homedir-not-live-from-env`
+ * — `homedir()` caches HOME at process start, breaking env-mutation
+ * isolation). `homedir()` remains the fallback for the production case
+ * where HOME is set at startup and never mutated. Mirrors the substrate's
+ * `killSwitchPath()` per `feedback-substrate-fix-pattern-must-self-mirror`.
+ */
+function killSwitchPath(): string {
+  const home = process.env["HOME"] ?? homedir();
+  return join(home, ".claude", ".lock-io-error-downgrade");
+}
+
 const DEFAULT_RETRIES = 3;
 const DEFAULT_BACKOFF_MS = 10;
 const DEFAULT_MAX_AGE_MS = 60_000;
@@ -72,9 +143,32 @@ type AttemptOutcome =
   | { kind: "contended"; holder: OwnerInfo | null };
 
 function tryAcquireOnce(opts: LockOpts): AttemptOutcome {
+  // Kill-switch (RE-5 fold) — checked at TOP, before any mkdirSync, so
+  // an operator under outage pressure can immediately restore pre-RE-5-fix
+  // behavior without process restart. existsSync call cost (~µs) is
+  // negligible vs human-minutes stuck-rollback cost.
+  if (existsSync(killSwitchPath())) {
+    return { kind: "contended", holder: null };
+  }
+
   const maxAgeMs = opts.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
   const ownerTag = opts.ownerTag ?? DEFAULT_OWNER_TAG;
   const ownerFile = join(opts.lockDir, "owner");
+
+  // Parent-ensure (RE-5 fold): avoid ENOENT-on-parent failures during
+  // fresh-install / test-isolated tmpdir / log-dir-cleaned-externally
+  // scenarios. Recursive mkdir is idempotent on already-existing parents.
+  // Non-EEXIST failures here ARE structural (parent path unwritable etc.)
+  // and propagate as LockIOError — we can't acquire if we can't create
+  // the parent.
+  try {
+    mkdirSync(dirname(opts.lockDir), { recursive: true });
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "EEXIST") {
+      throw new LockIOError(opts.lockDir, err);
+    }
+  }
 
   try {
     mkdirSync(opts.lockDir);
@@ -86,13 +180,24 @@ function tryAcquireOnce(opts: LockOpts): AttemptOutcome {
     };
     writeFileSync(ownerFile, JSON.stringify(info), "utf-8");
     return { kind: "acquired" };
-  } catch {
+  } catch (err: unknown) {
+    // EEXIST is the expected "lock dir already exists" path → contention/
+    // stale logic below. Anything else is structural (EACCES, ENOSPC,
+    // EROFS, EMFILE, ...) and propagates immediately as LockIOError so
+    // operators see the actual errno instead of a misleading
+    // LockTimeoutError after retries.
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "EEXIST") {
+      throw new LockIOError(opts.lockDir, err);
+    }
     const holder = readOwner(ownerFile);
     if (isStale(opts.lockDir, holder, maxAgeMs)) {
       try {
         rmSync(opts.lockDir, { recursive: true, force: true });
       } catch {
-        // Another writer reaped concurrently; caller will retry.
+        // Another writer reaped concurrently; caller will retry. rmSync
+        // errno discrimination (EBUSY/ENOTEMPTY/EPERM benign-list +
+        // EACCES/EROFS propagate) is filed as a separate follow-up.
       }
       return { kind: "reaped-retry" };
     }
