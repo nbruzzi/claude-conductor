@@ -36,8 +36,6 @@ These exist in the source pool but do NOT bundle into the plugin. The discipline
 - `feedback-ship-checkin.md` — communication preference with the original user.
 - `feedback-response-length.md` — communication preference.
 - `feedback-minimal-output.md` — communication preference.
-- `feedback-signoff-checklist.md` — original-user wind-down ritual.
-- `feedback-wind-down-ordering.md` — same wind-down ritual.
 - `feedback-commit-trailer-attribution.md` — original-user trailer convention.
 - `feedback-always-push.md` — original-user-specific commit-push discipline (push-discipline depends on the user's substrate, not the plugin's).
 - `ceiling-standard.md` — original ceiling memory anchored on the capturing user's verbatim quote. The same discipline (autonomous ceiling, step-away trust) is covered more sharply by `feedback-self-apply-ceiling-discipline.md` (in-scope). Bundle the latter; drop the original to avoid two-memories-same-discipline drift.
@@ -51,30 +49,36 @@ A future bundling pass (post-Phase-0) reconsiders the deferred-generic ones if t
 
 ### In-scope (anonymize + bundle)
 
-These bundle into `<plugin-root>/memories/` after anonymization rewrite. Total: **18 memories** (13 original + 5 multi-instance/architectural memories restored per KS-1).
+These bundle into `<plugin-root>/memories/` after anonymization rewrite. Total: **22 memories** (13 original + 5 multi-instance/architectural memories restored per KS-1 + 4 wind-down memories restored per `decisions/phase-5.md` Decision C).
 
-| Source memory                                       | Anonymization required | Cross-references                                                                              |
-| --------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
-| `feedback-confidence-as-verification-output.md`     | YES                    | references the deployment-note miss + parent-doc                                              |
-| `feedback-encode-while-context-fresh.md`            | YES                    | references audit-skill-update incident + capturing-user verbatim quote                        |
-| `feedback-plan-mode-for-structural-changes.md`      | YES                    | references CLAUDE.md verbatim + audit-skill structural-change incident                        |
-| `feedback-self-apply-ceiling-discipline.md`         | YES (heaviest)         | references multiple original-user interactions verbatim                                       |
-| `feedback-sibling-parity-at-merge-time.md`          | YES                    | references PR #42 and the vault auto-sync arc                                                 |
-| `feedback-design-vs-autonomous-runtime.md`          | YES                    | references parallel-session work + original-user verbatim                                     |
-| `feedback-think-holistically-not-reactively.md`     | YES                    | references the parallel-session work + ecosystem-research pivot                               |
-| `feedback-no-known-gaps.md`                         | NO (already clean)     | minimal cross-refs; bundle as-is                                                              |
-| `feedback-phased-audit-remediation-arc.md`          | YES                    | references PR #42 phases verbatim                                                             |
-| `feedback-partial-v2-anticipation-primitives.md`    | YES                    | references vault/dotfiles trio specifically                                                   |
-| `multi-persona-audit-pattern.md`                    | YES                    | umbrella memory; references many specific incidents                                           |
-| `feedback-prefer-single-bash-over-compound.md`      | YES                    | references vault path + dotfiles substrate                                                    |
-| `feedback-memorialize-then-violate-anti-pattern.md` | YES                    | references the within-session violations specifically                                         |
-| `feedback-merge-commit-across-instances.md`         | YES                    | references TimesFM PR #1 + commit SHAs + `src/todos/cli.ts`                                   |
-| `feedback-validate-detector-before-behavior.md`     | YES                    | wikilink `[[Detector Validation]]` + `project-memory-system-redesign.md` + `~/.claude/` paths |
-| `feedback-self-monitoring-is-architectural.md`      | YES                    | wikilink `[[Monitoring Outside Context]]` + SESSION_LOG + dotfiles-sync hook                  |
-| `feedback-surface-merge-decisions.md`               | YES                    | references PR #29 + 2026-04-18 incident                                                       |
-| `feedback-convergent-instances.md`                  | YES                    | references `inter-window-coordination`, `HeatPrice.com`, channel ID, `auto-format.ts`         |
+| Source memory                                       | Anonymization required | Cross-references                                                                                 |
+| --------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------ |
+| `feedback-confidence-as-verification-output.md`     | YES                    | references the deployment-note miss + parent-doc                                                 |
+| `feedback-encode-while-context-fresh.md`            | YES                    | references audit-skill-update incident + capturing-user verbatim quote                           |
+| `feedback-plan-mode-for-structural-changes.md`      | YES                    | references CLAUDE.md verbatim + audit-skill structural-change incident                           |
+| `feedback-self-apply-ceiling-discipline.md`         | YES (heaviest)         | references multiple original-user interactions verbatim                                          |
+| `feedback-sibling-parity-at-merge-time.md`          | YES                    | references PR #42 and the vault auto-sync arc                                                    |
+| `feedback-design-vs-autonomous-runtime.md`          | YES                    | references parallel-session work + original-user verbatim                                        |
+| `feedback-think-holistically-not-reactively.md`     | YES                    | references the parallel-session work + ecosystem-research pivot                                  |
+| `feedback-no-known-gaps.md`                         | NO (already clean)     | minimal cross-refs; bundle as-is                                                                 |
+| `feedback-phased-audit-remediation-arc.md`          | YES                    | references PR #42 phases verbatim                                                                |
+| `feedback-partial-v2-anticipation-primitives.md`    | YES                    | references vault/dotfiles trio specifically                                                      |
+| `multi-persona-audit-pattern.md`                    | YES                    | umbrella memory; references many specific incidents                                              |
+| `feedback-prefer-single-bash-over-compound.md`      | YES                    | references vault path + dotfiles substrate                                                       |
+| `feedback-memorialize-then-violate-anti-pattern.md` | YES                    | references the within-session violations specifically                                            |
+| `feedback-merge-commit-across-instances.md`         | YES                    | references TimesFM PR #1 + commit SHAs + `src/todos/cli.ts`                                      |
+| `feedback-validate-detector-before-behavior.md`     | YES                    | wikilink `[[Detector Validation]]` + `project-memory-system-redesign.md` + `~/.claude/` paths    |
+| `feedback-self-monitoring-is-architectural.md`      | YES                    | wikilink `[[Monitoring Outside Context]]` + SESSION_LOG + dotfiles-sync hook                     |
+| `feedback-surface-merge-decisions.md`               | YES                    | references PR #29 + 2026-04-18 incident                                                          |
+| `feedback-convergent-instances.md`                  | YES                    | references `inter-window-coordination`, `HeatPrice.com`, channel ID, `auto-format.ts`            |
+| `feedback-signoff-checklist.md`                     | YES                    | references "Nick" + bare-handoff verbatim quote                                                  |
+| `feedback-wind-down-ordering.md`                    | YES                    | references rtk-ingest 2026-05-03 incident + Bravo peer name + Nick verbatim                      |
+| `feedback-tiered-wind-down.md`                      | YES (light)            | references `feedback-plan-mode-for-structural-changes.md` (already bundled) + dotfiles paths     |
+| `feedback-wind-down-backlog-consolidation.md`       | YES (light)            | references `wiki/backlog.md` + `feedback-self-sufficient-notes.md` (DROPPED — inline-summarized) |
 
 The 5 newly-restored memories all encode disciplines that are load-bearing for the plugin's marquee feature: **multi-instance coordination via Agent Teams**. The auditor's verbatim observation: _"the drop reasoning ('Nick-specific multi-instance workflow') is exactly inverted: the plugin IS a multi-instance workflow."_ Restored.
+
+The 4 wind-down memories were originally dropped at Phase 0 audit time on the rationale "original-user wind-down ritual" (project-scoped). Per `decisions/phase-5.md` Decision C, that drop decision is reversed on broader-context grounds: the discipline is demonstrably generic Claude Code workflow (tier selection, ordering, teardown gating, backlog scan all generalize); the original-user anchors are writing artifact, anonymizable without losing operational substance. Two of the four (`feedback-tiered-wind-down`, `feedback-wind-down-backlog-consolidation`) post-date the Phase 0 audit and were never triaged.
 
 ## Anonymization rules (applied uniformly)
 
