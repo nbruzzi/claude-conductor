@@ -8,6 +8,73 @@ Generate a structured handoff document that captures everything a fresh Claude s
 
 ---
 
+## Wind-down rules
+
+Three composing rules govern wind-down. Read these before any action.
+
+**Rule 1 (DEFAULT)** — the wind-down checklist runs first; the handoff is the LAST artifact. Composed sequence:
+
+1. Commit + push remaining work-output (durable, can't be lost from here)
+2. Wait for explicit stop signal from the operating user (Rule 3)
+3. Run any verification or polish steps the wind-down checklist surfaces (CI watch, follow-up fixes, recap evidence capture)
+4. Write the handoff (bookend artifact, captures complete final state)
+5. Then: infrastructure tear-down (close channels, stop Monitors, etc.) per Rule 3
+
+**Rule 2 (EXCEPTION)** — for long/high-risk sessions where reconstruction-loss > ~30 min, write an EARLY snapshot handoff before Step 0 runs, then a final handoff per Rule 1. Triggers: ≥2h substantive work; audit cycles or multi-persona reasoning; risky environment; decisions/rejected-approaches that exist only in conversation history.
+
+**Rule 3 (ALWAYS)** — do not tear down active session infrastructure (Monitors, open channels, background bash, watchers, working-tree branches not yet merged) until the operating user explicitly signals stop. Asking "what's next?" while simultaneously closing the channel is a sequencing mistake. Boundary case: if asked "what's next?" and you guess wind-down, ASK before tearing down.
+
+For deeper rationale: see `memories/feedback-wind-down-ordering.md`.
+
+---
+
+## Step 0: Determine wind-down tier (Quick vs Full)
+
+Default to FULL. Choose QUICK only when ALL of these hold:
+
+- read-only or ≤1 small edit, no PRs, no plan, no peer coordination
+- session was a quick fix or status check
+
+(Borderline = FULL; cost asymmetry favors over-recording — Quick that should have been Full loses context; Full that should have been Quick costs ~10 min.)
+
+If FULL, run Step 0.5 next. If QUICK, skip Step 0.5 and go to Step 1.
+
+**FULL tier** runs Steps 0.5 → 1–8 + memory anchor review (any session-fresh patterns / corrections / decisions worth memorializing?) + todo file write + host substrate's commit-summary write (if applicable) + Monitor + channel teardown ONLY on explicit stop signal per Rule 3.
+
+**QUICK tier** runs Steps 1, 2.5 (CI verification block only if anything was pushed), 4 (brief 3–5 line summary), 5 (SESSION_LOG append), 6 (LATEST.md symlink). Skips: backlog scan, todo file, Monitor/channel teardown, host substrate's commit-summary regen.
+
+For tier criteria detail: see `memories/feedback-tiered-wind-down.md`.
+
+---
+
+## Step 0.5: Backlog consolidation (FULL tier only)
+
+Before any handoff-document step fires, scan the project's backlog artifact (whichever tracks debt — `wiki/backlog.md`, `~/backlog.md`, GitHub Issues, etc.) for items related to today's work.
+
+**Search keywords:**
+
+- file paths from today's git diff
+- memory file names from today's `entries_touched` (telemetry)
+- PR numbers + commit SHAs
+- plan file basenames + audit doc basenames
+- slice/item identifiers from today's queue
+
+**For each match:**
+
+- **Resolved** → mark `[x]` + prefix with `RESOLVED <date> via <PR/SHA evidence>`. Existing convention: prepend a HIGH-PRIORITY UPDATE block above older content, do not delete the original (preserves evidence trail).
+- **Sibling touched** → cross-link new artifact, update prerequisite language (e.g., `~~prereq~~ CLEARED <date>`).
+- **New debt surfaced** → file new entry referencing today's audit doc / plan / PR. Cross-reference back from existing entries that should know about it.
+
+For deeper rationale: see `memories/feedback-wind-down-backlog-consolidation.md`.
+
+---
+
+## Step 0.6: Pre-Step-1 guard
+
+Step 0 must always have run; Step 0.5 must have run if tier=FULL. If either is missing, complete first.
+
+---
+
 ## Step 1: Analyze the conversation
 
 Review the full conversation and extract:
@@ -238,6 +305,8 @@ Tell the user:
 - A one-line summary of what was captured
 - Remind them: "Run `/handoff-resume` in a new session to pick up where we left off."
 
+**DO NOT tear down channel/Monitor/background tasks unless the operating user has explicitly signaled stop. See Wind-down rules Rule 3.**
+
 ---
 
 ## Constraints
@@ -247,3 +316,14 @@ Tell the user:
 - Show code only when a snippet is essential for the next session to understand context (API shape, error message, config value)
 - Never include full file contents — the next session can read them
 - Failed approaches are the most valuable section — they prevent wasted effort. Do not skip or minimize this.
+- Never run `/handoff` without first completing Step 0 (tier) + Step 0.5 (backlog if FULL).
+
+---
+
+## See also
+
+- `memories/feedback-signoff-checklist.md` — discipline rationale (never bare `/handoff`)
+- `memories/feedback-wind-down-ordering.md` — full ordering rules + 5-step composed sequence
+- `memories/feedback-tiered-wind-down.md` — tier criteria detail
+- `memories/feedback-wind-down-backlog-consolidation.md` — backlog scan procedure
+- `memories/feedback-encode-while-context-fresh.md` — already plugin-bundled; pairs with Full-tier memory anchor review
