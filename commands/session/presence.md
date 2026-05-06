@@ -207,3 +207,6 @@ asks.
 - `reset` is strictly last-resort. Running it is a reasonable response to
   persistent, logged registry contention — not to a single stale-looking
   heartbeat. Prefer `clear` when the scope is one session.
+- Do not call `/presence reset` or `/presence clear` proactively during wind-down
+  — Rule 3 (no infrastructure teardown before explicit stop signal) per
+  `commands/session/handoff.md` Wind-down rules.
