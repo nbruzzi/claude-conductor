@@ -32,22 +32,20 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 
 **Cluster 1 of INVERSIONS arc (2026-05-07):** 9 universal-coding-discipline checks (`auto-format`, `branch-enforcement`, `destructive-cmd`, `no-any`, `no-enum`, `pre-commit`, `prefer-bun`, `sensitive-files`, `test-gate`) moved to substrate (`~/.claude-dotfiles/src/hooks/checks/`); they run from substrate's bundled-registrations layer, NOT plugin's. Plugin's bundled-registrations now owns only multi-instance-coordination machinery.
 
-### `pre-tool-use` (plugin-canonical post-Cluster-3; Cluster 3 of INVERSIONS arc 2026-05-07 moved `fact-force` to substrate)
+### `pre-tool-use` (plugin-canonical post-Cluster-4; Cluster 4 of INVERSIONS arc 2026-05-07 moved `handoff-symlink-write-guard` to substrate)
 
 1. `session-collision-gate` — refuses tool dispatch when another active session conflicts.
-2. `handoff-symlink-write-guard` — blocks writes to handoff symlinks.
-3. `config-protection` — protects `~/.claude/` config from accidental overwrites.
-4. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
+2. `config-protection` — protects `~/.claude/` config from accidental overwrites.
+3. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
 
 ### `post-tool-use` (plugin-canonical post-Cluster-2; Cluster 2 of INVERSIONS arc 2026-05-07 moved `ci-verification-reminder` to substrate)
 
 (none post-Cluster-2)
 
-### `stop` (plugin-canonical post-Cluster-2; Cluster 2 of INVERSIONS arc 2026-05-07 moved `ci-verification-gate` to substrate)
+### `stop` (plugin-canonical post-Cluster-4; Cluster 4 of INVERSIONS arc 2026-05-07 moved `handoff-latest-guard` to substrate)
 
-1. `handoff-latest-guard` — verifies LATEST.md symlink integrity.
-2. `session-presence-unregister` — drops session from active-sessions registry.
-3. **(Phase 3 Slice 2):** `dotfiles-worktree-cleanup` — fires BEFORE `session-presence-unregister` per array order; removes the per-session dotfiles worktree, calls `unregisterActiveSession` (RE-3 self-heal — explicit, not relying on downstream unregister), and clears the heartbeat-body sentinel. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
+1. `session-presence-unregister` — drops session from active-sessions registry.
+2. **(Phase 3 Slice 2):** `dotfiles-worktree-cleanup` — fires BEFORE `session-presence-unregister` per array order; removes the per-session dotfiles worktree, calls `unregisterActiveSession` (RE-3 self-heal — explicit, not relying on downstream unregister), and clears the heartbeat-body sentinel. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
 
 ### `session-start` (post-Cluster-2; `ci-verification-auth-warn` moved to substrate Cluster 2)
 
@@ -169,9 +167,7 @@ Phase 2's hooks read substrate that Phase 1 established. The composition rules:
 | Name                          | Event         | Failure mode           | Purpose                                               |
 | ----------------------------- | ------------- | ---------------------- | ----------------------------------------------------- |
 | `session-collision-gate`      | pre-tool-use  | fail-loud              | Block tool dispatch under conflicting active session. |
-| `handoff-symlink-write-guard` | pre-tool-use  | fail-loud              | Refuse writes to handoff symlinks.                    |
 | `config-protection`           | pre-tool-use  | fail-loud              | Protect `~/.claude/` from accidental overwrites.      |
-| `handoff-latest-guard`        | stop          | fail-loud              | Verify LATEST.md symlink integrity.                   |
 | `session-presence-unregister` | stop          | fail-open + breadcrumb | Drop session from active-sessions registry.           |
 | `channel-gc`                  | session-start | fail-open silent       | Best-effort channel-archive gc.                       |
 | `active-channels-load`        | session-start | fail-open + breadcrumb | Surface live channels on SessionStart.                |

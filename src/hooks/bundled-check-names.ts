@@ -18,7 +18,7 @@
  * config-protection).
  *
  * Two derived shapes:
- * - `BundledCheckName` — closed string-literal union of all 15 names.
+ * - `BundledCheckName` — closed string-literal union of all 13 names.
  * - `BUNDLED_CHECK_NAMES` — flat readonly array (use `Object.values`-flat
  *   over `BUNDLED_CHECKS_BY_EVENT` so the array stays in sync with the map
  *   automatically).
@@ -26,7 +26,7 @@
  * Anti-drift discipline: `test/hooks/bundled-registrations.test.ts` builds a
  * fresh `RegistryBuilder<BundledCheckName>`, calls `registerBundled`, seals,
  * and asserts (event, name) tuple-equality + duplicate-detection +
- * length-pinned (=15) + bidirectional set-equality between this map and the
+ * length-pinned (=13) + bidirectional set-equality between this map and the
  * sealed-registry contents. A typo'd registration name fails at compile time
  * via the generic narrowing in `RegistryBuilder<BundledCheckName>` — no
  * runtime check needed for that class. The meta-test catches event-bucket
@@ -49,16 +49,11 @@ import type { HookEvent } from "./types.ts";
 export const BUNDLED_CHECKS_BY_EVENT = {
   "pre-tool-use": [
     "session-collision-gate",
-    "handoff-symlink-write-guard",
     "config-protection",
     "task-coordinator",
   ],
   "post-tool-use": [],
-  stop: [
-    "handoff-latest-guard",
-    "session-presence-unregister",
-    "dotfiles-worktree-cleanup",
-  ],
+  stop: ["session-presence-unregister", "dotfiles-worktree-cleanup"],
   "session-start": [
     "channel-gc",
     "channels-gc-reaper",

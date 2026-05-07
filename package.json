@@ -145,16 +145,6 @@
       "import": "./src/hooks/checks/config-protection-store.ts",
       "default": "./src/hooks/checks/config-protection-store.ts"
     },
-    "./hooks/checks/handoff-latest-guard": {
-      "types": "./src/hooks/checks/handoff-latest-guard.ts",
-      "import": "./src/hooks/checks/handoff-latest-guard.ts",
-      "default": "./src/hooks/checks/handoff-latest-guard.ts"
-    },
-    "./hooks/checks/handoff-symlink-write-guard": {
-      "types": "./src/hooks/checks/handoff-symlink-write-guard.ts",
-      "import": "./src/hooks/checks/handoff-symlink-write-guard.ts",
-      "default": "./src/hooks/checks/handoff-symlink-write-guard.ts"
-    },
     "./hooks/checks/identity-injector": {
       "types": "./src/hooks/checks/identity-injector.ts",
       "import": "./src/hooks/checks/identity-injector.ts",
