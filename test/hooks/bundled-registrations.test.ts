@@ -60,10 +60,15 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // bundled hook checks (ci-verification-pre-push-arm on pre-tool-use,
 // ci-verification-reminder on post-tool-use, ci-verification-gate on stop,
 // ci-verification-auth-warn on session-start). Plan ~/.claude/plans/typed-sleeping-snowglobe.md.
-const EXPECTED_COUNT = 29;
+//
+// Cluster 1 of INVERSIONS arc (2026-05-07) — 9 universal-coding-discipline
+// checks moved plugin → substrate (auto-format, branch-enforcement,
+// destructive-cmd, no-any, no-enum, pre-commit, prefer-bun, sensitive-files,
+// test-gate); count drops 29 → 20. Plan ~/.claude/plans/cluster-1-universal-discipline.md.
+const EXPECTED_COUNT = 20;
 
 describe("bundled-registrations meta-test", () => {
-  it("BUNDLED_CHECK_NAMES has exactly 25 entries", () => {
+  it("BUNDLED_CHECK_NAMES has exactly EXPECTED_COUNT entries", () => {
     expect(BUNDLED_CHECK_NAMES.length).toBe(EXPECTED_COUNT);
   });
 

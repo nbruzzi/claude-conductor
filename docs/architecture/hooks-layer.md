@@ -30,28 +30,24 @@ Hooks fire in registry-determined order, NOT lexically. The registry is `src/hoo
 
 Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 
-### `pre-tool-use`
+**Cluster 1 of INVERSIONS arc (2026-05-07):** 9 universal-coding-discipline checks (`auto-format`, `branch-enforcement`, `destructive-cmd`, `no-any`, `no-enum`, `pre-commit`, `prefer-bun`, `sensitive-files`, `test-gate`) moved to substrate (`~/.claude-dotfiles/src/hooks/checks/`); they run from substrate's bundled-registrations layer, NOT plugin's. Plugin's bundled-registrations now owns only multi-instance-coordination machinery.
+
+### `pre-tool-use` (plugin-canonical post-Cluster-1)
 
 1. `session-collision-gate` — refuses tool dispatch when another active session conflicts.
 2. `handoff-symlink-write-guard` — blocks writes to handoff symlinks.
 3. `fact-force` — enforces fact-force scope.
-4. `branch-enforcement` — refuses commits on protected branches without scope.
-5. `destructive-cmd` — gates `rm -rf`, `force push`, etc. behind explicit user approval.
-6. `prefer-bun` — nudges away from `npm`/`yarn` toward `bun`.
-7. `pre-commit` — runs the pre-commit gate (typecheck + format + lint + tests).
-8. `config-protection` — protects `~/.claude/` config from accidental overwrites.
-9. `sensitive-files` — refuses writes to sensitive paths (.env, credentials).
-10. **(Phase 2 Slice 6, PENDING):** `task-coordinator` — gates Task tool dispatch on channel role.
+4. `config-protection` — protects `~/.claude/` config from accidental overwrites.
+5. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
+6. `ci-verification-pre-push-arm` — TIER 4 sentinel for `git push` ground truth.
 
-### `post-tool-use`
+### `post-tool-use` (plugin-canonical post-Cluster-1)
 
-1. `auto-format` — runs prettier on modified files.
-2. `no-any` — refuses `any` in TypeScript.
-3. `no-enum` — refuses `enum` in TypeScript (use literal-union types).
+1. `ci-verification-reminder` — emit reminder after `git push`.
 
-### `stop`
+### `stop` (plugin-canonical post-Cluster-1)
 
-1. `test-gate` — refuses end-of-session if tests fail (when test-gate-on enabled).
+1. `ci-verification-gate` — TIER 2 block on shipped/merged claims without CI evidence.
 2. `handoff-latest-guard` — verifies LATEST.md symlink integrity.
 3. `session-presence-unregister` — drops session from active-sessions registry.
 4. **(Phase 3 Slice 2):** `dotfiles-worktree-cleanup` — fires BEFORE `session-presence-unregister` per array order; removes the per-session dotfiles worktree, calls `unregisterActiveSession` (RE-3 self-heal — explicit, not relying on downstream unregister), and clears the heartbeat-body sentinel. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
@@ -178,16 +174,7 @@ Phase 2's hooks read substrate that Phase 1 established. The composition rules:
 | `session-collision-gate`      | pre-tool-use  | fail-loud              | Block tool dispatch under conflicting active session. |
 | `handoff-symlink-write-guard` | pre-tool-use  | fail-loud              | Refuse writes to handoff symlinks.                    |
 | `fact-force`                  | pre-tool-use  | fail-loud              | Enforce fact-force scope.                             |
-| `branch-enforcement`          | pre-tool-use  | fail-loud              | Refuse protected-branch commits without scope.        |
-| `destructive-cmd`             | pre-tool-use  | fail-loud              | Gate destructive ops behind explicit approval.        |
-| `prefer-bun`                  | pre-tool-use  | fail-open + breadcrumb | Nudge npm→bun.                                        |
-| `pre-commit`                  | pre-tool-use  | fail-loud              | Run pre-commit gate (typecheck/format/lint/tests).    |
 | `config-protection`           | pre-tool-use  | fail-loud              | Protect `~/.claude/` from accidental overwrites.      |
-| `sensitive-files`             | pre-tool-use  | fail-loud              | Refuse writes to .env / credentials.                  |
-| `auto-format`                 | post-tool-use | fail-open silent       | Run prettier on modified files.                       |
-| `no-any`                      | post-tool-use | fail-open + breadcrumb | Refuse `any` in TS.                                   |
-| `no-enum`                     | post-tool-use | fail-open + breadcrumb | Refuse `enum` in TS.                                  |
-| `test-gate`                   | stop          | fail-loud              | Refuse end-of-session if tests fail.                  |
 | `handoff-latest-guard`        | stop          | fail-loud              | Verify LATEST.md symlink integrity.                   |
 | `session-presence-unregister` | stop          | fail-open + breadcrumb | Drop session from active-sessions registry.           |
 | `channel-gc`                  | session-start | fail-open silent       | Best-effort channel-archive gc.                       |

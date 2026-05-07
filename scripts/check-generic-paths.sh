@@ -92,16 +92,16 @@ P3_FILE_ALLOWLIST=(
   "src/shared/presence-failure-log.ts"
   "src/active-sessions/index.ts"
   "src/hooks/timing.ts"
-  "src/hooks/checks/branch-enforcement.ts"
+  # Cluster 1 of INVERSIONS arc (2026-05-07) — branch-enforcement.ts, sensitive-files.ts,
+  # test-gate.ts moved to substrate (`~/.claude-dotfiles/src/hooks/checks/`) and
+  # are no longer in plugin source; allowlist entries removed.
   "src/hooks/checks/config-protection-store.ts"
   "src/hooks/checks/config-protection.ts"
   "src/hooks/checks/fact-force-scope-store.ts"
   "src/hooks/checks/fact-force.ts"
   "src/hooks/checks/handoff-latest-guard.ts"
   "src/hooks/checks/handoff-symlink-write-guard.ts"
-  "src/hooks/checks/sensitive-files.ts"
   "src/hooks/checks/session-collision-gate.ts"
-  "src/hooks/checks/test-gate.ts"
   "src/hooks/checks/bundled-registrations.ts"
   # CI verification cycle (TIER 2/3/3a/4) — kill-switch + sentinel + telemetry
   # path literals appear in operator-facing reminder strings (block messages,
