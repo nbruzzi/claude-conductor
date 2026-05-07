@@ -2,7 +2,7 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Source-of-truth for the 15 multi-instance-coordination-machinery checks
+ * Source-of-truth for the 13 multi-instance-coordination-machinery checks
  * the plugin bundles, organized by hook event.
  *
  * Cluster 1 of INVERSIONS arc (2026-05-07): 9 universal-coding-discipline
