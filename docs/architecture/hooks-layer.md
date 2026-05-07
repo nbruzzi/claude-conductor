@@ -7,7 +7,7 @@ Copyright 2026 nbruzzi
 
 How `claude-conductor`'s hook checks compose at runtime. This doc is the operator's reference for: which hooks fire when, how their outputs concatenate, what their failure modes are, and how to disable or override them.
 
-Phase 1 shipped 17 hook checks; Phase 2 adds 4 (Slices 4–7). This doc covers both phases. Each new hook slice MUST update this doc as part of its commit.
+Phase 1 shipped 17 hook checks; Phase 2 adds 4 (Slices 4–7); CI verification cycle adds 4 more. Cluster 1 of INVERSIONS arc (2026-05-07) moved 9 universal-coding-discipline checks from plugin to substrate, bringing plugin's bundled count to 20. This doc covers all phases plus Cluster 1 closure. Each new hook slice MUST update this doc as part of its commit.
 
 ## Phase 2 status
 
@@ -61,6 +61,7 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 5. **(Phase 2 Slice 5):** `identity-injector` — Phase 2 NATO-identity context surface.
 6. **(Phase 3 Slice 2):** `dotfiles-worktree-provisioner` — feature-flag-gated per-session worktree provisioner. Anchor-pins canonical-claude-home heartbeat (REV 0.2 ARCH-1). RE-105 soft-ceiling reminder + RE-8 mixed-flag-state warning.
 7. **(Phase 3 Slice 2):** `dotfiles-worktree-gc` — orphan reaper for per-session worktrees. RE-102 single-threshold staleness (`GC_WINDOW_MS` = 60min). RE-103 mtime-filtered safety guards. RE-3 self-heal triple. Forensic-marker escape hatch. 5-min rate-gate cursor.
+8. **(CI verification cycle TIER 3a):** `ci-verification-auth-warn` — surface gh-auth state at session-start so the agent knows whether `gh pr checks` will work before push-time.
 
 ### `user-prompt-submit`
 
