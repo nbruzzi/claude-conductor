@@ -25,9 +25,7 @@
 import type { RegistryBuilder } from "../registry.ts";
 import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
-import { check as checkHandoffSymlinkWriteGuard } from "./handoff-symlink-write-guard.ts";
 import { check as checkConfigProtection } from "./config-protection.ts";
-import { check as checkHandoffLatestGuard } from "./handoff-latest-guard.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
 import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkChannelsGcReaper } from "./channels-gc-reaper.ts";
@@ -53,14 +51,6 @@ export function registerBundled(
     profiles: ["standard", "strict"],
   });
   builder.register("pre-tool-use", {
-    name: "handoff-symlink-write-guard",
-    fn: checkHandoffSymlinkWriteGuard,
-    description:
-      "Block Edit/Write on symlinked paths under ~/.claude/handoffs/ (prevents write-through clobber of aggregate pointers like LATEST.md)",
-    canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
     name: "config-protection",
     fn: checkConfigProtection,
     description: "Block edits to lint/format/typecheck config files",
@@ -79,14 +69,6 @@ export function registerBundled(
   // post-tool-use (none post-Cluster-2)
 
   // stop
-  builder.register("stop", {
-    name: "handoff-latest-guard",
-    fn: checkHandoffLatestGuard,
-    description:
-      "Warn when ~/.claude/handoffs/LATEST.md is a regular file or a broken symlink",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
   builder.register("stop", {
     name: "session-presence-unregister",
     fn: checkSessionPresenceUnregister,

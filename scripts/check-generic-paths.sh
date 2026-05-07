@@ -97,8 +97,6 @@ P3_FILE_ALLOWLIST=(
   # are no longer in plugin source; allowlist entries removed.
   "src/hooks/checks/config-protection-store.ts"
   "src/hooks/checks/config-protection.ts"
-  "src/hooks/checks/handoff-latest-guard.ts"
-  "src/hooks/checks/handoff-symlink-write-guard.ts"
   "src/hooks/checks/session-collision-gate.ts"
   "src/hooks/checks/bundled-registrations.ts"
   # CI verification cycle (TIER 2/3/3a/4) — moved to substrate per Cluster 2 of
