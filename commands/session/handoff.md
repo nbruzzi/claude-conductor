@@ -8,6 +8,89 @@ Generate a structured handoff document that captures everything a fresh Claude s
 
 ---
 
+## Wind-down rules
+
+Three composing rules govern wind-down. Read these before any action.
+
+**Rule 1 (DEFAULT)** — the wind-down checklist runs first; the handoff is the LAST artifact. Composed sequence:
+
+1. Commit + push remaining work-output (durable, can't be lost from here)
+2. Wait for explicit stop signal from the operating user (Rule 3)
+3. Run any verification or polish steps the wind-down checklist surfaces (CI watch, follow-up fixes, recap evidence capture)
+4. Write the handoff (bookend artifact, captures complete final state)
+5. Then: infrastructure tear-down (close channels, stop Monitors, etc.) per Rule 3
+
+**Rule 2 (EXCEPTION)** — for long/high-risk sessions where reconstruction-loss > ~30 min, run `/handoff` TWICE — once early (before resuming long-running work, between audit cycles, or whenever session-fresh reasoning becomes hard to reconstruct) AND once at the end per Rule 1. The early invocation captures decisions, rejected approaches, and audit findings that exist only in conversation history; the final invocation captures complete final state. Triggers: ≥2h substantive work; audit cycles or multi-persona reasoning; risky environment; decisions/rejected-approaches that exist only in conversation history.
+
+**Rule 3 (ALWAYS)** — do not tear down active session infrastructure (Monitors, open channels, background bash, watchers, working-tree branches not yet merged) until the operating user explicitly signals stop. Asking "what's next?" while simultaneously closing the channel is a sequencing mistake. Boundary case: if asked "what's next?" and you guess wind-down, ASK before tearing down.
+
+For deeper rationale: see `memories/feedback-wind-down-ordering.md`.
+
+---
+
+## Step 0: Determine wind-down tier (Quick vs Full)
+
+Default to FULL. Choose QUICK only when ALL of these hold:
+
+- read-only or ≤1 small edit
+- no PRs, no plan, no peer coordination
+- session was a quick fix or status check
+
+Borderline = FULL; cost asymmetry favors over-recording — Quick that should have been Full loses context; Full that should have been Quick costs ~10 min.
+
+If FULL, run Step 0.5 next. If QUICK, skip directly to Step 1 (Steps 0.5 and 0.6 are FULL-only).
+
+**FULL tier runs:**
+
+- Steps 0.5 → 1–8
+- Memory anchor review (any session-fresh patterns / corrections / decisions worth memorializing?)
+- Todo file write
+- Host substrate's commit-summary write (if applicable)
+- Monitor + channel teardown — ONLY on explicit stop signal per Rule 3
+
+**QUICK tier runs:**
+
+- Step 1 (analyze)
+- Step 2.5 (CI verification block — only if anything was pushed)
+- Step 4 (brief 3–5 line summary)
+- Step 5 (SESSION_LOG append)
+- Step 6 (LATEST.md symlink)
+- Skips: backlog scan, todo file, Monitor/channel teardown, host substrate's commit-summary regen
+
+If ambiguity remains after applying the criteria, surface the chosen tier to the operating user before proceeding to Step 0.5/Step 1.
+
+For tier criteria detail: see `memories/feedback-tiered-wind-down.md`.
+
+---
+
+## Step 0.5: Backlog consolidation (FULL tier only)
+
+Before any handoff-document step fires, scan the project's backlog artifact (whichever tracks debt — `wiki/backlog.md`, `~/backlog.md`, GitHub Issues, etc.) for items related to today's work.
+
+**Search keywords:**
+
+- file paths from today's git diff
+- memory file names from today's `entries_touched` (telemetry)
+- PR numbers + commit SHAs
+- plan file basenames + audit doc basenames
+- slice/item identifiers from today's queue
+
+**For each match:**
+
+- **Resolved** → mark `[x]` + prefix with `RESOLVED <date> via <PR/SHA evidence>`. Existing convention: prepend a HIGH-PRIORITY UPDATE block above older content, do not delete the original (preserves evidence trail).
+- **Sibling touched** → cross-link new artifact, update prerequisite language (e.g., `~~prereq~~ CLEARED <date>`).
+- **New debt surfaced** → file new entry referencing today's audit doc / plan / PR. Cross-reference back from existing entries that should know about it.
+
+For deeper rationale: see `memories/feedback-wind-down-backlog-consolidation.md`.
+
+---
+
+## Step 0.6: Sanity check before proceeding
+
+Before continuing to Step 1, confirm Step 0 has been answered (and Step 0.5 has run if tier=FULL). If either is missing, run them now.
+
+---
+
 ## Step 1: Analyze the conversation
 
 Review the full conversation and extract:
@@ -238,6 +321,10 @@ Tell the user:
 - A one-line summary of what was captured
 - Remind them: "Run `/handoff-resume` in a new session to pick up where we left off."
 
+**DO NOT tear down channel/Monitor/background tasks unless the operating user has explicitly signaled stop. See Wind-down rules Rule 3.**
+
+After the operating user signals stop (and not before), proceed to: close any open channels via `/channel close`, stop Monitors, terminate background bash. The skill is "done" at that point.
+
 ---
 
 ## Constraints
@@ -247,3 +334,16 @@ Tell the user:
 - Show code only when a snippet is essential for the next session to understand context (API shape, error message, config value)
 - Never include full file contents — the next session can read them
 - Failed approaches are the most valuable section — they prevent wasted effort. Do not skip or minimize this.
+- Never run `/handoff` without first completing Step 0 (tier) + Step 0.5 (backlog if FULL).
+
+---
+
+## See also
+
+Paths below are plugin-rooted; resolve via `${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/`. (Bundled memories use "Pairs with" for the same concept; this skill uses "See also" per `decisions/phase-5.md` Decision F.)
+
+- `memories/feedback-signoff-checklist.md` — discipline rationale (never bare `/handoff`)
+- `memories/feedback-wind-down-ordering.md` — full ordering rules + 5-step composed sequence
+- `memories/feedback-tiered-wind-down.md` — tier criteria detail
+- `memories/feedback-wind-down-backlog-consolidation.md` — backlog scan procedure
+- `memories/feedback-encode-while-context-fresh.md` — already plugin-bundled; pairs with Full-tier memory anchor review
