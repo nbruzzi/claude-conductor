@@ -2,12 +2,16 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Bundled-check registrations (20 multi-instance-coordination-machinery checks).
+ * Bundled-check registrations (16 multi-instance-coordination-machinery checks).
  *
  * Cluster 1 of INVERSIONS arc (2026-05-07): 9 universal-coding-discipline
  * checks (auto-format, branch-enforcement, destructive-cmd, no-any, no-enum,
  * pre-commit, prefer-bun, sensitive-files, test-gate) moved to substrate;
  * imports + register calls removed from this module.
+ *
+ * Cluster 2 of INVERSIONS arc (2026-05-07): 4 CI verification protocol checks
+ * (auth-warn, gate, pre-push-arm, reminder) moved to substrate; imports +
+ * register calls removed from this module.
  *
  * Per extraction-manifest §§ 194–225: this module owns the plugin-bound
  * registrations. In batch 4 it moves to the plugin alongside registry.ts and
@@ -36,10 +40,6 @@ import { check as checkTeammateIdleReminder } from "./teammate-idle-reminder.ts"
 import { check as checkDotfilesWorktreeProvisioner } from "./dotfiles-worktree-provisioner.ts";
 import { check as checkDotfilesWorktreeGc } from "./dotfiles-worktree-gc.ts";
 import { check as checkDotfilesWorktreeCleanup } from "./dotfiles-worktree-cleanup.ts";
-import { check as checkCiVerificationPrePushArm } from "./ci-verification-pre-push-arm.ts";
-import { check as checkCiVerificationReminder } from "./ci-verification-reminder.ts";
-import { check as checkCiVerificationGate } from "./ci-verification-gate.ts";
-import { check as checkCiVerificationAuthWarn } from "./ci-verification-auth-warn.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -84,34 +84,10 @@ export function registerBundled(
     canBlock: true,
     profiles: ["standard", "strict"],
   });
-  builder.register("pre-tool-use", {
-    name: "ci-verification-pre-push-arm",
-    fn: checkCiVerificationPrePushArm,
-    description:
-      "TIER 4 — write a sentinel file on PreToolUse Bash matching real-shape `git push`; ground truth for TIER 2 sentinel-aware Stop verification.",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
 
-  // post-tool-use
-  builder.register("post-tool-use", {
-    name: "ci-verification-reminder",
-    fn: checkCiVerificationReminder,
-    description:
-      "Emit a system-reminder after successful `git push` per ~/CLAUDE.md After Every Push CI verification mandate.",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
+  // post-tool-use (none post-Cluster-2)
 
   // stop
-  builder.register("stop", {
-    name: "ci-verification-gate",
-    fn: checkCiVerificationGate,
-    description:
-      "TIER 2 — block session end when shipped/merged/landed claim follows a push without successful gh pr checks / gh run (view|list|watch) evidence (sentinel-aware via TIER 4 sentinel files).",
-    canBlock: true,
-    profiles: ["standard", "strict"],
-  });
   builder.register("stop", {
     name: "handoff-latest-guard",
     fn: checkHandoffLatestGuard,
@@ -191,14 +167,6 @@ export function registerBundled(
     fn: checkDotfilesWorktreeGc,
     description:
       "Phase 3 Slice 2 — orphan-reaper for per-session dotfiles worktrees. Mirrors channels-gc-reaper rate-gate cursor pattern. Reaps when heartbeat absent OR ageMs > GC_WINDOW_MS=60min, with mtime-filtered safety guards (.git/index.lock < 1hr, node_modules/.bun-tmp-* < 5min) + forensic-marker escape hatch. RE-3 self-heal via unregisterActiveSession + clearSentinelDotfilesRoot.",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
-  builder.register("session-start", {
-    name: "ci-verification-auth-warn",
-    fn: checkCiVerificationAuthWarn,
-    description:
-      "TIER-3a — Surface gh-auth state at session start so the agent knows whether gh pr checks will work before push-time.",
     canBlock: false,
     profiles: ["standard", "strict"],
   });

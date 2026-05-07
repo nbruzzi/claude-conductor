@@ -115,26 +115,6 @@
       "import": "./src/hooks/checks/channels-gc-reaper.ts",
       "default": "./src/hooks/checks/channels-gc-reaper.ts"
     },
-    "./hooks/checks/ci-verification-auth-warn": {
-      "types": "./src/hooks/checks/ci-verification-auth-warn.ts",
-      "import": "./src/hooks/checks/ci-verification-auth-warn.ts",
-      "default": "./src/hooks/checks/ci-verification-auth-warn.ts"
-    },
-    "./hooks/checks/ci-verification-gate": {
-      "types": "./src/hooks/checks/ci-verification-gate.ts",
-      "import": "./src/hooks/checks/ci-verification-gate.ts",
-      "default": "./src/hooks/checks/ci-verification-gate.ts"
-    },
-    "./hooks/checks/ci-verification-pre-push-arm": {
-      "types": "./src/hooks/checks/ci-verification-pre-push-arm.ts",
-      "import": "./src/hooks/checks/ci-verification-pre-push-arm.ts",
-      "default": "./src/hooks/checks/ci-verification-pre-push-arm.ts"
-    },
-    "./hooks/checks/ci-verification-reminder": {
-      "types": "./src/hooks/checks/ci-verification-reminder.ts",
-      "import": "./src/hooks/checks/ci-verification-reminder.ts",
-      "default": "./src/hooks/checks/ci-verification-reminder.ts"
-    },
     "./hooks/checks/dotfiles-worktree-cleanup": {
       "types": "./src/hooks/checks/dotfiles-worktree-cleanup.ts",
       "import": "./src/hooks/checks/dotfiles-worktree-cleanup.ts",
