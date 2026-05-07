@@ -41,7 +41,10 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 
-import { isValidArtifactId } from "../active-sessions/index.ts";
+import {
+  isValidArtifactId,
+  isValidSessionId,
+} from "../active-sessions/index.ts";
 import { parseFlags } from "../cli/flags.ts";
 import {
   appendMessage,
@@ -69,7 +72,11 @@ import {
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   claimIdentity,
+  claimIdentityNamed,
   getIdentityForSession,
+  IdentityActiveError,
+  IdentityAlreadyHeldBySelfError,
+  IdentityCasMismatchError,
   IdentityNotHeldError,
   isValidIdentity,
   setRole,
@@ -108,7 +115,7 @@ const VERB_HELP: Record<string, string> = {
     "from-handoff <handoff-path>\n  Print the channel id derived from a handoff filename.",
   create:
     "create <channel-id> <handoff-id>\n  Create a new channel with metadata for the given handoff id.",
-  join: "join <channel-id>\n  Join the channel + atomically claim the next available NATO identity.\n  Idempotent rejoin returns the existing claim.",
+  join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
   send: "send <channel-id> <kind>\n  Append a message; body read from stdin. kind ∈ {note, question, handoff, status}.",
   read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen/<sid>.json.\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
@@ -509,6 +516,15 @@ export async function runChannelsCli(
     help: true,
     sinceMtime: true,
     sinceCursor: true,
+    // P2 — opt-in `--as <Identity>` / `--role <r>` / `--force` /
+    // `--from-session <sid>` for the `join` verb (the only verb that
+    // currently consumes them). Other verbs ignore these flags as
+    // standard FlagValues fields default to undefined/false. Per plan
+    // giggly-bouncing-spark.md §change-list #2 + #4-5.
+    as: true,
+    role: true,
+    force: true,
+    fromSession: true,
   });
   // Phase 2 Slice 0 RE-W2-3 fix: per-invocation DieContext replaces the
   // prior module-level `outputJson` toggle. Threaded through every die()
@@ -564,16 +580,127 @@ export async function runChannelsCli(
         // existing claim's letter without re-assignment. Output shape
         // changes from bare metadata to {metadata, identity} so callers
         // can read both in one verb invocation (slash-command friendly).
+        //
+        // P2: when `--as <Identity>` is present, dispatch
+        // `claimIdentityNamed` instead of the next-available
+        // `claimIdentity`. Optional `--role <r>` lands the claimant
+        // directly in a role (default `queue`); optional `--force`
+        // permits takeover of an active claim per Decision §4; optional
+        // `--from-session <sid>` adds CAS-check on the takeover holder
+        // per Decision §9. Error classes from identity.ts translated to
+        // structured `die()` calls.
         const meta = await joinChannel({ channelId, sessionId });
-        const claim = await claimIdentity({ channelId, sessionId });
+        let claim:
+          | Awaited<ReturnType<typeof claimIdentity>>
+          | Awaited<ReturnType<typeof claimIdentityNamed>>;
+        if (flags.as !== undefined) {
+          // --as path: validate NATO + role at verb-level (parser is
+          // value-extraction only). isValidIdentity returns the type
+          // predicate `s is NatoIdentity` so the cast on success is sound.
+          if (!isValidIdentity(flags.as)) {
+            die(
+              ctx,
+              `--as: invalid identity "${flags.as}" — must be a NATO letter (Alpha..Zulu)`,
+              { code: 2, category: "VALIDATION" },
+            );
+          }
+          let defaultRole: ChannelRole | undefined;
+          if (flags.role !== undefined) {
+            if (!VALID_ROLES.includes(flags.role as ChannelRole)) {
+              die(
+                ctx,
+                `--role: invalid role "${flags.role}" — must be one of ${VALID_ROLES.join(", ")}`,
+                { code: 2, category: "VALIDATION" },
+              );
+            }
+            defaultRole = flags.role as ChannelRole;
+          }
+          if (flags.fromSession !== undefined) {
+            if (!isValidSessionId(flags.fromSession)) {
+              die(
+                ctx,
+                `--from-session: invalid session id "${flags.fromSession}" — must match path-safe pattern`,
+                { code: 2, category: "VALIDATION" },
+              );
+            }
+            // RE-8 closure: --from-session only meaningful with --force
+            // (CAS gate guards the takeover path; without --force, no
+            // takeover is permitted regardless). Surface as ARGS error
+            // so operator UX is explicit.
+            if (!flags.force) {
+              die(
+                ctx,
+                `--from-session: requires --force (CAS check is only consulted on takeover)`,
+                {
+                  code: 2,
+                  category: "ARGS",
+                  remediation: "add --force, or drop --from-session",
+                },
+              );
+            }
+          }
+          try {
+            claim = await claimIdentityNamed({
+              channelId,
+              sessionId,
+              identity: flags.as,
+              ...(defaultRole !== undefined ? { defaultRole } : {}),
+              force: flags.force,
+              ...(flags.fromSession !== undefined
+                ? { fromSession: flags.fromSession }
+                : {}),
+            });
+          } catch (err: unknown) {
+            // Translate the 3 new identity-domain error classes to die()
+            // shapes with appropriate exit codes. Ordering matters:
+            // narrow class checks first (each has a unique constructor).
+            if (err instanceof IdentityActiveError) {
+              die(ctx, err.message, {
+                code: 6,
+                category: "STILL_ACTIVE",
+              });
+            }
+            if (err instanceof IdentityAlreadyHeldBySelfError) {
+              die(ctx, err.message, {
+                code: 5,
+                category: "ALREADY_HELD_SELF",
+              });
+            }
+            if (err instanceof IdentityCasMismatchError) {
+              die(ctx, err.message, {
+                code: 7,
+                category: "CAS_MISMATCH",
+              });
+            }
+            // Unknown — re-throw to bubble through the catch-all at
+            // runChannelsCli's bottom (UNCAUGHT category).
+            throw err;
+          }
+        } else {
+          claim = await claimIdentity({ channelId, sessionId });
+        }
+        const identityPayload: {
+          identity: string;
+          role: ChannelRole;
+          joined_at: string;
+          is_new_participant: boolean;
+          takeover_displaced_session_id?: string | null;
+        } = {
+          identity: claim.identity,
+          role: claim.role,
+          joined_at: claim.joined_at,
+          is_new_participant: claim.is_new_participant,
+        };
+        if (
+          "takeover_displaced_session_id" in claim &&
+          claim.takeover_displaced_session_id !== undefined
+        ) {
+          identityPayload.takeover_displaced_session_id =
+            claim.takeover_displaced_session_id;
+        }
         printJson({
           metadata: meta,
-          identity: {
-            identity: claim.identity,
-            role: claim.role,
-            joined_at: claim.joined_at,
-            is_new_participant: claim.is_new_participant,
-          },
+          identity: identityPayload,
         });
         return;
       }
@@ -882,17 +1009,17 @@ export async function runChannelsCli(
       }
       case "set-role": {
         const channelId = requireChannelId(ctx, rest, 0);
-        const roleIdx = rest.indexOf("--role");
-        if (roleIdx === -1) {
+        // P2 (channel-as-flag) — `--role` is now a globally-recognized
+        // value-consuming flag in `parseFlags`. The set-role verb reads
+        // `flags.role` rather than re-scanning `rest` (which would miss
+        // the flag entirely since the parser consumed it). The semantics
+        // are identical: missing → die ARGS; invalid role → die
+        // VALIDATION. Per plan giggly-bouncing-spark.md §change-list #5.
+        const roleArg = flags.role;
+        if (roleArg === undefined) {
           die(ctx, "missing --role <pen|queue|out>", {
             category: "ARGS",
             remediation: "set-role <channel-id> --role <pen|queue|out>",
-          });
-        }
-        const roleArg = rest[roleIdx + 1];
-        if (roleArg === undefined) {
-          die(ctx, "--role flag requires a value (pen|queue|out)", {
-            category: "ARGS",
           });
         }
         if (!VALID_ROLES.includes(roleArg as ChannelRole)) {
@@ -966,7 +1093,12 @@ export async function runChannelsCli(
           );
         }
         const peer: NatoIdentity = peerArg;
-        const force = rest.includes("--force");
+        // P2 (channel-as-flag) — `--force` is now a globally-recognized
+        // standalone flag in `parseFlags`. The close-peer verb reads
+        // `flags.force` rather than `rest.includes("--force")` (which
+        // would miss the flag since the parser consumed it). Semantics
+        // identical. Per plan giggly-bouncing-spark.md §change-list #5.
+        const force = flags.force;
         // Slice 5 RE-6: heartbeat-staleness check + metadata removal in
         // a SINGLE withMetadataLock section (closeStalePeerIdentity).
         // Sentinel unlink follows the metadata-first ordering — orphan
