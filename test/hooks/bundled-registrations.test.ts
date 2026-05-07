@@ -69,7 +69,7 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // Cluster 2 of INVERSIONS arc (2026-05-07) — 4 CI verification protocol checks
 // moved plugin → substrate (ci-verification-{auth-warn,gate,pre-push-arm,reminder});
 // count drops 20 → 16. Plan ~/.claude/plans/cluster-2-ci-verification.md.
-const EXPECTED_COUNT = 16;
+const EXPECTED_COUNT = 15;
 
 describe("bundled-registrations meta-test", () => {
   it("BUNDLED_CHECK_NAMES has exactly EXPECTED_COUNT entries", () => {
@@ -167,7 +167,7 @@ describe("bundled-registrations meta-test", () => {
 
     // Positive: registering a known bundled name compiles.
     builder.register("pre-tool-use", {
-      name: "fact-force",
+      name: "config-protection",
       fn: noopFn,
       description: "test",
       canBlock: false,

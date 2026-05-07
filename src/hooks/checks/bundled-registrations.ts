@@ -26,7 +26,6 @@ import type { RegistryBuilder } from "../registry.ts";
 import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
 import { check as checkHandoffSymlinkWriteGuard } from "./handoff-symlink-write-guard.ts";
-import { check as checkFactForce } from "./fact-force.ts";
 import { check as checkConfigProtection } from "./config-protection.ts";
 import { check as checkHandoffLatestGuard } from "./handoff-latest-guard.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
@@ -60,14 +59,6 @@ export function registerBundled(
       "Block Edit/Write on symlinked paths under ~/.claude/handoffs/ (prevents write-through clobber of aggregate pointers like LATEST.md)",
     canBlock: true,
     profiles: ["minimal", "standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
-    name: "fact-force",
-    fn: checkFactForce,
-    description:
-      "Deny first edit per file — demand investigation before action",
-    canBlock: true,
-    profiles: ["standard", "strict"],
   });
   builder.register("pre-tool-use", {
     name: "config-protection",

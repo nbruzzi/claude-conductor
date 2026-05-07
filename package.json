@@ -145,21 +145,6 @@
       "import": "./src/hooks/checks/config-protection-store.ts",
       "default": "./src/hooks/checks/config-protection-store.ts"
     },
-    "./hooks/checks/fact-force": {
-      "types": "./src/hooks/checks/fact-force.ts",
-      "import": "./src/hooks/checks/fact-force.ts",
-      "default": "./src/hooks/checks/fact-force.ts"
-    },
-    "./hooks/checks/fact-force-scope-cli": {
-      "types": "./src/hooks/checks/fact-force-scope-cli.ts",
-      "import": "./src/hooks/checks/fact-force-scope-cli.ts",
-      "default": "./src/hooks/checks/fact-force-scope-cli.ts"
-    },
-    "./hooks/checks/fact-force-scope-store": {
-      "types": "./src/hooks/checks/fact-force-scope-store.ts",
-      "import": "./src/hooks/checks/fact-force-scope-store.ts",
-      "default": "./src/hooks/checks/fact-force-scope-store.ts"
-    },
     "./hooks/checks/handoff-latest-guard": {
       "types": "./src/hooks/checks/handoff-latest-guard.ts",
       "import": "./src/hooks/checks/handoff-latest-guard.ts",
