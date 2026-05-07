@@ -205,3 +205,53 @@ _Cluster 1 SHIPPED 2026-05-07:_
 - Plan: `~/.claude/plans/cluster-1-universal-discipline.md` v1.3 (final)
 - Audit history: `~/.claude/audits/cluster-1-arch-2026-05-07.md`
 - Vault backlog: 6 follow-up entries filed (`bef5e6b` superseded by `4416e88`)
+
+---
+
+## v2-anticipation addendum (filed 2026-05-07 by Bravo via Cluster 2 META audit fold)
+
+Charlie's Lane B audit on Cluster 2 plan v1.1 surfaced a META finding: ARCH-V1.1-1 + ARCH-V1.1-3 + ARCH-V1.1-7 are variants of a single root — _Cluster 1's local fixes didn't generalize, so each subsequent cluster (2–5) repeats the failure._ This addendum enumerates the substrate-debt classes Cluster 1 fixed-vs-magic-numbered so that Cluster 2–5 authors see the inheritance picture upfront and can plan accordingly. Cross-reference: `feedback-substrate-debt-larger-than-slice-scope.md` (substrate-debt that recurs across slices warrants one-fix-for-all), `feedback-partial-v2-anticipation-primitives.md` (lift shared primitives at second-caller; defer structural choices).
+
+### DYNAMIC-FLOOR APPLIED — durable across clusters, no per-cluster update needed
+
+- **Site:** `~/.claude-dotfiles/src/__tests__/hooks/disable-hooks.test.ts:309`
+- **Shape:** `expect(allNames.size).toBe(BUNDLED_CHECK_NAMES.length)` — strict equality against plugin's exported constant, dynamically imported from `claude-conductor/hooks/bundled-check-names`.
+- **Inheritance:** zero per-cluster maintenance debt. Substrate's registry-iteration sentinel automatically tracks plugin's count as Clusters 2–5 land. Decision C above codifies the convention.
+
+### MAGIC-NUMBER REMAINS — both plugin tests carry per-cluster maintenance debt
+
+Two plugin-side test sites lock the post-PR2 count with a hand-written magic number. Each subsequent cluster's PR2 must update **both** sites or CI breaks:
+
+- **Site 1:** `~/claude-conductor/test/hooks/cluster-1-removed.test.ts:43` — `const EXPECTED_POST_PR2_COUNT = 20;` (asserts `BUNDLED_CHECK_NAMES.length === 20`).
+- **Site 2:** `~/claude-conductor/test/hooks/bundled-registrations.test.ts:68` — `const EXPECTED_COUNT = 20;` (asserts `BUNDLED_CHECK_NAMES.length === 20` AND set-uniqueness count `=== 20`).
+- **Per-cluster delta:** Cluster 2 (4 ci-verification names removed) → both magic numbers `20 → 16`. Cluster 3 fact-force (TBD count) → another decrement. Each cluster's PR2 manifest must list both sites in `## Files modified`.
+- **Why not dynamic on plugin side:** plugin tests can't import their own module-under-test as a "moving target" — `cluster-1-removed.test.ts`'s purpose is to lock the post-Cluster-1 invariant, and `bundled-registrations.test.ts:68`'s comment explicitly states it pins production state at the boundary. Dynamic floors here would erase the guard. Magic-number ratchet is the correct trade-off; this addendum just makes the maintenance debt visible.
+
+### VOCABULARY-LOCK — `check-names.ts` Cluster 1 banner is Cluster-1-specific
+
+- **Site:** `~/.claude-dotfiles/src/hooks/check-names.ts:52` — banner literal `// Keep-in-dotfiles — coding-discipline (substrate-canonical post Cluster 1 of INVERSIONS arc 2026-05-07)`.
+- **Risk:** the `coding-discipline` label fits Cluster 1's 9 universal-coding-discipline checks but does NOT fit Cluster 2's 4 ci-verification protocol files (or Clusters 3–5's groupings). Reusing the banner across clusters corrupts the categorization vocabulary; readers later cannot tell which checks belong to which slice.
+- **Convention for Clusters 2–5:** each cluster gets its OWN distinct comment banner mirroring the Cluster 1 shape. Examples:
+  - Cluster 2: `// Keep-in-dotfiles — CI-verification (substrate-canonical post Cluster 2 of INVERSIONS arc 2026-05-07)`
+  - Cluster 3 (fact-force): banner appropriate to fact-force scope
+  - Cluster 4 (config-protection): banner appropriate to config-protection scope
+  - Cluster 5 (handoff guards): banner appropriate to handoff guards scope
+- **Why not refactor to a shared "discipline gates" bucket:** the banner is documentation, not a code structure; per-cluster labels carry forensic value (which checks landed in which slice). Tier-declaration discipline (`feedback-tier-declaration-discipline.md`) applies — the comment IS the tier marker; sharing it would erase the ratchet.
+
+### VOCABULARY-LOCK — `extraction-manifest.md` Cluster 1 section name is Cluster-1-specific
+
+- **Site:** `~/claude-conductor/extraction-manifest.md:70` — section heading `### Hooks/checks — generic discipline gates`.
+- **Risk:** identical shape to `check-names.ts` banner. Cluster 1's "generic discipline gates" wording fits the 9-file move; reusing it across clusters merges Cluster 1 + 2 + 3 + 4 + 5 entries into a single category and erases per-slice provenance.
+- **Convention for Clusters 2–5:** each cluster gets a NEW section header rather than appending rows to Cluster 1's section. Add-not-modify pattern (per Cluster 2 plan ARCH-H3 fold) — sibling sections at parallel positions, not nested or merged.
+- **Per-cluster naming hint:** mirror the `check-names.ts` banner family. Cluster 2 → `### Hooks/checks — CI verification protocol`. Cluster 3+ analogous.
+
+### Implications for Cluster 2–5 authors
+
+When opening a new cluster's plan and PR pair, read this addendum first. The four entries above are the substrate-debt-mirror surface; per-cluster work must:
+
+1. Update **both** plugin magic-number sites (cluster-N-removed.test.ts + bundled-registrations.test.ts:68) — list explicitly in PR2 manifest.
+2. Add a NEW `check-names.ts` banner per cluster (do not extend Cluster 1's).
+3. Add a NEW `extraction-manifest.md` section per cluster (do not append to Cluster 1's).
+4. Inherit Decision C dynamic-floor for free — substrate side requires zero per-cluster change.
+
+If a future cluster surfaces additional substrate-debt-mirror classes (e.g., a third magic-number site, a new vocabulary-lock surface), append a new entry to this addendum at that cluster's closure-block commit. The addendum is the canonical inheritance picture.
