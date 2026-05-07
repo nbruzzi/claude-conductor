@@ -32,13 +32,12 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 
 **Cluster 1 of INVERSIONS arc (2026-05-07):** 9 universal-coding-discipline checks (`auto-format`, `branch-enforcement`, `destructive-cmd`, `no-any`, `no-enum`, `pre-commit`, `prefer-bun`, `sensitive-files`, `test-gate`) moved to substrate (`~/.claude-dotfiles/src/hooks/checks/`); they run from substrate's bundled-registrations layer, NOT plugin's. Plugin's bundled-registrations now owns only multi-instance-coordination machinery.
 
-### `pre-tool-use` (plugin-canonical post-Cluster-1)
+### `pre-tool-use` (plugin-canonical post-Cluster-3; Cluster 3 of INVERSIONS arc 2026-05-07 moved `fact-force` to substrate)
 
 1. `session-collision-gate` — refuses tool dispatch when another active session conflicts.
 2. `handoff-symlink-write-guard` — blocks writes to handoff symlinks.
-3. `fact-force` — enforces fact-force scope.
-4. `config-protection` — protects `~/.claude/` config from accidental overwrites.
-5. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
+3. `config-protection` — protects `~/.claude/` config from accidental overwrites.
+4. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
 
 ### `post-tool-use` (plugin-canonical post-Cluster-2; Cluster 2 of INVERSIONS arc 2026-05-07 moved `ci-verification-reminder` to substrate)
 
@@ -171,7 +170,6 @@ Phase 2's hooks read substrate that Phase 1 established. The composition rules:
 | ----------------------------- | ------------- | ---------------------- | ----------------------------------------------------- |
 | `session-collision-gate`      | pre-tool-use  | fail-loud              | Block tool dispatch under conflicting active session. |
 | `handoff-symlink-write-guard` | pre-tool-use  | fail-loud              | Refuse writes to handoff symlinks.                    |
-| `fact-force`                  | pre-tool-use  | fail-loud              | Enforce fact-force scope.                             |
 | `config-protection`           | pre-tool-use  | fail-loud              | Protect `~/.claude/` from accidental overwrites.      |
 | `handoff-latest-guard`        | stop          | fail-loud              | Verify LATEST.md symlink integrity.                   |
 | `session-presence-unregister` | stop          | fail-open + breadcrumb | Drop session from active-sessions registry.           |

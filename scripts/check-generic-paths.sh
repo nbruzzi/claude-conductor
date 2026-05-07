@@ -97,8 +97,6 @@ P3_FILE_ALLOWLIST=(
   # are no longer in plugin source; allowlist entries removed.
   "src/hooks/checks/config-protection-store.ts"
   "src/hooks/checks/config-protection.ts"
-  "src/hooks/checks/fact-force-scope-store.ts"
-  "src/hooks/checks/fact-force.ts"
   "src/hooks/checks/handoff-latest-guard.ts"
   "src/hooks/checks/handoff-symlink-write-guard.ts"
   "src/hooks/checks/session-collision-gate.ts"
