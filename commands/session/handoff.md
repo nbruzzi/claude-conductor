@@ -20,7 +20,7 @@ Three composing rules govern wind-down. Read these before any action.
 4. Write the handoff (bookend artifact, captures complete final state)
 5. Then: infrastructure tear-down (close channels, stop Monitors, etc.) per Rule 3
 
-**Rule 2 (EXCEPTION)** — for long/high-risk sessions where reconstruction-loss > ~30 min, write an EARLY snapshot handoff before Step 0 runs, then a final handoff per Rule 1. Triggers: ≥2h substantive work; audit cycles or multi-persona reasoning; risky environment; decisions/rejected-approaches that exist only in conversation history.
+**Rule 2 (EXCEPTION)** — for long/high-risk sessions where reconstruction-loss > ~30 min, run `/handoff` TWICE — once early (before resuming long-running work, between audit cycles, or whenever session-fresh reasoning becomes hard to reconstruct) AND once at the end per Rule 1. The early invocation captures decisions, rejected approaches, and audit findings that exist only in conversation history; the final invocation captures complete final state. Triggers: ≥2h substantive work; audit cycles or multi-persona reasoning; risky environment; decisions/rejected-approaches that exist only in conversation history.
 
 **Rule 3 (ALWAYS)** — do not tear down active session infrastructure (Monitors, open channels, background bash, watchers, working-tree branches not yet merged) until the operating user explicitly signals stop. Asking "what's next?" while simultaneously closing the channel is a sequencing mistake. Boundary case: if asked "what's next?" and you guess wind-down, ASK before tearing down.
 
@@ -32,16 +32,32 @@ For deeper rationale: see `memories/feedback-wind-down-ordering.md`.
 
 Default to FULL. Choose QUICK only when ALL of these hold:
 
-- read-only or ≤1 small edit, no PRs, no plan, no peer coordination
+- read-only or ≤1 small edit
+- no PRs, no plan, no peer coordination
 - session was a quick fix or status check
 
-(Borderline = FULL; cost asymmetry favors over-recording — Quick that should have been Full loses context; Full that should have been Quick costs ~10 min.)
+Borderline = FULL; cost asymmetry favors over-recording — Quick that should have been Full loses context; Full that should have been Quick costs ~10 min.
 
-If FULL, run Step 0.5 next. If QUICK, skip Step 0.5 and go to Step 1.
+If FULL, run Step 0.5 next. If QUICK, skip directly to Step 1 (Steps 0.5 and 0.6 are FULL-only).
 
-**FULL tier** runs Steps 0.5 → 1–8 + memory anchor review (any session-fresh patterns / corrections / decisions worth memorializing?) + todo file write + host substrate's commit-summary write (if applicable) + Monitor + channel teardown ONLY on explicit stop signal per Rule 3.
+**FULL tier runs:**
 
-**QUICK tier** runs Steps 1, 2.5 (CI verification block only if anything was pushed), 4 (brief 3–5 line summary), 5 (SESSION_LOG append), 6 (LATEST.md symlink). Skips: backlog scan, todo file, Monitor/channel teardown, host substrate's commit-summary regen.
+- Steps 0.5 → 1–8
+- Memory anchor review (any session-fresh patterns / corrections / decisions worth memorializing?)
+- Todo file write
+- Host substrate's commit-summary write (if applicable)
+- Monitor + channel teardown — ONLY on explicit stop signal per Rule 3
+
+**QUICK tier runs:**
+
+- Step 1 (analyze)
+- Step 2.5 (CI verification block — only if anything was pushed)
+- Step 4 (brief 3–5 line summary)
+- Step 5 (SESSION_LOG append)
+- Step 6 (LATEST.md symlink)
+- Skips: backlog scan, todo file, Monitor/channel teardown, host substrate's commit-summary regen
+
+If ambiguity remains after applying the criteria, surface the chosen tier to the operating user before proceeding to Step 0.5/Step 1.
 
 For tier criteria detail: see `memories/feedback-tiered-wind-down.md`.
 
@@ -69,9 +85,9 @@ For deeper rationale: see `memories/feedback-wind-down-backlog-consolidation.md`
 
 ---
 
-## Step 0.6: Pre-Step-1 guard
+## Step 0.6: Sanity check before proceeding
 
-Step 0 must always have run; Step 0.5 must have run if tier=FULL. If either is missing, complete first.
+Before continuing to Step 1, confirm Step 0 has been answered (and Step 0.5 has run if tier=FULL). If either is missing, run them now.
 
 ---
 
@@ -307,6 +323,8 @@ Tell the user:
 
 **DO NOT tear down channel/Monitor/background tasks unless the operating user has explicitly signaled stop. See Wind-down rules Rule 3.**
 
+After the operating user signals stop (and not before), proceed to: close any open channels via `/channel close`, stop Monitors, terminate background bash. The skill is "done" at that point.
+
 ---
 
 ## Constraints
@@ -321,6 +339,8 @@ Tell the user:
 ---
 
 ## See also
+
+Paths below are plugin-rooted; resolve via `${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/`. (Bundled memories use "Pairs with" for the same concept; this skill uses "See also" per `decisions/phase-5.md` Decision F.)
 
 - `memories/feedback-signoff-checklist.md` — discipline rationale (never bare `/handoff`)
 - `memories/feedback-wind-down-ordering.md` — full ordering rules + 5-step composed sequence

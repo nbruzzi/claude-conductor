@@ -230,9 +230,17 @@ Self-monitoring memory. The Why section quotes the user verbatim with a 2026-04-
 
 Convergent-instances memory. Body anchors on multiple specific incidents: 2026-04-19 `auto-format.ts` byte-identical fix between `inter-window-coordination` and `HeatPrice.com`, channel `2026-04-21_00-09` Round 1/2/3/4 reflection, and the uuidgen+CLAUDE_SESSION_ID convention. Rewrite to generic Session-A/Session-B framing throughout. The counter-case (convergent hallucination on shared faulty prior) is load-bearing — preserve the framing verbatim, anonymize the specific incident anchor.
 
+### `feedback-signoff-checklist.md`
+
+Wind-down checklist discipline (Phase 5 Decision C reversal of Phase 0 drop). Body anchors on the operating user's verbatim framing ("I will never simply just 'handoff' ('signoff...'). I will always work through the checklist and cover all bases / make sure everything is accounted for"). Operational core preserved: every repo / commit / sync / backlog reconciled before handoff fires. Verbatim quote rewritten as "the operating user's framing: never simply 'handoff' ('signoff...'); always work through the checklist and cover all bases" — discipline survives anonymization (per Bravo KS audit: discipline IS generic; anchors are writing artifact).
+
+### `feedback-wind-down-ordering.md`
+
+Three composing wind-down rules (Phase 5 Decision C reversal of Phase 0 drop). Body anchors on the rtk-ingest 2026-05-03 incident as Rule 3 evidence + the operating user's verbatim observation about premature Monitor teardown. Rule 1 + Rule 2 + Rule 3 framings + their composed sequences (DEFAULT 5-step + EXCEPTION 6-step) preserved verbatim — they ARE the operational rule. Incident anchor rewritten generically: "an instance proactively shut down peer-coordination infrastructure mid-session, losing peer events that would otherwise have arrived during the deferred-item work." Cross-reference to `feedback-efficiency-without-compromise.md` (DROPPED per Phase 0) inline-summarized as "the efficiency-without-compromise principle (optimize aggressively, but never at the cost of having to undo work)."
+
 ### Mechanical rewrites (lower load-bearing)
 
-For the remaining 8 in-scope memories: anchors get mechanical regex replacement per the rules above. Specific verbatim quotes from the user replaced with attributed-but-anonymized phrasing ("the capturing user" + paraphrase). Date stamps in body stay (they document when the lesson was captured); date stamps as load-bearing references get rewritten.
+For the remaining 11 in-scope memories: anchors get mechanical regex replacement per the rules above. Specific verbatim quotes from the user replaced with attributed-but-anonymized phrasing ("the capturing user" + paraphrase). Date stamps in body stay (they document when the lesson was captured); date stamps as load-bearing references get rewritten. The 2 newer wind-down memories (`feedback-tiered-wind-down`, `feedback-wind-down-backlog-consolidation`) post-date Phase 0 audit and have lighter anchoring — mechanical rewrite is sufficient (no LOAD-BEARING ### block needed).
 
 ## Frontmatter rewrites
 

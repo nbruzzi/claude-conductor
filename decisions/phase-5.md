@@ -121,7 +121,7 @@ affects:
 - Line 110 `/handoff` description: refreshed to "Wind-down rules preflight (tier selection + backlog scan + ordering + teardown gate) before capturing Next Steps + decisions trail"
 - 4 new bundled-memory entries under §"Bundled memories" — one-liner per memory matching the Bundled memories convention
 
-**Supersedes:** `memories-to-bundle.md:39-40` drop entries for `feedback-signoff-checklist.md` + `feedback-wind-down-ordering.md`. See Decision C.
+**Supersedes:** `memories-to-bundle.md:39-40` (pre-Phase-2b commit `0a5698b` line numbers) drop entries for `feedback-signoff-checklist.md` + `feedback-wind-down-ordering.md`. See Decision C.
 
 ---
 
@@ -151,7 +151,7 @@ affects: [memories-to-bundle.md]
 
 **Operationalized:** `memories-to-bundle.md:39-40` drop entries removed in Phase 2b commit. In-scope table (lines 53-78) +4 rows added for the 4 wind-down memories. Total bundled count updated 18 → 22. New paragraph at lines 79-83 documents the reversal inline for retrospective lookup.
 
-**Supersedes:** `memories-to-bundle.md:39-40` drop entries (signoff-checklist + wind-down-ordering as "original-user wind-down ritual").
+**Supersedes:** `memories-to-bundle.md:39-40` (pre-Phase-2b commit `0a5698b` line numbers) drop entries (signoff-checklist + wind-down-ordering as "original-user wind-down ritual").
 
 ---
 
