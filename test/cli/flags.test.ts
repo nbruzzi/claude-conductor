@@ -22,6 +22,10 @@ describe("parseFlags", () => {
         help: false,
         sinceMtime: undefined,
         sinceCursor: false,
+        as: undefined,
+        role: undefined,
+        force: false,
+        fromSession: undefined,
       });
       expect(result.positional).toEqual(["a", "b", "c"]);
     });
@@ -60,6 +64,10 @@ describe("parseFlags", () => {
         help: false,
         sinceMtime: undefined,
         sinceCursor: false,
+        as: undefined,
+        role: undefined,
+        force: false,
+        fromSession: undefined,
       });
       expect(result.positional).toEqual(["my-channel"]);
     });
@@ -113,6 +121,10 @@ describe("parseFlags", () => {
         help: false,
         sinceMtime: undefined,
         sinceCursor: false,
+        as: undefined,
+        role: undefined,
+        force: false,
+        fromSession: undefined,
       });
       expect(result.positional).toEqual([]);
     });
@@ -258,6 +270,197 @@ describe("parseFlags", () => {
       expect(result.flags.sinceMtime).toBe(undefined);
       expect(result.positional).toContain("--since-mtime");
       expect(result.positional).toContain("12345");
+    });
+  });
+
+  describe("P2 — --as / --role / --force / --from-session (channel-as-flag plan)", () => {
+    /**
+     * Plan: ~/.claude/plans/giggly-bouncing-spark.md (P2 — Channel-CLI explicit
+     * `--as <Identity>` flag). The parser is value-extraction only — domain
+     * validation (NATO letter for `--as`, ChannelRole for `--role`, session-id
+     * shape for `--from-session`) happens at verb-level dispatch. These tests
+     * pin the extraction contract.
+     */
+    const P2_SPEC = {
+      as: true,
+      role: true,
+      force: true,
+      fromSession: true,
+    } as const;
+
+    // ─── --as ──────────────────────────────────────────────────────
+
+    it("--as Alpha consumes the next argv as the NATO-letter value (verbatim, no flag-level validation)", () => {
+      const result = parseFlags(["my-channel", "--as", "Alpha"], P2_SPEC);
+      expect(result.flags.as).toBe("Alpha");
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["my-channel"]);
+    });
+
+    it("--as Alpha combines cleanly with --json", () => {
+      const result = parseFlags(
+        ["my-channel", "--as", "Alpha", "--json"],
+        P2_SPEC,
+      );
+      expect(result.flags.as).toBe("Alpha");
+      expect(result.flags.json).toBe(true);
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["my-channel"]);
+    });
+
+    it("--as with no following value → parseError 'expected value, got missing value'", () => {
+      const result = parseFlags(["my-channel", "--as"], P2_SPEC);
+      expect(result.flags.as).toBe(undefined);
+      expect(result.parseErrors.length).toBe(1);
+      expect(result.parseErrors[0]).toContain("--as");
+      expect(result.parseErrors[0]).toContain("missing value");
+    });
+
+    it("--as --quiet (flag-after-flag, no value) → parseError on --as; --quiet still parsed", () => {
+      const result = parseFlags(["my-channel", "--as", "--quiet"], P2_SPEC);
+      expect(result.flags.as).toBe(undefined);
+      expect(result.flags.quiet).toBe(true);
+      expect(result.parseErrors.length).toBe(1);
+      expect(result.parseErrors[0]).toContain("--as");
+    });
+
+    it('--as "" (empty string value) → parseError (empty treated as missing)', () => {
+      const result = parseFlags(["my-channel", "--as", ""], P2_SPEC);
+      expect(result.flags.as).toBe(undefined);
+      expect(result.parseErrors.length).toBe(1);
+    });
+
+    it("--as <non-NATO-letter> → flag-level extraction succeeds verbatim (verb-level validates)", () => {
+      // Lowercase "alpha" is not a valid NATO identity, but the parser is
+      // value-extraction-only; verb-level dispatch validates via
+      // isValidIdentity before use.
+      const result = parseFlags(["--as", "alpha"], P2_SPEC);
+      expect(result.flags.as).toBe("alpha");
+      expect(result.parseErrors).toEqual([]);
+    });
+
+    // ─── --role ────────────────────────────────────────────────────
+
+    it("--role pen / queue / out — flag.role is the verbatim value for each ChannelRole", () => {
+      for (const role of ["pen", "queue", "out"] as const) {
+        const result = parseFlags(["my-channel", "--role", role], P2_SPEC);
+        expect(result.flags.role).toBe(role);
+        expect(result.parseErrors).toEqual([]);
+      }
+    });
+
+    it("--role with no following value → parseError", () => {
+      const result = parseFlags(["--role"], P2_SPEC);
+      expect(result.flags.role).toBe(undefined);
+      expect(result.parseErrors.length).toBe(1);
+      expect(result.parseErrors[0]).toContain("--role");
+      expect(result.parseErrors[0]).toContain("missing value");
+    });
+
+    it("--role <non-ChannelRole> → flag-level extraction succeeds verbatim (verb-level validates)", () => {
+      const result = parseFlags(["--role", "admin"], P2_SPEC);
+      expect(result.flags.role).toBe("admin");
+      expect(result.parseErrors).toEqual([]);
+    });
+
+    // ─── --force ───────────────────────────────────────────────────
+
+    it("--force standalone (no value consumed) → flag.force=true", () => {
+      const result = parseFlags(["my-channel", "--force"], P2_SPEC);
+      expect(result.flags.force).toBe(true);
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["my-channel"]);
+    });
+
+    it("--force --force → idempotent (still true; positional empty)", () => {
+      const result = parseFlags(["--force", "--force"], P2_SPEC);
+      expect(result.flags.force).toBe(true);
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual([]);
+    });
+
+    // ─── --from-session ────────────────────────────────────────────
+
+    it("--from-session <session-id> consumes the next argv as the session-id value", () => {
+      const uuid = "204d1756-036b-4fcd-bda4-0e4fce9e30dc";
+      const result = parseFlags(
+        ["my-channel", "--from-session", uuid],
+        P2_SPEC,
+      );
+      expect(result.flags.fromSession).toBe(uuid);
+      expect(result.parseErrors).toEqual([]);
+    });
+
+    it("--from-session with no following value → parseError", () => {
+      const result = parseFlags(["--from-session"], P2_SPEC);
+      expect(result.flags.fromSession).toBe(undefined);
+      expect(result.parseErrors.length).toBe(1);
+      expect(result.parseErrors[0]).toContain("--from-session");
+    });
+
+    it("--from-session with non-UUID value → flag-level extraction succeeds verbatim (verb-level validates)", () => {
+      const result = parseFlags(["--from-session", "foo"], P2_SPEC);
+      expect(result.flags.fromSession).toBe("foo");
+      expect(result.parseErrors).toEqual([]);
+    });
+
+    // ─── Combinations ──────────────────────────────────────────────
+
+    it("all four P2 flags together — all set correctly + positional cleaned", () => {
+      const uuid = "00000000-0000-4000-8000-000000000001";
+      const result = parseFlags(
+        [
+          "my-channel",
+          "--as",
+          "Alpha",
+          "--role",
+          "pen",
+          "--force",
+          "--from-session",
+          uuid,
+        ],
+        P2_SPEC,
+      );
+      expect(result.flags.as).toBe("Alpha");
+      expect(result.flags.role).toBe("pen");
+      expect(result.flags.force).toBe(true);
+      expect(result.flags.fromSession).toBe(uuid);
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["my-channel"]);
+    });
+
+    it("P2 flags interleaved with positional — preserves positional ordering", () => {
+      const result = parseFlags(
+        ["join", "my-channel", "--as", "Alpha", "extra", "--role", "pen"],
+        P2_SPEC,
+      );
+      expect(result.flags.as).toBe("Alpha");
+      expect(result.flags.role).toBe("pen");
+      expect(result.positional).toEqual(["join", "my-channel", "extra"]);
+    });
+
+    // ─── Spec opt-in / opt-out ─────────────────────────────────────
+
+    it("default spec (no P2 opt-in) — --as Alpha passes through as positional args", () => {
+      const result = parseFlags(["my-id", "--as", "Alpha"]);
+      expect(result.flags.as).toBe(undefined);
+      expect(result.positional).toEqual(["my-id", "--as", "Alpha"]);
+    });
+
+    it("custom spec opt-out — { as: false } leaves --as Alpha as positional", () => {
+      const result = parseFlags(["--as", "Alpha"], { as: false });
+      expect(result.flags.as).toBe(undefined);
+      expect(result.positional).toEqual(["--as", "Alpha"]);
+    });
+
+    // ─── Edge: key=value form ──────────────────────────────────────
+
+    it("--as=Alpha (key=value form, unsupported) — passes through as positional", () => {
+      // Mirrors the existing `--json=invalid` edge case at line 144 — we don't
+      // accept `--flag=value` shape; the literal arg passes through.
+      const result = parseFlags(["my-channel", "--as=Alpha"], P2_SPEC);
+      expect(result.flags.as).toBe(undefined);
+      expect(result.positional).toEqual(["my-channel", "--as=Alpha"]);
     });
   });
 });

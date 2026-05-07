@@ -74,8 +74,100 @@ is a participant.
 bun run src/channels/cli.ts join "<channel-id>"
 ```
 
-Print the returned `ChannelMetadata`. If the channel is already closed, the
-CLI throws with a clear message — surface it and stop.
+Without flags, claims the next available NATO identity letter (Alpha, then
+Bravo, then Charlie, …) for this session. Idempotent rejoin returns the
+existing claim's letter.
+
+#### `--as <Identity>` — claim a specific NATO letter (P2)
+
+```bash
+bun run src/channels/cli.ts join "<channel-id>" --as Alpha
+bun run src/channels/cli.ts join "<channel-id>" --as Alpha --role pen
+bun run src/channels/cli.ts join "<channel-id>" --as Alpha --force
+bun run src/channels/cli.ts join "<channel-id>" --as Alpha --force --from-session "<prior-uuid>"
+```
+
+When `--as <Identity>` is present, claim the named NATO letter (Alpha..Zulu)
+instead of the next available. Used by `/handoff-resume parallel` to preserve
+identity continuity across `/handoff` cycles where the new session has a fresh
+harness UUID but wants to resume the prior session's letter (e.g., the prior
+Alpha's audit threads + handoff body all reference Alpha; the new session
+should `join --as Alpha`).
+
+**Flag interactions:**
+
+- `--role <pen|queue|out>` — optional companion. Lands the claimant directly
+  in the named role at claim time (default `queue`). Skips a follow-up
+  `set-role` call.
+- `--force` — required for ALL takeovers. Without `--force`, the call dies
+  with exit code 6 (`STILL_ACTIVE`) when the named letter is already held by
+  a different session. Drops the staleness-auto path that older designs used
+  (60s heartbeat threshold can false-positive on Monitor-wake-delayed
+  sessions).
+- `--from-session <session-id>` — optional CAS check companion to `--force`.
+  Verifies the named identity's holder `session_id` matches the passed value
+  before takeover proceeds. Mismatch dies with exit code 7
+  (`CAS_MISMATCH`). Mitigates ping-pong-takeover for paranoid invocations
+  where another operator could be racing the same takeover. `--from-session`
+  REQUIRES `--force`.
+
+**Same-session rebind semantics:**
+
+- Same letter (session already holds Alpha, calls `--as Alpha`) → idempotent
+  rejoin, returns the existing claim. NOT a takeover.
+- Different letter (session holds Charlie, calls `--as Alpha`) → dies with
+  exit code 5 (`ALREADY_HELD_SELF`). Operator must release Charlie via
+  `close-peer` from a peer session OR re-spawn before claiming Alpha.
+
+**Output shape (with `--as`):**
+
+```json
+{
+  "metadata": { ... },
+  "identity": {
+    "identity": "Alpha",
+    "role": "pen",
+    "joined_at": "2026-05-07T20:42:00.000Z",
+    "is_new_participant": true,
+    "takeover_displaced_session_id": "ba06df05-..."
+  }
+}
+```
+
+`takeover_displaced_session_id` is present only on takeover paths
+(`--as Alpha --force` against an active claim). On a fresh claim it's
+absent.
+
+**Recovery flow** for parallel-session resume (replaces the legacy 4-step
+dance):
+
+```bash
+bun run src/channels/cli.ts join "<channel-id>" --as Alpha --role pen --force
+```
+
+Single call. Atomic. Audit-trail status message posted to the channel JSONL
+documenting the takeover (`[takeover] identity 'Alpha' claimed by session
+<new>, displacing <old>`).
+
+#### Recovery (legacy: pre-`--as`)
+
+For operators on substrate-pinned CLI versions older than `--as` (the
+substrate-rebuild propagation window can run hours/days after a plugin
+release), the original 4-step recovery dance still works. Use it only when
+the bumped CLI is unavailable:
+
+```bash
+bun run src/channels/cli.ts close-peer "<ch>" --peer Alpha --force
+bun run src/channels/cli.ts close-peer "<ch>" --peer "<your-current-letter>" --force
+bun run src/channels/cli.ts join "<ch>"        # claims next-available, NOT necessarily Alpha
+bun run src/channels/cli.ts set-role "<ch>" --role pen
+```
+
+The third step is the broken one this dance can't fix — `join` (without
+`--as`) walks the NATO pool from Alpha forward; whatever letter is next
+available is what you get. If multiple letters are released, the resulting
+identity may not match any prior session's letter. Once the substrate CLI is
+on a `--as`-aware version, retire this dance.
 
 ### send
 

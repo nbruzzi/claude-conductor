@@ -88,10 +88,13 @@ import { isValidArtifactId } from "../active-sessions/index.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import { channelsDir } from "../shared/paths.ts";
 import {
+  appendMessage,
+  claimNamedIdentityWithLock,
   commitIdentityClaim,
   readMetadata,
   removeIdentityClaim,
   setIdentityRole,
+  type ChannelMessage,
   type ChannelRole,
   type IdentityClaim,
 } from "./index.ts";
@@ -615,4 +618,370 @@ function findExistingClaim(
     };
   }
   return null;
+}
+
+// ─── claimIdentityNamed primitive (P2 — `--as <Identity>` flag) ────
+
+/**
+ * Thrown when `claimIdentityNamed` refuses a takeover because the named
+ * identity is held by a different session and `--force` was not passed.
+ * Per plan giggly-bouncing-spark.md Decision §10 (RE-7 closure): the error
+ * message frames operator intent as "I want to BE this identity" and points
+ * at both `--force` and `close-peer` recovery paths. CLI verb maps to exit
+ * code 6, mirroring `close-peer`'s STILL_ACTIVE shape (`cli.ts:1029`).
+ */
+export class IdentityActiveError extends Error {
+  readonly channelId: string;
+  readonly identity: NatoIdentity;
+  readonly holderSessionId: string;
+  readonly ageMs: number | null;
+  constructor(
+    channelId: string,
+    identity: NatoIdentity,
+    holderSessionId: string,
+    ageMs: number | null,
+  ) {
+    const ageStr =
+      ageMs === null ? "(unknown)" : `${Math.round(ageMs / 1000)}s`;
+    super(
+      `[join] identity '${identity}' is held by session ${holderSessionId} (heartbeat age ${ageStr}). ` +
+        `Pass --force to take over the active claim, or run 'close-peer ${channelId} --peer ${identity} --force' first.`,
+    );
+    this.name = "IdentityActiveError";
+    this.channelId = channelId;
+    this.identity = identity;
+    this.holderSessionId = holderSessionId;
+    this.ageMs = ageMs;
+  }
+}
+
+/**
+ * Thrown when `claimIdentityNamed` is called by a session that already
+ * holds a DIFFERENT NATO letter on the same channel. Per Decision §11(b):
+ * silent atomic-move would obscure the operator's prior claim; reject and
+ * point at the deferred `release-self` verb so the operator's intent is
+ * explicit. Same-letter rejoin (per §11(a)) is idempotent and does NOT
+ * throw.
+ */
+export class IdentityAlreadyHeldBySelfError extends Error {
+  readonly channelId: string;
+  readonly currentIdentity: NatoIdentity;
+  readonly requestedIdentity: NatoIdentity;
+  constructor(
+    channelId: string,
+    currentIdentity: NatoIdentity,
+    requestedIdentity: NatoIdentity,
+  ) {
+    super(
+      `[join] this session already holds identity '${currentIdentity}' on channel '${channelId}'; ` +
+        `cannot claim '${requestedIdentity}' without releasing first. ` +
+        `(release-self verb is a backlog ride-along; for now, run 'close-peer ${channelId} --peer ${currentIdentity} --force' from a peer session OR re-spawn.)`,
+    );
+    this.name = "IdentityAlreadyHeldBySelfError";
+    this.channelId = channelId;
+    this.currentIdentity = currentIdentity;
+    this.requestedIdentity = requestedIdentity;
+  }
+}
+
+/**
+ * Thrown when `claimIdentityNamed --force --from-session <uuid>` fails the
+ * CAS check — the named identity's holder session_id does not match the
+ * passed `--from-session` value. Per Decision §9: optional CAS gate
+ * mitigates the ping-pong-takeover hazard for paranoid invocations by
+ * requiring the operator to name whose claim they expect to displace.
+ */
+export class IdentityCasMismatchError extends Error {
+  readonly channelId: string;
+  readonly identity: NatoIdentity;
+  readonly expected: string;
+  readonly actual: string | null;
+  constructor(
+    channelId: string,
+    identity: NatoIdentity,
+    expected: string,
+    actual: string | null,
+  ) {
+    super(
+      `[join] --from-session CAS check failed for identity '${identity}' on channel '${channelId}': ` +
+        `expected holder session '${expected}', got '${actual ?? "(none)"}'. ` +
+        `Re-run 'meta ${channelId}' to inspect the current holder, or drop --from-session for unconditional --force takeover.`,
+    );
+    this.name = "IdentityCasMismatchError";
+    this.channelId = channelId;
+    this.identity = identity;
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
+
+/**
+ * Atomically claim a NAMED NATO identity letter for `sessionId` on
+ * `channelId` — the P2 sibling of `claimIdentity` for `join --as <Identity>`
+ * semantics per plan giggly-bouncing-spark.md.
+ *
+ * **Three-phase claim** (Decision §3, post Bravo LB2-MAJ-1):
+ *
+ *   - **(P0) Same-session pre-check.** `findExistingClaim(sessionId)` first.
+ *     - Same-letter (existing.identity === args.identity) → idempotent
+ *       rejoin: best-effort `commitIdentityClaim` reconciliation (mirrors
+ *       `claimIdentity:191-208`) + return existing claim. NOT a takeover.
+ *     - Different-letter (existing.identity !== args.identity) → throw
+ *       `IdentityAlreadyHeldBySelfError` per §11(b).
+ *     - No existing claim → fall through to P1.
+ *
+ *   - **(P1) Pre-lock atomic-create.** `linkSync(tmpPath, sentinelPath)` —
+ *     POSIX EEXIST primitive. On success: enter `withMetadataLock`,
+ *     `commitIdentityClaim` to materialize metadata, return new claim. NO
+ *     audit-trail message in this path (it's a fresh claim, not a takeover).
+ *
+ *   - **(P2) On EEXIST → takeover branch.** Delegate to
+ *     `claimNamedIdentityWithLock` (sibling of `closeStalePeerIdentity`)
+ *     which performs heartbeat snapshot + CAS check + force gate + atomic
+ *     `renameSync(tmpPath, sentinelPath)` overwrite-replace + metadata
+ *     commit, all under one `withMetadataLock` cycle. Translate the
+ *     discriminated result to the appropriate error class:
+ *     - `cas-mismatch` → throw `IdentityCasMismatchError`
+ *     - `active` → throw `IdentityActiveError`
+ *     - `claimed` → continue to post-lock audit-trail + return.
+ *
+ * **Post-lock audit-trail** (Decision §3 RE-3 closure): on a successful
+ * takeover, post a `status` channel message documenting the
+ * `claimer ↔ displaced` transition. Best-effort — on `appendMessage`
+ * failure, write `appendPresenceFailure({kind: "takeover-audit-failed",
+ * source: "channels-identity"})` so the forensic gap is observable to
+ * operators via the session-active registry rather than silent.
+ *
+ * **Lock-domain note** (per RE-1 / Bravo MAJ-1 cross-audit): see
+ * `claimNamedIdentityWithLock` in `index.ts` for the metadata-vs-sentinel
+ * lock-domain boundary documentation. The renameSync inside the metadata
+ * lock bounds the racing window with concurrent metadata mutators; residual
+ * race with vanilla `claimIdentity:240-259`'s pre-lock linkSync is bounded
+ * to operator-only `--force` + concurrent vanilla join (acceptable defer).
+ *
+ * Returns same shape as `claimIdentity` PLUS optional
+ * `takeover_displaced_session_id` field set on takeover paths so callers
+ * can render forensic info.
+ *
+ * Plan: ~/.claude/plans/giggly-bouncing-spark.md (P2 — Plan v1.3 final).
+ */
+export async function claimIdentityNamed(args: {
+  channelId: string;
+  sessionId: string;
+  identity: NatoIdentity;
+  defaultRole?: ChannelRole;
+  force?: boolean;
+  fromSession?: string;
+}): Promise<
+  IdentityClaim & {
+    identity: NatoIdentity;
+    is_new_participant: boolean;
+    takeover_displaced_session_id?: string | null;
+  }
+> {
+  const { channelId, sessionId, identity } = args;
+  const defaultRole: ChannelRole = args.defaultRole ?? "queue";
+  const force = args.force ?? false;
+  const fromSession = args.fromSession;
+
+  // Boundary validation (mirrors claimIdentity:170-178 + adds NATO-letter
+  // gate). Identity gate is the new-claim domain check; sessionId/channelId
+  // gates mirror existing primitives' defense-in-depth shape.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels-identity] claimIdentityNamed: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (!isValidIdentity(identity)) {
+    throw new Error(
+      `[channels-identity] claimIdentityNamed: invalid identity "${String(identity)}" — must be a NATO letter (Alpha..Zulu)`,
+    );
+  }
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    throw new Error(
+      "[channels-identity] claimIdentityNamed: sessionId must be a non-empty string",
+    );
+  }
+
+  // P0: same-session pre-check (Decision §11). Bifurcate idempotent rejoin
+  // (same-letter) from operator-error (different-letter) BEFORE any
+  // filesystem mutation, so the new-claim path doesn't see a stale state.
+  const existing = findExistingClaim(channelId, sessionId);
+  if (existing !== null) {
+    if (existing.identity === identity) {
+      // Same-letter idempotent rejoin per §11(a). Best-effort reconcile
+      // metadata in case the previous claimIdentityNamed died after
+      // linkSync but before commitIdentityClaim (mirrors claimIdentity's
+      // reconcile-on-rejoin path at lines 191-208).
+      try {
+        await commitIdentityClaim({
+          channelId,
+          identity: existing.identity,
+          claim: existing.claim,
+        });
+      } catch (err: unknown) {
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          source: "channels-identity",
+          kind: "write-failed",
+          sessionId,
+          artifactPath: identitySentinelPath(channelId, existing.identity),
+          detail: `reconcile-on-rejoin commitIdentityClaim failed: ${(err as Error).message}`,
+        });
+      }
+      return {
+        identity: existing.identity,
+        session_id: sessionId,
+        role: existing.claim.role,
+        joined_at: existing.claim.joined_at,
+        is_new_participant: false,
+      };
+    }
+    // Different-letter rejection per §11(b). Operator must explicitly
+    // release the current claim (deferred release-self verb) before
+    // claiming a different letter; silent atomic-move would obscure the
+    // prior claim and confuse downstream tooling.
+    throw new IdentityAlreadyHeldBySelfError(
+      channelId,
+      existing.identity,
+      identity,
+    );
+  }
+
+  // P1: pre-lock linkSync atomic-create. Mirrors claimIdentity's tmpPath +
+  // linkSync(tmp, sentinel) discipline (lines 218-274) but targets a single
+  // named letter rather than walking NATO_POOL.
+  const dir = identitiesDir(channelId);
+  // RE-9 fix: legacy channels lack the identities/ subdir; mkdirSync first
+  // (recursive:true is idempotent on existing dirs).
+  mkdirSync(dir, { recursive: true });
+
+  const joinedAt = new Date().toISOString();
+  const newClaim: IdentityClaim = {
+    session_id: sessionId,
+    role: defaultRole,
+    joined_at: joinedAt,
+  };
+  const sentinelPath = identitySentinelPath(channelId, identity);
+  const tmpPath = join(
+    dir,
+    `.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}`,
+  );
+  // wx flag (O_CREAT|O_EXCL) per Wave 1 RE-W1-4 — sibling pattern of
+  // active-sessions/index.ts:writeMetaIfMissing. Match claimIdentity:233-236.
+  writeFileSync(tmpPath, `${JSON.stringify(newClaim)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+
+  let renameSyncConsumedTmpPath = false;
+  try {
+    try {
+      linkSync(tmpPath, sentinelPath);
+      // P1 success — no prior holder. Commit metadata under the lock and
+      // return. NO audit-trail message; this is a fresh claim, not a
+      // takeover.
+      await commitIdentityClaim({
+        channelId,
+        identity,
+        claim: newClaim,
+      });
+      return {
+        identity,
+        session_id: sessionId,
+        role: defaultRole,
+        joined_at: joinedAt,
+        is_new_participant: true,
+      };
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== "EEXIST") {
+        // Unexpected linkSync failure — surface via presence-failure-log
+        // and rethrow. Mirrors claimIdentity:265-274 shape.
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          source: "channels-identity",
+          kind: "write-failed",
+          sessionId,
+          artifactPath: sentinelPath,
+          detail: `claimIdentityNamed P1 linkSync failed: ${(err as Error).message}`,
+        });
+        throw err;
+      }
+      // EEXIST — sentinel held by another session. Fall through to P2.
+    }
+
+    // P2: takeover branch. Delegate atomic lock+CAS+force+rename+commit to
+    // the index.ts primitive (sibling of closeStalePeerIdentity).
+    const result = await claimNamedIdentityWithLock({
+      channelId,
+      identity,
+      newClaim,
+      tmpPath,
+      sentinelPath,
+      force,
+      fromSession,
+    });
+
+    if (result.kind === "cas-mismatch") {
+      throw new IdentityCasMismatchError(
+        channelId,
+        identity,
+        result.expected,
+        result.actual,
+      );
+    }
+    if (result.kind === "active") {
+      throw new IdentityActiveError(
+        channelId,
+        identity,
+        result.holderSessionId,
+        result.ageMs,
+      );
+    }
+    // result.kind === "claimed" — takeover succeeded under the lock.
+    // renameSync moved tmpPath into sentinelPath; finally cleanup will
+    // ENOENT-tolerantly skip.
+    renameSyncConsumedTmpPath = true;
+
+    // Post-lock audit-trail (Decision §3 RE-3 closure). Best-effort — on
+    // appendMessage failure, write appendPresenceFailure breadcrumb so the
+    // forensic gap is observable rather than silent.
+    const auditMessage: ChannelMessage = {
+      ts: new Date().toISOString(),
+      from: sessionId,
+      kind: "status",
+      body: `[takeover] identity '${identity}' claimed by session ${sessionId}, displacing ${result.displacedSessionId ?? "(unknown)"}`,
+    };
+    try {
+      await appendMessage({ channelId, message: auditMessage });
+    } catch (err: unknown) {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        source: "channels-identity",
+        kind: "takeover-audit-failed",
+        sessionId,
+        artifactPath: channelId,
+        detail: `claimIdentityNamed takeover audit-trail failed: ${(err as Error).message}`,
+      });
+    }
+
+    return {
+      identity,
+      session_id: sessionId,
+      role: defaultRole,
+      joined_at: joinedAt,
+      is_new_participant: true,
+      takeover_displaced_session_id: result.displacedSessionId,
+    };
+  } finally {
+    if (!renameSyncConsumedTmpPath) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // tmp already gone (linkSync may have moved it via inode-link or
+        // another path); ignore.
+      }
+    }
+  }
 }

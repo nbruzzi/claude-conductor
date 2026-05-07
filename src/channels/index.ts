@@ -739,6 +739,120 @@ export async function closeStalePeerIdentity(args: {
 }
 
 /**
+ * Atomically commit a named-identity takeover under `withMetadataLock`.
+ * Sibling-of `closeStalePeerIdentity` for the P2 `claim --as <Identity>`
+ * flow per plan giggly-bouncing-spark.md Decisions §3 + §4 + §9.
+ *
+ * **Two-phase contract.** Caller (`claimIdentityNamed` in identity.ts) does
+ * P1's pre-lock `linkSync(tmpPath, sentinelPath)` first; on EEXIST, it calls
+ * THIS function to perform P2 — heartbeat snapshot + CAS check + force gate
+ * + atomic `renameSync(tmpPath, sentinelPath)` overwrite + metadata commit
+ * — all under one `withMetadataLock` cycle. NO sentinel unlink ever; the
+ * `renameSync` is the takeover atomicity primitive.
+ *
+ * **Lock-domain note** (per RE-1 / Bravo MAJ-1 cross-audit): `withMetadataLock`
+ * serializes metadata writes only — sentinel filesystem operations are NOT
+ * serialized by the lock. This function therefore performs the renameSync
+ * inside the lock to bound the racing window with concurrent metadata
+ * mutators (`commitIdentityClaim` / `removeIdentityClaim` / `setIdentityRole`
+ * / `closeStalePeerIdentity`). The residual race with vanilla
+ * `claimIdentity:240-259`'s pre-lock linkSync is documented in plan §3
+ * acceptance section as bounded operator-only (`--force` + concurrent vanilla
+ * join). Mitigation deferred to follow-up cycle.
+ *
+ * **Discriminated result:**
+ *   - `{kind: "claimed", displacedSessionId}` — takeover succeeded; sentinel
+ *     replaced + metadata committed. `displacedSessionId` is the prior
+ *     holder's session_id (`null` if metadata had no entry — orphan-like
+ *     sentinel-only state). Caller posts the audit-trail message post-lock.
+ *   - `{kind: "active", holderSessionId, ageMs}` — refused: identity is held
+ *     and `--force` was not passed. Caller throws `IdentityActiveError`.
+ *   - `{kind: "cas-mismatch", expected, actual}` — refused: `--from-session`
+ *     was passed but did not match the holder's session_id. Caller throws
+ *     `IdentityCasMismatchError`.
+ *
+ * `tmpPath` MUST exist on the same filesystem as `sentinelPath` (renameSync
+ * requires same-fs); the caller's `mkdirSync(identitiesDir, {recursive:true})`
+ * + `writeFileSync(tmpPath)` discipline already satisfies this.
+ */
+export async function claimNamedIdentityWithLock(args: {
+  channelId: string;
+  identity: string;
+  newClaim: IdentityClaim;
+  tmpPath: string;
+  sentinelPath: string;
+  force: boolean;
+  fromSession: string | undefined;
+}): Promise<
+  | { kind: "claimed"; displacedSessionId: string | null }
+  | { kind: "active"; holderSessionId: string; ageMs: number | null }
+  | { kind: "cas-mismatch"; expected: string; actual: string | null }
+> {
+  const { channelId, identity, newClaim, tmpPath, sentinelPath, force } = args;
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] claimNamedIdentityWithLock: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return withMetadataLock(channelId, () => {
+    const meta = readMetadataRaw(channelId);
+    const existingMeta = meta.identities?.[identity];
+    const holderSessionId = existingMeta?.session_id ?? null;
+
+    // CAS gate (Decision §9). Operator passed --from-session — verify the
+    // holder's session_id matches before takeover proceeds. Mismatch is
+    // refused with discriminated kind so the CLI verb can emit a clear
+    // forensic-style error without triggering the active-error path.
+    if (args.fromSession !== undefined) {
+      if (holderSessionId !== args.fromSession) {
+        return {
+          kind: "cas-mismatch",
+          expected: args.fromSession,
+          actual: holderSessionId,
+        } as const;
+      }
+    }
+
+    // Force gate (Decision §4). REQUIRE --force for ALL --as takeovers.
+    // Drops the staleness-auto path (RE-5 closure) — 60s STALE_THRESHOLD_MS
+    // can false-positive on Monitor-wake-delayed sessions.
+    if (!force) {
+      const heartbeatMs =
+        holderSessionId !== null
+          ? heartbeatMtime(channelId, holderSessionId)
+          : null;
+      const ageMs = heartbeatMs === null ? null : Date.now() - heartbeatMs;
+      return {
+        kind: "active",
+        holderSessionId: holderSessionId ?? "(unknown)",
+        ageMs,
+      } as const;
+    }
+
+    // Force=true: atomic takeover. renameSync replaces sentinelPath with
+    // tmpPath in one syscall — there is NO between-state where sentinel is
+    // absent or doubly-claimed. (POSIX rename(2) atomicity guarantee on
+    // same-filesystem; same-fs is guaranteed by caller's mkdirSync +
+    // writeFileSync of tmpPath in identitiesDir.)
+    renameSync(tmpPath, sentinelPath);
+
+    // Update metadata.identities under the same lock cycle so concurrent
+    // metadata mutators see consistent post-state.
+    const nextIdentities: Record<string, IdentityClaim> = {
+      ...(meta.identities ?? {}),
+      [identity]: newClaim,
+    };
+    const next: ChannelMetadata = { ...meta, identities: nextIdentities };
+    writeMetadataRaw(channelId, next, newClaim.session_id);
+
+    return {
+      kind: "claimed",
+      displacedSessionId: holderSessionId,
+    } as const;
+  });
+}
+
+/**
  * Atomically update the role of an existing identity claim. Read-modify-
  * write under `withMetadataLock` so set-role races against concurrent
  * claim/release/heartbeat operations are race-safe.

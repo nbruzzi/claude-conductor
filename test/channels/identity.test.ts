@@ -12,8 +12,10 @@ import {
 import { join } from "node:path";
 
 import {
+  closeChannel,
   closeStalePeerIdentity,
   createChannel,
+  readMessages,
   readMetadata,
   removeIdentityClaim,
   setIdentityRole,
@@ -21,16 +23,23 @@ import {
 } from "../../src/channels/index.ts";
 import {
   claimIdentity,
+  claimIdentityNamed,
   getIdentityForSession,
+  IdentityActiveError,
+  IdentityAlreadyHeldBySelfError,
+  IdentityCasMismatchError,
   IdentityNotHeldError,
+  identitySentinelPath,
   INTERNAL,
   isValidIdentity,
+  type NatoIdentity,
   NATO_POOL,
   NatoExhaustedError,
   releaseIdentity,
   setRole,
   unlinkIdentitySentinelOrLogOrphan,
 } from "../../src/channels/identity.ts";
+import { readPresenceFailures } from "../../src/shared/presence-failure-log.ts";
 
 const SANDBOX = `/tmp/test-identity-${process.pid}`;
 const SESSION = "sess-identity-test";
@@ -631,6 +640,323 @@ describe("identity", () => {
         role: "pen",
       });
       expect(setResult.kind).toBe("not-held");
+    });
+  });
+
+  describe("claimIdentityNamed (P2 — channel-as-flag plan)", () => {
+    /**
+     * Plan: ~/.claude/plans/giggly-bouncing-spark.md (Plan v1.3 final).
+     * Tests the three-phase claim primitive:
+     * - P0 same-session pre-check (Decision §11 same-letter idempotent /
+     *   different-letter rejection)
+     * - P1 pre-lock linkSync (fresh-claim happy path)
+     * - P2 takeover via claimNamedIdentityWithLock (Decision §3 + §4 force
+     *   gate + §9 CAS check + §10 tailored error messages)
+     * - RE-3 audit-trail-failure breadcrumb (post-lock appendMessage failure
+     *   surfaces via appendPresenceFailure rather than silent)
+     * - RE-9 legacy-channel mkdirSync (channels lacking identities/ dir)
+     */
+    const SESSION_OLD = "sess-old-claimnamed";
+    const SESSION_NEW = "sess-new-claimnamed";
+
+    it("happy path: claims named identity on fresh channel (P1 pre-lock linkSync)", async () => {
+      await createChannel({
+        channelId: "c-cn-1",
+        handoffId: "c-cn-1",
+        sessionId: SESSION_NEW,
+      });
+      const result = await claimIdentityNamed({
+        channelId: "c-cn-1",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+      });
+      expect(result.identity).toBe("Alpha");
+      expect(result.session_id).toBe(SESSION_NEW);
+      expect(result.role).toBe("queue");
+      expect(result.is_new_participant).toBe(true);
+      expect(result.takeover_displaced_session_id).toBeUndefined();
+      // Sentinel + metadata both reflect the claim.
+      const sentinel = JSON.parse(
+        readFileSync(identitySentinelPath("c-cn-1", "Alpha"), "utf-8"),
+      ) as { session_id: string };
+      expect(sentinel.session_id).toBe(SESSION_NEW);
+      const meta = readMetadata("c-cn-1");
+      expect(meta.identities?.["Alpha"]?.session_id).toBe(SESSION_NEW);
+    });
+
+    it("same-letter idempotent rejoin: same session, same letter → returns existing claim (P0 §11(a))", async () => {
+      await createChannel({
+        channelId: "c-cn-2",
+        handoffId: "c-cn-2",
+        sessionId: SESSION_NEW,
+      });
+      const first = await claimIdentityNamed({
+        channelId: "c-cn-2",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+      });
+      const second = await claimIdentityNamed({
+        channelId: "c-cn-2",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+      });
+      expect(second.identity).toBe("Alpha");
+      expect(second.session_id).toBe(SESSION_NEW);
+      expect(second.is_new_participant).toBe(false);
+      // joined_at should match first claim — it's the same logical claim.
+      expect(second.joined_at).toBe(first.joined_at);
+      expect(second.takeover_displaced_session_id).toBeUndefined();
+    });
+
+    it("same-session-different-letter: throws IdentityAlreadyHeldBySelfError (P0 §11(b))", async () => {
+      await createChannel({
+        channelId: "c-cn-3",
+        handoffId: "c-cn-3",
+        sessionId: SESSION_NEW,
+      });
+      // Claim Alpha first.
+      await claimIdentityNamed({
+        channelId: "c-cn-3",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+      });
+      // Now try to claim Bravo from the same session — should reject.
+      let caught: unknown = null;
+      try {
+        await claimIdentityNamed({
+          channelId: "c-cn-3",
+          sessionId: SESSION_NEW,
+          identity: "Bravo",
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(IdentityAlreadyHeldBySelfError);
+      if (caught instanceof IdentityAlreadyHeldBySelfError) {
+        expect(caught.channelId).toBe("c-cn-3");
+        expect(caught.currentIdentity).toBe("Alpha");
+        expect(caught.requestedIdentity).toBe("Bravo");
+        expect(caught.message).toContain("already holds identity 'Alpha'");
+        expect(caught.message).toContain("cannot claim 'Bravo'");
+      }
+    });
+
+    it("fresh-holder rejection (no force): throws IdentityActiveError with holder + age (P2 force gate)", async () => {
+      await createChannel({
+        channelId: "c-cn-4",
+        handoffId: "c-cn-4",
+        sessionId: SESSION_OLD,
+      });
+      await claimIdentityNamed({
+        channelId: "c-cn-4",
+        sessionId: SESSION_OLD,
+        identity: "Alpha",
+      });
+      touchHeartbeat("c-cn-4", SESSION_OLD); // fresh heartbeat
+      let caught: unknown = null;
+      try {
+        await claimIdentityNamed({
+          channelId: "c-cn-4",
+          sessionId: SESSION_NEW,
+          identity: "Alpha",
+          // force omitted — defaults false
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(IdentityActiveError);
+      if (caught instanceof IdentityActiveError) {
+        expect(caught.channelId).toBe("c-cn-4");
+        expect(caught.identity).toBe("Alpha");
+        expect(caught.holderSessionId).toBe(SESSION_OLD);
+        expect(caught.message).toContain("Pass --force");
+        expect(caught.message).toContain("close-peer");
+      }
+    });
+
+    it("force takeover: different session + force=true → atomic renameSync + commit + audit-trail message", async () => {
+      await createChannel({
+        channelId: "c-cn-5",
+        handoffId: "c-cn-5",
+        sessionId: SESSION_OLD,
+      });
+      await claimIdentityNamed({
+        channelId: "c-cn-5",
+        sessionId: SESSION_OLD,
+        identity: "Alpha",
+      });
+      touchHeartbeat("c-cn-5", SESSION_OLD);
+      const result = await claimIdentityNamed({
+        channelId: "c-cn-5",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+        force: true,
+      });
+      expect(result.identity).toBe("Alpha");
+      expect(result.session_id).toBe(SESSION_NEW);
+      expect(result.is_new_participant).toBe(true);
+      expect(result.takeover_displaced_session_id).toBe(SESSION_OLD);
+      // Sentinel content reflects new session (renameSync atomic-replace).
+      const sentinel = JSON.parse(
+        readFileSync(identitySentinelPath("c-cn-5", "Alpha"), "utf-8"),
+      ) as { session_id: string };
+      expect(sentinel.session_id).toBe(SESSION_NEW);
+      // Metadata identities[Alpha].session_id reflects new session.
+      const meta = readMetadata("c-cn-5");
+      expect(meta.identities?.["Alpha"]?.session_id).toBe(SESSION_NEW);
+      // Audit-trail status message landed in JSONL.
+      const messages = readMessages("c-cn-5");
+      const auditMessage = messages.find(
+        (m) =>
+          m.kind === "status" &&
+          typeof m.body === "string" &&
+          m.body.includes("[takeover]"),
+      );
+      expect(auditMessage).toBeDefined();
+      expect(auditMessage?.body).toContain("identity 'Alpha'");
+      expect(auditMessage?.body).toContain(SESSION_NEW);
+      expect(auditMessage?.body).toContain(`displacing ${SESSION_OLD}`);
+    });
+
+    it("CAS pass: --force + matching --from-session → takeover succeeds", async () => {
+      await createChannel({
+        channelId: "c-cn-6",
+        handoffId: "c-cn-6",
+        sessionId: SESSION_OLD,
+      });
+      await claimIdentityNamed({
+        channelId: "c-cn-6",
+        sessionId: SESSION_OLD,
+        identity: "Alpha",
+      });
+      touchHeartbeat("c-cn-6", SESSION_OLD);
+      const result = await claimIdentityNamed({
+        channelId: "c-cn-6",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+        force: true,
+        fromSession: SESSION_OLD, // matches current holder
+      });
+      expect(result.is_new_participant).toBe(true);
+      expect(result.takeover_displaced_session_id).toBe(SESSION_OLD);
+    });
+
+    it("CAS fail: --force + mismatching --from-session → throws IdentityCasMismatchError", async () => {
+      await createChannel({
+        channelId: "c-cn-7",
+        handoffId: "c-cn-7",
+        sessionId: SESSION_OLD,
+      });
+      await claimIdentityNamed({
+        channelId: "c-cn-7",
+        sessionId: SESSION_OLD,
+        identity: "Alpha",
+      });
+      touchHeartbeat("c-cn-7", SESSION_OLD);
+      let caught: unknown = null;
+      try {
+        await claimIdentityNamed({
+          channelId: "c-cn-7",
+          sessionId: SESSION_NEW,
+          identity: "Alpha",
+          force: true,
+          fromSession: "wrong-session-uuid", // doesn't match holder SESSION_OLD
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(IdentityCasMismatchError);
+      if (caught instanceof IdentityCasMismatchError) {
+        expect(caught.channelId).toBe("c-cn-7");
+        expect(caught.identity).toBe("Alpha");
+        expect(caught.expected).toBe("wrong-session-uuid");
+        expect(caught.actual).toBe(SESSION_OLD);
+        expect(caught.message).toContain("CAS check failed");
+      }
+    });
+
+    it("NATO-letter validation: invalid identity throws synchronously", async () => {
+      await createChannel({
+        channelId: "c-cn-8",
+        handoffId: "c-cn-8",
+        sessionId: SESSION_NEW,
+      });
+      // Lowercase "alpha" is not a valid NATO letter. Double-cast bypasses
+      // the compile-time type gate; runtime isValidIdentity catches it
+      // (identity.ts:795-799).
+      await expect(
+        claimIdentityNamed({
+          channelId: "c-cn-8",
+          sessionId: SESSION_NEW,
+          identity: "alpha" as unknown as NatoIdentity,
+        }),
+      ).rejects.toThrow(/invalid identity/);
+    });
+
+    it("legacy-channel takeover: no identities/ dir → mkdirSync recovers + claim succeeds (RE-9 closure)", async () => {
+      await createChannel({
+        channelId: "c-cn-9",
+        handoffId: "c-cn-9",
+        sessionId: SESSION_NEW,
+      });
+      const dir = join(SANDBOX, "c-cn-9", "identities");
+      // Pre-condition: createChannel doesn't create identities/ dir; first
+      // claim is responsible for mkdirSync. RE-9 closure: claimIdentityNamed
+      // mkdirSyncs (recursive: true) before linkSync to handle this case.
+      expect(existsSync(dir)).toBe(false);
+      const result = await claimIdentityNamed({
+        channelId: "c-cn-9",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+      });
+      expect(result.identity).toBe("Alpha");
+      expect(result.is_new_participant).toBe(true);
+      expect(existsSync(dir)).toBe(true); // mkdirSync recovered
+    });
+
+    it("audit-trail-failure breadcrumb: appendMessage throw → appendPresenceFailure with kind 'takeover-audit-failed' (LB2-MIN-1 closure)", async () => {
+      await createChannel({
+        channelId: "c-cn-10",
+        handoffId: "c-cn-10",
+        sessionId: SESSION_OLD,
+      });
+      await claimIdentityNamed({
+        channelId: "c-cn-10",
+        sessionId: SESSION_OLD,
+        identity: "Alpha",
+      });
+      touchHeartbeat("c-cn-10", SESSION_OLD);
+      // Close the channel — appendMessage throws "channel is closed; cannot
+      // append" (channels/index.ts:935-937). claimNamedIdentityWithLock
+      // doesn't check closed_at, so the takeover proceeds; the post-lock
+      // appendMessage failure triggers the appendPresenceFailure breadcrumb
+      // path per Decision §3 RE-3 closure.
+      await closeChannel({
+        channelId: "c-cn-10",
+        sessionId: SESSION_OLD,
+      });
+      const result = await claimIdentityNamed({
+        channelId: "c-cn-10",
+        sessionId: SESSION_NEW,
+        identity: "Alpha",
+        force: true,
+      });
+      // Takeover succeeded at metadata layer despite audit-trail failure.
+      expect(result.is_new_participant).toBe(true);
+      expect(result.takeover_displaced_session_id).toBe(SESSION_OLD);
+      // Breadcrumb landed in presence-failure log. Filter by sessionId +
+      // artifactPath so concurrent test runs / unrelated entries don't
+      // false-match.
+      const events = readPresenceFailures(50);
+      const breadcrumb = events.find(
+        (e) =>
+          e.kind === "takeover-audit-failed" &&
+          e.source === "channels-identity" &&
+          e.sessionId === SESSION_NEW &&
+          e.artifactPath === "c-cn-10",
+      );
+      expect(breadcrumb).toBeDefined();
+      expect(breadcrumb?.detail).toContain("takeover audit-trail failed");
     });
   });
 });

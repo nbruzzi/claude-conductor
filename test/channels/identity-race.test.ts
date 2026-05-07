@@ -33,12 +33,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
   claimIdentity,
+  claimIdentityNamed,
+  identitySentinelPath,
   NATO_POOL,
   setRole,
 } from "../../src/channels/identity.ts";
@@ -46,6 +48,8 @@ import {
   appendMessage,
   createChannel,
   readMessages,
+  readMetadata,
+  touchHeartbeat,
 } from "../../src/channels/index.ts";
 
 const PACKAGE_ROOT = dirname(dirname(import.meta.dir));
@@ -327,4 +331,119 @@ describe("appendMessage role-flip interleave (Phase 2 Slice 1+2 / RE-W0-1)", () 
       }
     }
   }, 30_000);
+});
+
+/**
+ * Plan v1.3 §7 — claimIdentityNamed takeover-race-fuzz (RE-6 closure).
+ *
+ * Two complementary surfaces:
+ *
+ *   1. **Heartbeat-touch + takeover interleaving (load-bearing).** N=20
+ *      concurrent (prior-holder-heartbeat-touch, claimIdentityNamed --force)
+ *      pairs across N different channels (one per NATO letter A through T).
+ *      Asserts ALL takeovers succeed AND post-state consistency: sentinel
+ *      content's session_id === metadata.identities[Letter].session_id for
+ *      every channel. The race is between the prior holder's heartbeat
+ *      write (independent of metadata lock per `index.ts:668-673`) and the
+ *      new claimant's takeover (acquires metadata lock; reads heartbeat
+ *      snapshot inside lock). Force=true short-circuits the staleness gate
+ *      so all 20 takeovers proceed regardless of heartbeat freshness.
+ *
+ *   2. **Takeover races vanilla claimIdentity pool-walking (residual race).**
+ *      Tracked as `it.todo` per Plan v1.3 §residual-race-documentation:
+ *      vanilla `claimIdentity:240-259` does linkSync OUTSIDE the metadata
+ *      lock; concurrent claimIdentityNamed --force can have its metadata
+ *      clobbered by the vanilla claimer's later commitIdentityClaim. The
+ *      mitigation is in `claimIdentity`'s commitIdentityClaim — verify
+ *      sentinel content under lock + abort if mismatch. Tracked as
+ *      known-follow-up in Plan v1.3 §Substrate-debt-mirror; remove `.todo`
+ *      when the hardening lands.
+ */
+describe("claimIdentityNamed — takeover race fuzz (Plan v1.3 §7 / RE-6)", () => {
+  it("N=20 concurrent (heartbeat-touch + claimIdentityNamed --force) takeovers — all succeed, all post-state-consistent", async () => {
+    const N = 20;
+    const letters = NATO_POOL.slice(0, N); // A through T
+    const oldSessions = letters.map((_, i) => `sess-old-takeover-${i}`);
+    const newSessions = letters.map((_, i) => `sess-new-takeover-${i}`);
+
+    // Setup: N channels, each with prior holder claiming the letter and
+    // having an initial heartbeat. Sequential setup (each channel needs
+    // its own seeding before takeover concurrency starts).
+    for (let i = 0; i < N; i++) {
+      const channelId = `c-takeover-${i}`;
+      const oldSession = oldSessions[i] ?? "";
+      const letter = letters[i];
+      if (letter === undefined) continue;
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: oldSession,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: oldSession,
+        identity: letter,
+      });
+      touchHeartbeat(channelId, oldSession);
+    }
+
+    // Concurrent: 2N promises = N heartbeat-touches (prior-holder freshness)
+    // interleaved with N claimIdentityNamed --force takeovers (new claimant).
+    // Promise.all on a single event loop interleaves microtasks so the
+    // heartbeat-write and metadata-lock-read race within each channel.
+    const heartbeatPromises = oldSessions.map((sid, i) =>
+      Promise.resolve().then(() => touchHeartbeat(`c-takeover-${i}`, sid)),
+    );
+    const takeoverPromises = letters.map((letter, i) => {
+      const newSession = newSessions[i] ?? "";
+      return claimIdentityNamed({
+        channelId: `c-takeover-${i}`,
+        sessionId: newSession,
+        identity: letter,
+        force: true,
+      });
+    });
+
+    const [, takeoverResults] = await Promise.all([
+      Promise.all(heartbeatPromises),
+      Promise.all(takeoverPromises),
+    ]);
+
+    // Assert all takeovers succeeded with takeover_displaced_session_id set.
+    for (let i = 0; i < N; i++) {
+      const result = takeoverResults[i];
+      expect(result?.identity).toBe(letters[i]);
+      expect(result?.session_id).toBe(newSessions[i]);
+      expect(result?.is_new_participant).toBe(true);
+      expect(result?.takeover_displaced_session_id).toBe(oldSessions[i]);
+    }
+
+    // Post-state consistency: sentinel content session_id matches metadata
+    // identities[Letter].session_id for ALL N letters. This is the
+    // load-bearing assertion — if takeovers race against each other or
+    // against heartbeat writes in a way that produces torn state, this
+    // will catch it.
+    for (let i = 0; i < N; i++) {
+      const channelId = `c-takeover-${i}`;
+      const letter = letters[i];
+      const expectedSession = newSessions[i];
+      if (letter === undefined || expectedSession === undefined) continue;
+      const sentinelContent = JSON.parse(
+        readFileSync(identitySentinelPath(channelId, letter), "utf-8"),
+      ) as { session_id: string };
+      const meta = readMetadata(channelId);
+      const metaSession = meta.identities?.[letter]?.session_id;
+      expect(sentinelContent.session_id).toBe(expectedSession);
+      expect(metaSession).toBe(expectedSession);
+      // Coherence: sentinel and metadata agree (the load-bearing invariant).
+      expect(sentinelContent.session_id).toBe(metaSession ?? "");
+    }
+  }, 30_000);
+
+  it.todo(
+    "takeover --force races vanilla claimIdentity pool-walking — expected-failure until vanilla-commitIdentityClaim sentinel-reverify lands (residual race per Plan v1.3 §residual-race-documentation; vanilla:240-259 linkSync OUTSIDE lock can clobber takeover's metadata via later commitIdentityClaim)",
+    () => {
+      /* placeholder until vanilla-claimIdentity hardening lands */
+    },
+  );
 });
