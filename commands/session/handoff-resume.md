@@ -186,6 +186,8 @@ printf '%s' "joined channel in parallel context-load mode; no writes this sessio
 
 Surface the channel ID in the briefing: "Channel `<id>` — peer status: `<live|online|stale|unknown>` (from `/channel peers`)." If channel creation fails, flag the error and continue — the parallel briefing still completes.
 
+**Identity continuity (P2 — `--as <Identity>`).** When this resume should preserve a NATO identity letter from a prior cycle (the prior session's audit threads, handoff body, or channel artifacts named a specific letter — Alpha, Bravo, etc.), pass `--as <Identity>` to the join call above instead of bare `join`. If the named letter is held by another session (the prior holder's heartbeat is still alive but their session ended), add `--force` to take over via atomic sentinel replacement. Optional `--from-session <prior-uuid>` adds a CAS check so the takeover refuses if the holder isn't the expected session. See `commands/session/channel.md` `### join` → "Recovery flow for parallel-session resume" for the full flag matrix; the legacy 4-step recovery dance is documented there too for substrate-pinned CLI versions older than `--as`.
+
 ## Step 5: Execute with context
 
 **Skipped entirely when `MODE == "parallel"`.**
