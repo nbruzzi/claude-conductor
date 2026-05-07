@@ -94,6 +94,15 @@ The plan's audience is **future-Claude + peer Claudes coordinating via Anthropic
 | `src/hooks/checks/session-presence-register.ts`             | extract-with-shim                                         | Generic SessionStart presence registration.                                                                                                                                                                                         |
 | `src/hooks/checks/session-presence-unregister.ts`           | extract-with-shim                                         | Generic Stop presence cleanup.                                                                                                                                                                                                      |
 
+### Hooks/checks — CI verification protocol (substrate-canonical Cluster 2 INVERSIONS arc 2026-05-07)
+
+| File                                                                  | Decision                                                  | Rationale                                                                                                                                |
+| --------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.claude-dotfiles/src/hooks/checks/ci-verification-auth-warn.ts`    | substrate-canonical (Cluster 2 INVERSIONS arc 2026-05-07) | TIER-3a CI verification protocol; single-session gh-auth advisory at session-start. Substrate-canonical post-Cluster-2.                  |
+| `~/.claude-dotfiles/src/hooks/checks/ci-verification-gate.ts`         | substrate-canonical (Cluster 2 INVERSIONS arc 2026-05-07) | TIER-2 CI verification protocol; block on shipped/merged claims without CI evidence. Substrate-canonical post-Cluster-2.                 |
+| `~/.claude-dotfiles/src/hooks/checks/ci-verification-pre-push-arm.ts` | substrate-canonical (Cluster 2 INVERSIONS arc 2026-05-07) | TIER-4 CI verification protocol; sentinel writer for git push, per-session push tracking. Substrate-canonical post-Cluster-2.            |
+| `~/.claude-dotfiles/src/hooks/checks/ci-verification-reminder.ts`     | substrate-canonical (Cluster 2 INVERSIONS arc 2026-05-07) | TIER-1 CI verification protocol; reminder after git push, advisory message in this session's stderr. Substrate-canonical post-Cluster-2. |
+
 ### Hooks/checks — Nick-specific (KEEP)
 
 | File                                                   | Decision         | Rationale                                                                                                                                        |

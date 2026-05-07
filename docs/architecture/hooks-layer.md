@@ -39,20 +39,18 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 3. `fact-force` — enforces fact-force scope.
 4. `config-protection` — protects `~/.claude/` config from accidental overwrites.
 5. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
-6. `ci-verification-pre-push-arm` — TIER 4 sentinel for `git push` ground truth.
 
-### `post-tool-use` (plugin-canonical post-Cluster-1)
+### `post-tool-use` (plugin-canonical post-Cluster-2; Cluster 2 of INVERSIONS arc 2026-05-07 moved `ci-verification-reminder` to substrate)
 
-1. `ci-verification-reminder` — emit reminder after `git push`.
+(none post-Cluster-2)
 
-### `stop` (plugin-canonical post-Cluster-1)
+### `stop` (plugin-canonical post-Cluster-2; Cluster 2 of INVERSIONS arc 2026-05-07 moved `ci-verification-gate` to substrate)
 
-1. `ci-verification-gate` — TIER 2 block on shipped/merged claims without CI evidence.
-2. `handoff-latest-guard` — verifies LATEST.md symlink integrity.
-3. `session-presence-unregister` — drops session from active-sessions registry.
-4. **(Phase 3 Slice 2):** `dotfiles-worktree-cleanup` — fires BEFORE `session-presence-unregister` per array order; removes the per-session dotfiles worktree, calls `unregisterActiveSession` (RE-3 self-heal — explicit, not relying on downstream unregister), and clears the heartbeat-body sentinel. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
+1. `handoff-latest-guard` — verifies LATEST.md symlink integrity.
+2. `session-presence-unregister` — drops session from active-sessions registry.
+3. **(Phase 3 Slice 2):** `dotfiles-worktree-cleanup` — fires BEFORE `session-presence-unregister` per array order; removes the per-session dotfiles worktree, calls `unregisterActiveSession` (RE-3 self-heal — explicit, not relying on downstream unregister), and clears the heartbeat-body sentinel. RE-104 reconciliation guard. CLI-DX-5 epilogue points operators at runbook §"Working from a second terminal".
 
-### `session-start`
+### `session-start` (post-Cluster-2; `ci-verification-auth-warn` moved to substrate Cluster 2)
 
 1. `channel-gc` — Phase 1 channel-archive gc.
 2. `active-channels-load` — Phase 1 active-channels surfacing.
@@ -61,7 +59,6 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 5. **(Phase 2 Slice 5):** `identity-injector` — Phase 2 NATO-identity context surface.
 6. **(Phase 3 Slice 2):** `dotfiles-worktree-provisioner` — feature-flag-gated per-session worktree provisioner. Anchor-pins canonical-claude-home heartbeat (REV 0.2 ARCH-1). RE-105 soft-ceiling reminder + RE-8 mixed-flag-state warning.
 7. **(Phase 3 Slice 2):** `dotfiles-worktree-gc` — orphan reaper for per-session worktrees. RE-102 single-threshold staleness (`GC_WINDOW_MS` = 60min). RE-103 mtime-filtered safety guards. RE-3 self-heal triple. Forensic-marker escape hatch. 5-min rate-gate cursor.
-8. **(CI verification cycle TIER 3a):** `ci-verification-auth-warn` — surface gh-auth state at session-start so the agent knows whether `gh pr checks` will work before push-time.
 
 ### `user-prompt-submit`
 

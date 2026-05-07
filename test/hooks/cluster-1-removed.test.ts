@@ -40,19 +40,17 @@ const CLUSTER_1_NAMES = [
   "test-gate",
 ] as const;
 
-const EXPECTED_POST_PR2_COUNT = 20;
-
+// Cluster 2 v1.3 ARCH-V1.2-MAJOR-3 option-a (2026-05-07): count-lock removed.
+// cluster-N-removed.test.ts files are presence/shape-only (sibling-parity with
+// substrate-side cluster-N-substrate-canonical.test.ts pattern). The count is
+// independently locked by `bundled-registrations.test.ts:EXPECTED_COUNT` — there
+// is no need to ratchet a second magic number per cluster. See decisions/cluster-1.md
+// v2-anticipation addendum for the substrate-debt-mirror inheritance picture.
 describe("Cluster 1 plugin-removal: 9 universal-discipline names absent from BUNDLED_CHECK_NAMES", () => {
   it("BUNDLED_CHECK_NAMES contains none of the 9 cluster-1 names (disjointness invariant)", () => {
     const bundledSet = new Set<string>(BUNDLED_CHECK_NAMES);
     for (const clusterName of CLUSTER_1_NAMES) {
       expect(bundledSet.has(clusterName)).toBe(false);
     }
-  });
-
-  it("BUNDLED_CHECK_NAMES count is locked at EXPECTED_POST_PR2_COUNT", () => {
-    // Was 29 pre-Cluster-1; now 20 (29 − 9). If a future cluster removal happens,
-    // this number drops further; if a re-introduction happens, this fails first.
-    expect(BUNDLED_CHECK_NAMES.length).toBe(EXPECTED_POST_PR2_COUNT);
   });
 });

@@ -65,7 +65,11 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // checks moved plugin → substrate (auto-format, branch-enforcement,
 // destructive-cmd, no-any, no-enum, pre-commit, prefer-bun, sensitive-files,
 // test-gate); count drops 29 → 20. Plan ~/.claude/plans/cluster-1-universal-discipline.md.
-const EXPECTED_COUNT = 20;
+//
+// Cluster 2 of INVERSIONS arc (2026-05-07) — 4 CI verification protocol checks
+// moved plugin → substrate (ci-verification-{auth-warn,gate,pre-push-arm,reminder});
+// count drops 20 → 16. Plan ~/.claude/plans/cluster-2-ci-verification.md.
+const EXPECTED_COUNT = 16;
 
 describe("bundled-registrations meta-test", () => {
   it("BUNDLED_CHECK_NAMES has exactly EXPECTED_COUNT entries", () => {
@@ -148,29 +152,10 @@ describe("bundled-registrations meta-test", () => {
     expect(names).toContain("dotfiles-worktree-cleanup");
   });
 
-  // CI verification cycle (TIER 2/3/3a/4) belt-and-suspenders to EXPECTED_COUNT
-  // per plan audit ARCH-6 (catches "wrong event bucket" not just "wrong count").
-  it("ci-verification-pre-push-arm registered on pre-tool-use", () => {
-    expect(BUNDLED_CHECKS_BY_EVENT["pre-tool-use"]).toContain(
-      "ci-verification-pre-push-arm",
-    );
-  });
-
-  it("ci-verification-reminder registered on post-tool-use", () => {
-    expect(BUNDLED_CHECKS_BY_EVENT["post-tool-use"]).toContain(
-      "ci-verification-reminder",
-    );
-  });
-
-  it("ci-verification-gate registered on stop", () => {
-    expect(BUNDLED_CHECKS_BY_EVENT["stop"]).toContain("ci-verification-gate");
-  });
-
-  it("ci-verification-auth-warn registered on session-start", () => {
-    expect(BUNDLED_CHECKS_BY_EVENT["session-start"]).toContain(
-      "ci-verification-auth-warn",
-    );
-  });
+  // CI verification cycle (TIER 2/3/3a/4) — Cluster 2 of INVERSIONS arc 2026-05-07
+  // moved these 4 names to substrate; belt-and-suspenders assertions removed
+  // because the names no longer live in BUNDLED_CHECKS_BY_EVENT. Disjointness
+  // invariant locked by `cluster-2-removed.test.ts`.
 
   // TA-3 PARTIAL fix — pin narrowing at compile time, not just runtime.
   // These blocks verify the type-level guarantees of
