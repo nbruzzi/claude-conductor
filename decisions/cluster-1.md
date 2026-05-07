@@ -218,14 +218,13 @@ Charlie's Lane B audit on Cluster 2 plan v1.1 surfaced a META finding: ARCH-V1.1
 - **Shape:** `expect(allNames.size).toBe(BUNDLED_CHECK_NAMES.length)` — strict equality against plugin's exported constant, dynamically imported from `claude-conductor/hooks/bundled-check-names`.
 - **Inheritance:** zero per-cluster maintenance debt. Substrate's registry-iteration sentinel automatically tracks plugin's count as Clusters 2–5 land. Decision C above codifies the convention.
 
-### MAGIC-NUMBER REMAINS — both plugin tests carry per-cluster maintenance debt
+### MAGIC-NUMBER REMAINS — 1 site only (post Cluster 2 v1.3 generalization)
 
-Two plugin-side test sites lock the post-PR2 count with a hand-written magic number. Each subsequent cluster's PR2 must update **both** sites or CI breaks:
-
-- **Site 1:** `~/claude-conductor/test/hooks/cluster-1-removed.test.ts:43` — `const EXPECTED_POST_PR2_COUNT = 20;` (asserts `BUNDLED_CHECK_NAMES.length === 20`).
-- **Site 2:** `~/claude-conductor/test/hooks/bundled-registrations.test.ts:68` — `const EXPECTED_COUNT = 20;` (asserts `BUNDLED_CHECK_NAMES.length === 20` AND set-uniqueness count `=== 20`).
-- **Per-cluster delta:** Cluster 2 (4 ci-verification names removed) → both magic numbers `20 → 16`. Cluster 3 fact-force (TBD count) → another decrement. Each cluster's PR2 manifest must list both sites in `## Files modified`.
-- **Why not dynamic on plugin side:** plugin tests can't import their own module-under-test as a "moving target" — `cluster-1-removed.test.ts`'s purpose is to lock the post-Cluster-1 invariant, and `bundled-registrations.test.ts:68`'s comment explicitly states it pins production state at the boundary. Dynamic floors here would erase the guard. Magic-number ratchet is the correct trade-off; this addendum just makes the maintenance debt visible.
+- **Site:** `~/claude-conductor/test/hooks/bundled-registrations.test.ts:68` — `const EXPECTED_COUNT = 20;` (asserts `BUNDLED_CHECK_NAMES.length === 20` AND set-uniqueness count `=== 20`). Each cluster's PR2 ratchets the value.
+- **Per-cluster delta:** Cluster 2 (4 ci-verification names): `20 → 16`. Cluster 3 fact-force (3 names): `16 → 13`. Cluster 4 handoff invariants (2 names): `13 → 11`. Cluster 5 config-protection (3 names): `11 → 8`.
+- **History:** This addendum's first commit (`7005d9f`) anticipated TWO ratcheting magic-number sites — this one plus `cluster-1-removed.test.ts:43` `EXPECTED_POST_PR2_COUNT`. Cluster 2 plan v1.3 §3.3 generalized away the second per Bravo Lane B v1.2 MAJOR-3 finding (option-a chosen): drop count-lock from `cluster-N-removed.test.ts` files entirely, restoring sibling-parity with substrate-side `cluster-N-substrate-canonical.test.ts` (which is presence/shape-only). Cluster 2 PR2 will REMOVE `cluster-1-removed.test.ts:43` EXPECTED_POST_PR2_COUNT + its locking `it()` block — cross-cluster cleanup.
+- **Why one site only:** `cluster-N-removed.test.ts` files retain Decision E's load-bearing invariant (disjointness — "these N names live in substrate, never plugin"); the count-lock duplicated `bundled-registrations.test.ts:68` AND grew linearly with cluster count (eliminated by option-a). `bundled-registrations.test.ts:68`'s comment explicitly states it pins production state at the boundary — single source of truth for count from Cluster 2 forward.
+- **Why not dynamic on plugin side:** `bundled-registrations.test.ts:68` can't import its own module-under-test as a moving target. The `BUNDLED_CHECK_NAMES.length` it asserts IS the production state — a dynamic floor would erase the guard. Magic-number ratchet at this single site is the correct trade-off; per-cluster ratchet is one site, not N+1.
 
 ### VOCABULARY-LOCK — `check-names.ts` Cluster 1 banner is Cluster-1-specific
 
@@ -249,7 +248,7 @@ Two plugin-side test sites lock the post-PR2 count with a hand-written magic num
 
 When opening a new cluster's plan and PR pair, read this addendum first. The four entries above are the substrate-debt-mirror surface; per-cluster work must:
 
-1. Update **both** plugin magic-number sites (cluster-N-removed.test.ts + bundled-registrations.test.ts:68) — list explicitly in PR2 manifest.
+1. Update **the single** plugin magic-number site (`bundled-registrations.test.ts:68`) — list explicitly in PR2 manifest. Cluster 2 v1.3 generalized away the per-cluster `cluster-N-removed.test.ts` ratchet (see updated MAGIC-NUMBER REMAINS section above); `cluster-N-removed.test.ts` files keep disjointness-only assertions.
 2. Add a NEW `check-names.ts` banner per cluster (do not extend Cluster 1's).
 3. Add a NEW `extraction-manifest.md` section per cluster (do not append to Cluster 1's).
 4. Inherit Decision C dynamic-floor for free — substrate side requires zero per-cluster change.
