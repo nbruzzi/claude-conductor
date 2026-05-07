@@ -100,16 +100,6 @@
       "import": "./src/hooks/checks/active-channels-load.ts",
       "default": "./src/hooks/checks/active-channels-load.ts"
     },
-    "./hooks/checks/auto-format": {
-      "types": "./src/hooks/checks/auto-format.ts",
-      "import": "./src/hooks/checks/auto-format.ts",
-      "default": "./src/hooks/checks/auto-format.ts"
-    },
-    "./hooks/checks/branch-enforcement": {
-      "types": "./src/hooks/checks/branch-enforcement.ts",
-      "import": "./src/hooks/checks/branch-enforcement.ts",
-      "default": "./src/hooks/checks/branch-enforcement.ts"
-    },
     "./hooks/checks/bundled-registrations": {
       "types": "./src/hooks/checks/bundled-registrations.ts",
       "import": "./src/hooks/checks/bundled-registrations.ts",
@@ -175,11 +165,6 @@
       "import": "./src/hooks/checks/config-protection-store.ts",
       "default": "./src/hooks/checks/config-protection-store.ts"
     },
-    "./hooks/checks/destructive-cmd": {
-      "types": "./src/hooks/checks/destructive-cmd.ts",
-      "import": "./src/hooks/checks/destructive-cmd.ts",
-      "default": "./src/hooks/checks/destructive-cmd.ts"
-    },
     "./hooks/checks/fact-force": {
       "types": "./src/hooks/checks/fact-force.ts",
       "import": "./src/hooks/checks/fact-force.ts",
@@ -215,31 +200,6 @@
       "import": "./src/channels/identity-context.ts",
       "default": "./src/channels/identity-context.ts"
     },
-    "./hooks/checks/no-any": {
-      "types": "./src/hooks/checks/no-any.ts",
-      "import": "./src/hooks/checks/no-any.ts",
-      "default": "./src/hooks/checks/no-any.ts"
-    },
-    "./hooks/checks/no-enum": {
-      "types": "./src/hooks/checks/no-enum.ts",
-      "import": "./src/hooks/checks/no-enum.ts",
-      "default": "./src/hooks/checks/no-enum.ts"
-    },
-    "./hooks/checks/pre-commit": {
-      "types": "./src/hooks/checks/pre-commit.ts",
-      "import": "./src/hooks/checks/pre-commit.ts",
-      "default": "./src/hooks/checks/pre-commit.ts"
-    },
-    "./hooks/checks/prefer-bun": {
-      "types": "./src/hooks/checks/prefer-bun.ts",
-      "import": "./src/hooks/checks/prefer-bun.ts",
-      "default": "./src/hooks/checks/prefer-bun.ts"
-    },
-    "./hooks/checks/sensitive-files": {
-      "types": "./src/hooks/checks/sensitive-files.ts",
-      "import": "./src/hooks/checks/sensitive-files.ts",
-      "default": "./src/hooks/checks/sensitive-files.ts"
-    },
     "./hooks/checks/session-collision-gate": {
       "types": "./src/hooks/checks/session-collision-gate.ts",
       "import": "./src/hooks/checks/session-collision-gate.ts",
@@ -269,11 +229,6 @@
       "types": "./src/hooks/checks/teammate-idle-reminder.ts",
       "import": "./src/hooks/checks/teammate-idle-reminder.ts",
       "default": "./src/hooks/checks/teammate-idle-reminder.ts"
-    },
-    "./hooks/checks/test-gate": {
-      "types": "./src/hooks/checks/test-gate.ts",
-      "import": "./src/hooks/checks/test-gate.ts",
-      "default": "./src/hooks/checks/test-gate.ts"
     },
     "./worktrees": {
       "types": "./src/worktrees/index.ts",

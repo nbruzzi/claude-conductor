@@ -181,15 +181,15 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ### Hook checks (`src/hooks/checks/`)
 
-25 individual check implementations bundled per `bundled-registrations.ts` (was 24 pre-Phase-3-Slice-2; +3 worktree hooks). Categorized:
+20 individual check implementations bundled per `bundled-registrations.ts`. Plugin scope is multi-instance coordination machinery; 9 universal-coding-discipline checks moved to substrate per Cluster 1 of INVERSIONS arc (2026-05-07) — substrate-canonical implementations now live at `~/.claude-dotfiles/src/hooks/checks/{auto-format, branch-enforcement, destructive-cmd, no-any, no-enum, pre-commit, prefer-bun, sensitive-files, test-gate}.ts`. Categorized (post-Cluster-1):
 
 **Pre-tool-use gates (blocking):**
 
-- `session-collision-gate.ts`, `handoff-symlink-write-guard.ts`, `fact-force.ts` (+ `fact-force-scope-store.ts` + `fact-force-scope-cli.ts`), `branch-enforcement.ts`, `destructive-cmd.ts`, `prefer-bun.ts`, `pre-commit.ts`, `config-protection.ts` (+ `config-protection-store.ts` + `config-protection-cli.ts`), `sensitive-files.ts`.
+- `session-collision-gate.ts`, `handoff-symlink-write-guard.ts`, `fact-force.ts` (+ `fact-force-scope-store.ts` + `fact-force-scope-cli.ts`), `config-protection.ts` (+ `config-protection-store.ts` + `config-protection-cli.ts`), `task-coordinator.ts`, `ci-verification-pre-push-arm.ts`.
 
 **Post-tool-use checks (warn/pass):**
 
-- `auto-format.ts`, `no-any.ts`, `no-enum.ts`, `sync-common.ts`.
+- `ci-verification-reminder.ts`, `sync-common.ts`.
 
 **SessionStart / Stop hooks (channel-touching):**
 
@@ -198,7 +198,7 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 **Stop-time auxiliary:**
 
-- `test-gate.ts`, `bundled-registrations.ts` (the registration manifold itself), `handoff-latest-guard.ts`.
+- `bundled-registrations.ts` (the registration manifold itself), `handoff-latest-guard.ts`, `ci-verification-gate.ts`.
 
 **Phase 3 Slice 2 worktrees:**
 

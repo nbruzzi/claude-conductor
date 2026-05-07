@@ -2,7 +2,12 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Bundled-check registrations (25 generic discipline-as-code checks).
+ * Bundled-check registrations (20 multi-instance-coordination-machinery checks).
+ *
+ * Cluster 1 of INVERSIONS arc (2026-05-07): 9 universal-coding-discipline
+ * checks (auto-format, branch-enforcement, destructive-cmd, no-any, no-enum,
+ * pre-commit, prefer-bun, sensitive-files, test-gate) moved to substrate;
+ * imports + register calls removed from this module.
  *
  * Per extraction-manifest §§ 194–225: this module owns the plugin-bound
  * registrations. In batch 4 it moves to the plugin alongside registry.ts and
@@ -18,16 +23,7 @@ import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
 import { check as checkHandoffSymlinkWriteGuard } from "./handoff-symlink-write-guard.ts";
 import { check as checkFactForce } from "./fact-force.ts";
-import { check as checkBranchEnforcement } from "./branch-enforcement.ts";
-import { check as checkDestructiveCmd } from "./destructive-cmd.ts";
-import { check as checkPreferBun } from "./prefer-bun.ts";
-import { check as checkPreCommit } from "./pre-commit.ts";
 import { check as checkConfigProtection } from "./config-protection.ts";
-import { check as checkSensitiveFiles } from "./sensitive-files.ts";
-import { check as checkAutoFormat } from "./auto-format.ts";
-import { check as checkNoAny } from "./no-any.ts";
-import { check as checkNoEnum } from "./no-enum.ts";
-import { check as checkTestGate } from "./test-gate.ts";
 import { check as checkHandoffLatestGuard } from "./handoff-latest-guard.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
 import { check as checkChannelGc } from "./channel-gc.ts";
@@ -74,47 +70,10 @@ export function registerBundled(
     profiles: ["standard", "strict"],
   });
   builder.register("pre-tool-use", {
-    name: "branch-enforcement",
-    fn: checkBranchEnforcement,
-    description:
-      "Block Edit/Write on main/master once ≥4 distinct files touched (enforces CLAUDE.md branching rule)",
-    canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
-    name: "destructive-cmd",
-    fn: checkDestructiveCmd,
-    description:
-      "Block/warn destructive shell commands (rm -rf, git reset --hard, DROP TABLE, etc.)",
-    canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
-    name: "prefer-bun",
-    fn: checkPreferBun,
-    description: "Remind to use bun instead of npm",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
-    name: "pre-commit",
-    fn: checkPreCommit,
-    description: "Run typecheck/format/lint/test before git commit",
-    canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
     name: "config-protection",
     fn: checkConfigProtection,
     description: "Block edits to lint/format/typecheck config files",
     canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
-    name: "sensitive-files",
-    fn: checkSensitiveFiles,
-    description: "Warn when editing .env, CI configs, Docker, Claude settings",
-    canBlock: false,
     profiles: ["minimal", "standard", "strict"],
   });
   builder.register("pre-tool-use", {
@@ -136,29 +95,6 @@ export function registerBundled(
 
   // post-tool-use
   builder.register("post-tool-use", {
-    name: "auto-format",
-    fn: checkAutoFormat,
-    description: "Run Prettier on saved .ts/.tsx/.js/.jsx/.json/.md files",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
-  builder.register("post-tool-use", {
-    name: "no-any",
-    fn: checkNoAny,
-    description:
-      "Warn/block `: any` or `as any` in TypeScript files (blocks in strict)",
-    canBlock: true,
-    profiles: ["standard", "strict"],
-  });
-  builder.register("post-tool-use", {
-    name: "no-enum",
-    fn: checkNoEnum,
-    description:
-      "Warn/block enum declarations in TypeScript files (blocks in strict)",
-    canBlock: true,
-    profiles: ["standard", "strict"],
-  });
-  builder.register("post-tool-use", {
     name: "ci-verification-reminder",
     fn: checkCiVerificationReminder,
     description:
@@ -168,13 +104,6 @@ export function registerBundled(
   });
 
   // stop
-  builder.register("stop", {
-    name: "test-gate",
-    fn: checkTestGate,
-    description: "Block session end if tests fail (when enabled via flag file)",
-    canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
-  });
   builder.register("stop", {
     name: "ci-verification-gate",
     fn: checkCiVerificationGate,
