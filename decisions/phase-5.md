@@ -238,6 +238,16 @@ affects: [commands/session/handoff.md]
 
 ---
 
-_Phase 5 SHIPPED <date-pending>:_
+_Phase 5 SHIPPED 2026-05-07:_
 
-- (filled in post-merge with PR + CI run IDs)
+- Plugin PR #22 (bundle wind-down memories + embed rules into session:handoff skill + sibling parity) MERGED `2eb3ccf` over branch `wind-down-rules-bundle-and-embed`
+- Pre-merge CI: runs 25468218202 + 25468233949 (both `c9ceadc1`) conclusion: success
+- Post-merge CI: run 25468321938 (`2eb3ccf`) conclusion: success
+- 6-cycle audit history:
+  - Plan v1: 4-persona /audit (KS+ARCH+WP+CLI-DX) → FOLD-RE-PLAN (KS-1 critical: 4 memories not bundled, 2 of 4 dropped at Phase 0)
+  - Plan v2: Bravo direct dispatch KS+ARCH → SHIP-WITH-FOLDS (12 folds applied for v2.1)
+  - Plan v2.1: Bravo delta-pass KS+ARCH → PASS-WITH-MINOR-FOLDS (5 deltas applied)
+  - Diff Phase 5c: Bravo direct dispatch KS+ARCH+CLI-DX → SHIP-WITH-FOLDS (KS 9.0 / ARCH 8.5 / CLI DX 8.0; 11 folds applied as commit c9ceadc)
+  - Total: 4 + 2 + 2 + 3 = 11 lens-runs across plan + delta + diff cycles
+- 10 files changed, 587 insertions / 26 deletions; 6 commits squashed atomically
+- Plan: ~/.claude/plans/transient-plotting-crescent.md v2.1
