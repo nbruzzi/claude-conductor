@@ -130,21 +130,6 @@
       "import": "./src/hooks/checks/dotfiles-worktree-provisioner.ts",
       "default": "./src/hooks/checks/dotfiles-worktree-provisioner.ts"
     },
-    "./hooks/checks/config-protection": {
-      "types": "./src/hooks/checks/config-protection.ts",
-      "import": "./src/hooks/checks/config-protection.ts",
-      "default": "./src/hooks/checks/config-protection.ts"
-    },
-    "./hooks/checks/config-protection-cli": {
-      "types": "./src/hooks/checks/config-protection-cli.ts",
-      "import": "./src/hooks/checks/config-protection-cli.ts",
-      "default": "./src/hooks/checks/config-protection-cli.ts"
-    },
-    "./hooks/checks/config-protection-store": {
-      "types": "./src/hooks/checks/config-protection-store.ts",
-      "import": "./src/hooks/checks/config-protection-store.ts",
-      "default": "./src/hooks/checks/config-protection-store.ts"
-    },
     "./hooks/checks/identity-injector": {
       "types": "./src/hooks/checks/identity-injector.ts",
       "import": "./src/hooks/checks/identity-injector.ts",

@@ -35,7 +35,7 @@ Current order (Phase 1 v0.1.0-phase-1 + Phase 2 placeholders):
 ### `pre-tool-use` (plugin-canonical post-Cluster-4; Cluster 4 of INVERSIONS arc 2026-05-07 moved `handoff-symlink-write-guard` to substrate)
 
 1. `session-collision-gate` — refuses tool dispatch when another active session conflicts.
-2. `config-protection` — protects `~/.claude/` config from accidental overwrites.
+2. (config-protection moved to substrate per Cluster 5 of INVERSIONS arc 2026-05-07; ARC COMPLETE 21/21 = 100%).
 3. `task-coordinator` (Phase 2 Slice 6) — gates Task tool dispatch on channel role.
 
 ### `post-tool-use` (plugin-canonical post-Cluster-2; Cluster 2 of INVERSIONS arc 2026-05-07 moved `ci-verification-reminder` to substrate)
@@ -167,7 +167,6 @@ Phase 2's hooks read substrate that Phase 1 established. The composition rules:
 | Name                          | Event         | Failure mode           | Purpose                                               |
 | ----------------------------- | ------------- | ---------------------- | ----------------------------------------------------- |
 | `session-collision-gate`      | pre-tool-use  | fail-loud              | Block tool dispatch under conflicting active session. |
-| `config-protection`           | pre-tool-use  | fail-loud              | Protect `~/.claude/` from accidental overwrites.      |
 | `session-presence-unregister` | stop          | fail-open + breadcrumb | Drop session from active-sessions registry.           |
 | `channel-gc`                  | session-start | fail-open silent       | Best-effort channel-archive gc.                       |
 | `active-channels-load`        | session-start | fail-open + breadcrumb | Surface live channels on SessionStart.                |

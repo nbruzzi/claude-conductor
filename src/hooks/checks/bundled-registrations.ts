@@ -25,7 +25,6 @@
 import type { RegistryBuilder } from "../registry.ts";
 import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
-import { check as checkConfigProtection } from "./config-protection.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
 import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkChannelsGcReaper } from "./channels-gc-reaper.ts";
@@ -49,13 +48,6 @@ export function registerBundled(
       "Preventive gate — block when another live Claude session is editing the same artifact",
     canBlock: true,
     profiles: ["standard", "strict"],
-  });
-  builder.register("pre-tool-use", {
-    name: "config-protection",
-    fn: checkConfigProtection,
-    description: "Block edits to lint/format/typecheck config files",
-    canBlock: true,
-    profiles: ["minimal", "standard", "strict"],
   });
   builder.register("pre-tool-use", {
     name: "task-coordinator",

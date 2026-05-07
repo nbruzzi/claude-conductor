@@ -95,8 +95,9 @@ P3_FILE_ALLOWLIST=(
   # Cluster 1 of INVERSIONS arc (2026-05-07) — branch-enforcement.ts, sensitive-files.ts,
   # test-gate.ts moved to substrate (`~/.claude-dotfiles/src/hooks/checks/`) and
   # are no longer in plugin source; allowlist entries removed.
-  "src/hooks/checks/config-protection-store.ts"
-  "src/hooks/checks/config-protection.ts"
+  # Cluster 5 of INVERSIONS arc (2026-05-07; FINAL CLUSTER — ARC COMPLETE 21/21) —
+  # config-protection.ts + config-protection-store.ts moved to substrate; allowlist
+  # entries removed. (config-protection-cli.ts was never in this allowlist.)
   "src/hooks/checks/session-collision-gate.ts"
   "src/hooks/checks/bundled-registrations.ts"
   # CI verification cycle (TIER 2/3/3a/4) — moved to substrate per Cluster 2 of
