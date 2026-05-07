@@ -40,6 +40,35 @@ export type FlagSpec = {
    * exclusive with `--since-mtime`.
    */
   readonly sinceCursor?: boolean;
+  /**
+   * Accept `--as <NATO-identity>` (consumes next argv) — value passed
+   * through verbatim; verb-level dispatch validates against `isValidIdentity`
+   * (NATO letter Alpha..Zulu). P2 — `join --as <Identity>` flag for
+   * named-claim semantics per plan giggly-bouncing-spark.md.
+   */
+  readonly as?: boolean;
+  /**
+   * Accept `--role <pen|queue|out>` (consumes next argv) — value passed
+   * through verbatim; verb-level dispatch validates against the
+   * `ChannelRole` union. Optional companion to `--as` for landing
+   * directly in a role at claim time (default `queue`).
+   */
+  readonly role?: boolean;
+  /**
+   * Accept `--force` (standalone — no value). Operator-explicit takeover
+   * commitment. Required for ALL `--as` takeovers per Decision §4 of plan
+   * giggly-bouncing-spark.md (drops the staleness-auto path that would
+   * false-positive on Monitor-wake-delayed sessions).
+   */
+  readonly force?: boolean;
+  /**
+   * Accept `--from-session <session-id>` (consumes next argv) — optional
+   * CAS-check value for `--force` takeovers. Verb-level dispatch validates
+   * via `isValidSessionId` and CAS-checks `meta.identities[<Letter>].session_id`
+   * matches before takeover. Mismatch → die. Mitigates ping-pong-takeover
+   * hazard for paranoid invocations (Decision §9).
+   */
+  readonly fromSession?: boolean;
 };
 
 export type FlagValues = {
@@ -56,6 +85,25 @@ export type FlagValues = {
   readonly sinceMtime: number | undefined;
   /** True when `--since-cursor` was present. */
   readonly sinceCursor: boolean;
+  /**
+   * Raw `--as <value>` string when flag was present and accepted, otherwise
+   * `undefined`. Verb-level dispatch validates NATO-letter shape via
+   * `isValidIdentity`.
+   */
+  readonly as: string | undefined;
+  /**
+   * Raw `--role <value>` string when flag was present and accepted,
+   * otherwise `undefined`. Verb-level dispatch validates ChannelRole shape.
+   */
+  readonly role: string | undefined;
+  /** True when `--force` was present and accepted. */
+  readonly force: boolean;
+  /**
+   * Raw `--from-session <value>` string when flag was present and accepted,
+   * otherwise `undefined`. Verb-level dispatch validates session-id shape
+   * via `isValidSessionId` and CAS-checks against the held identity claim.
+   */
+  readonly fromSession: string | undefined;
 };
 
 const DEFAULT_SPEC: Required<FlagSpec> = {
@@ -64,6 +112,10 @@ const DEFAULT_SPEC: Required<FlagSpec> = {
   help: true,
   sinceMtime: false,
   sinceCursor: false,
+  as: false,
+  role: false,
+  force: false,
+  fromSession: false,
 };
 
 export type ParsedFlags = {
@@ -98,6 +150,10 @@ export function parseFlags(
   const acceptHelp = spec.help ?? DEFAULT_SPEC.help;
   const acceptSinceMtime = spec.sinceMtime ?? DEFAULT_SPEC.sinceMtime;
   const acceptSinceCursor = spec.sinceCursor ?? DEFAULT_SPEC.sinceCursor;
+  const acceptAs = spec.as ?? DEFAULT_SPEC.as;
+  const acceptRole = spec.role ?? DEFAULT_SPEC.role;
+  const acceptForce = spec.force ?? DEFAULT_SPEC.force;
+  const acceptFromSession = spec.fromSession ?? DEFAULT_SPEC.fromSession;
 
   const positional: string[] = [];
   const parseErrors: string[] = [];
@@ -106,6 +162,10 @@ export function parseFlags(
   let help = false;
   let sinceMtime: number | undefined = undefined;
   let sinceCursor = false;
+  let as: string | undefined = undefined;
+  let role: string | undefined = undefined;
+  let force = false;
+  let fromSession: string | undefined = undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -137,6 +197,25 @@ export function parseFlags(
       }
     } else if (acceptSinceCursor && arg === "--since-cursor") {
       sinceCursor = true;
+    } else if (acceptAs && arg === "--as") {
+      const consumed = consumeStringValue(argv, i, "--as", parseErrors);
+      if (consumed.value !== undefined) as = consumed.value;
+      i += consumed.advance;
+    } else if (acceptRole && arg === "--role") {
+      const consumed = consumeStringValue(argv, i, "--role", parseErrors);
+      if (consumed.value !== undefined) role = consumed.value;
+      i += consumed.advance;
+    } else if (acceptForce && arg === "--force") {
+      force = true;
+    } else if (acceptFromSession && arg === "--from-session") {
+      const consumed = consumeStringValue(
+        argv,
+        i,
+        "--from-session",
+        parseErrors,
+      );
+      if (consumed.value !== undefined) fromSession = consumed.value;
+      i += consumed.advance;
     } else {
       positional.push(arg);
     }
@@ -150,9 +229,49 @@ export function parseFlags(
 
   return {
     positional,
-    flags: { json, quiet, help, sinceMtime, sinceCursor },
+    flags: {
+      json,
+      quiet,
+      help,
+      sinceMtime,
+      sinceCursor,
+      as,
+      role,
+      force,
+      fromSession,
+    },
     parseErrors,
   };
+}
+
+/**
+ * Extract a value-consuming string flag from `argv` at position `i`. Used
+ * by `--as`, `--role`, and `--from-session` per plan giggly-bouncing-spark.md
+ * §change-list #1. The parser is value-extraction-only — domain validation
+ * (NATO letter for `--as`, ChannelRole for `--role`, session-id shape for
+ * `--from-session`) happens at verb-level dispatch.
+ *
+ * Returns `{ value, advance }`:
+ * - `value`: the consumed string value, or `undefined` when missing/empty.
+ * - `advance`: how many additional argv positions were consumed past `i`
+ *   (0 if no value found — leaves the next arg to parse normally; 1 on
+ *   successful value extraction).
+ *
+ * Pushes a parseError on missing value (matches the `--since-mtime`
+ * "missing value" shape at flags.ts:122-125).
+ */
+function consumeStringValue(
+  argv: readonly string[],
+  i: number,
+  flagName: string,
+  parseErrors: string[],
+): { value: string | undefined; advance: number } {
+  const next = argv[i + 1];
+  if (next === undefined || next.length === 0 || next.startsWith("--")) {
+    parseErrors.push(`${flagName}: expected value, got missing value`);
+    return { value: undefined, advance: 0 };
+  }
+  return { value: next, advance: 1 };
 }
 
 /**

@@ -22,6 +22,10 @@ describe("parseFlags", () => {
         help: false,
         sinceMtime: undefined,
         sinceCursor: false,
+        as: undefined,
+        role: undefined,
+        force: false,
+        fromSession: undefined,
       });
       expect(result.positional).toEqual(["a", "b", "c"]);
     });
@@ -60,6 +64,10 @@ describe("parseFlags", () => {
         help: false,
         sinceMtime: undefined,
         sinceCursor: false,
+        as: undefined,
+        role: undefined,
+        force: false,
+        fromSession: undefined,
       });
       expect(result.positional).toEqual(["my-channel"]);
     });
@@ -113,6 +121,10 @@ describe("parseFlags", () => {
         help: false,
         sinceMtime: undefined,
         sinceCursor: false,
+        as: undefined,
+        role: undefined,
+        force: false,
+        fromSession: undefined,
       });
       expect(result.positional).toEqual([]);
     });
