@@ -181,11 +181,11 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 
 ### Hook checks (`src/hooks/checks/`)
 
-13 individual check implementations bundled per `bundled-registrations.ts`. Plugin scope is multi-instance coordination machinery; 9 universal-coding-discipline checks moved per Cluster 1 + 4 CI verification protocol checks moved per Cluster 2 + fact-force gate (+ scope-cli + scope-store) moved per Cluster 3 + 2 handoff invariant gates (handoff-latest-guard + handoff-symlink-write-guard) moved per Cluster 4 of INVERSIONS arc (2026-05-07) — substrate-canonical implementations now live at `~/.claude-dotfiles/src/hooks/checks/`. Categorized (post-Cluster-4):
+12 individual check implementations bundled per `bundled-registrations.ts`. Plugin scope is multi-instance coordination machinery; 9 universal-coding-discipline checks moved per Cluster 1 + 4 CI verification protocol checks moved per Cluster 2 + fact-force gate (+ scope-cli + scope-store) moved per Cluster 3 + 2 handoff invariant gates (handoff-latest-guard + handoff-symlink-write-guard) moved per Cluster 4 + config-protection (+ cli + store) moved per Cluster 5 of INVERSIONS arc (2026-05-07; **ARC COMPLETE 21/21 = 100%**) — substrate-canonical implementations now live at `~/.claude-dotfiles/src/hooks/checks/`. Categorized (post-Cluster-5; arc-final state):
 
 **Pre-tool-use gates (blocking):**
 
-- `session-collision-gate.ts`, `config-protection.ts` (+ `config-protection-store.ts` + `config-protection-cli.ts`), `task-coordinator.ts`.
+- `session-collision-gate.ts`, `task-coordinator.ts`.
 
 **Post-tool-use checks (warn/pass):**
 
