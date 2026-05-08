@@ -28,7 +28,7 @@ triggers:
   - audit-registry
 adversarial_lens: "Does this plan integrate correctly with our existing systems, or does it create parallel infrastructure that should use what already exists?"
 context_sources:
-  wiki:
+  plugin:
     - INDEX.md
     - CHANGELOG.md
   memory:

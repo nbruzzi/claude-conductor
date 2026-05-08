@@ -10,8 +10,8 @@ triggers:
   - TBD # list keyword triggers; word-boundary regex applies (case-insensitive)
 adversarial_lens: "TBD — your adversarial lens framed as a question."
 context_sources:
-  wiki:
-    - INDEX.md # or other plugin-bundled surfaces
+  plugin:
+    - INDEX.md # or CHANGELOG.md, CONTRIBUTING.md, etc.
   memory:
     - TBD # list bundled memories that anchor the discipline
 origin: template

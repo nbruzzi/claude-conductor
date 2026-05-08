@@ -28,7 +28,7 @@ triggers:
   - hook
 adversarial_lens: "Does this plan follow our established workflow, or does it skip steps that exist for good reasons?"
 context_sources:
-  wiki:
+  plugin:
     - CONTRIBUTING.md
   memory:
     - feedback-plan-mode-for-structural-changes.md
