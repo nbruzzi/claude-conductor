@@ -145,10 +145,11 @@ For each approved auditor, dispatch as a **parallel Agent tool call** using `sub
 ### For familiar auditors:
 
 - Read the auditor's full `.md` file.
-- Read each file listed in the `context_sources` frontmatter field:
+- Read each file listed in the `context_sources` frontmatter field. Three resolver keys are supported:
   - `wiki` entries: `~/Documents/Obsidian Vault/wiki/{path}`
   - `memory` entries: `~/.claude/projects/-Users-{username}/memory/{path}` (resolve username via `whoami`)
-- **Verify every context file exists before dispatch.** If any is missing, stop and report which file is missing and which auditor needs it — do not dispatch with a hole in the context. This prevents silent context loss when wiki or memory paths rot.
+  - `plugin` entries: `${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/{path}`
+- **Verify every context file exists before dispatch.** If any is missing, stop and report which file is missing and which auditor needs it — do not dispatch with a hole in the context. This prevents silent context loss when wiki, memory, or plugin paths rot.
 - Inject the concatenated context contents into the auditor's prompt under a `## Project Context` section, replacing the placeholder. Include the source path of each injected file as a sub-header so the auditor can judge which claim came from where.
 - Send the full agent definition + injected context + plan (inline or path).
 

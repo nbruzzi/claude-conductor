@@ -74,7 +74,7 @@ familiar/workflow-process.md	WP	Workflow Auditor	pipeline|branch|commit|plan|ver
 1. Create a `.md` file in the appropriate directory (`cold/` or `familiar/`). For familiars, clone `familiar/_template.md` as the starting point.
 2. Follow the frontmatter schema: `name`, `description`, `model`, `category`, `domain`, `expertise`, `triggers`, `adversarial_lens`. Familiars also include `context_sources`, `origin`, and `updated`.
 3. Choose a unique 2-4 letter finding prefix and use it consistently in the auditor's output format (`[PREFIX-N]`). Verify no existing auditor uses the same prefix.
-4. For familiar auditors, add `context_sources` with paths into the plugin's bundled artifacts (`<plugin-root>/INDEX.md`, `<plugin-root>/CHANGELOG.md`, `<plugin-root>/memories/<name>.md`). Verify each file exists — if any are missing at commission time, the skill fails loud.
+4. For familiar auditors, add `context_sources` with paths into the plugin's bundled artifacts. Use the `plugin:` key for plugin-rooted paths (`INDEX.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `memories/<name>.md`); the `memory:` key for user-memory paths; and the `wiki:` key for genuine vault paths. Verify each file exists — if any are missing at commission time, the skill fails loud.
 5. Add the auditor's table row (with prefix column) AND its machine-readable row to this registry. Bump the header counts at the top of this file. Keep all three in sync with the auditor's frontmatter.
 6. Verify the triggers don't overlap >50% with an existing auditor in the same category.
 

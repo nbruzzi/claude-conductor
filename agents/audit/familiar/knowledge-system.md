@@ -25,7 +25,7 @@ triggers:
   - cross-reference
 adversarial_lens: "Does this plan's knowledge management approach follow our memory + decisions-log conventions, or does it create information that belongs somewhere else?"
 context_sources:
-  wiki:
+  plugin:
     - INDEX.md
     - CHANGELOG.md
   memory:

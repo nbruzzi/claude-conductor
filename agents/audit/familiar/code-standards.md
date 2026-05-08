@@ -27,7 +27,7 @@ triggers:
   - explicit
 adversarial_lens: "Does this plan's code approach match our established TypeScript conventions, or does it introduce patterns we've explicitly rejected?"
 context_sources:
-  wiki:
+  plugin:
     - INDEX.md
   memory:
     - feedback-self-apply-ceiling-discipline.md
