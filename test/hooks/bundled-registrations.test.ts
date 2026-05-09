@@ -74,7 +74,7 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // config-protection moved plugin → substrate (with config-protection-cli +
 // config-protection-store utility modules); count drops 13 → 12. Plan
 // ~/.claude/plans/cluster-5-config-protection.md.
-const EXPECTED_COUNT = 12;
+const EXPECTED_COUNT = 11;
 
 describe("bundled-registrations meta-test", () => {
   it("BUNDLED_CHECK_NAMES has exactly EXPECTED_COUNT entries", () => {
@@ -152,10 +152,12 @@ describe("bundled-registrations meta-test", () => {
     expect(names).toContain("dotfiles-worktree-gc");
   });
 
-  it("Phase 3 Slice 2 — cleanup registered on stop", () => {
-    const names = BUNDLED_CHECKS_BY_EVENT["stop"];
-    expect(names).toContain("dotfiles-worktree-cleanup");
-  });
+  // dotfiles-worktree-cleanup test removed in cycle-3 fix (channel
+  // 2026-05-08_02-15) — cleanup hook removed; teardown now happens
+  // exclusively via dotfiles-worktree-gc reaper at next session-start.
+  // Stop-event fires per-turn (not session-end) and the cleanup hook
+  // had no session-end discrimination, so it destroyed the worktree
+  // after the first turn-end Stop, defeating per-session isolation.
 
   // CI verification cycle (TIER 2/3/3a/4) — Cluster 2 of INVERSIONS arc 2026-05-07
   // moved these 4 names to substrate; belt-and-suspenders assertions removed

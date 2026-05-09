@@ -35,7 +35,6 @@ import { check as checkTaskCoordinator } from "./task-coordinator.ts";
 import { check as checkTeammateIdleReminder } from "./teammate-idle-reminder.ts";
 import { check as checkDotfilesWorktreeProvisioner } from "./dotfiles-worktree-provisioner.ts";
 import { check as checkDotfilesWorktreeGc } from "./dotfiles-worktree-gc.ts";
-import { check as checkDotfilesWorktreeCleanup } from "./dotfiles-worktree-cleanup.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -69,14 +68,14 @@ export function registerBundled(
     canBlock: false,
     profiles: ["standard", "strict"],
   });
-  builder.register("stop", {
-    name: "dotfiles-worktree-cleanup",
-    fn: checkDotfilesWorktreeCleanup,
-    description:
-      "Phase 3 Slice 2 — remove the per-session dotfiles worktree on session end (RE-2 safety guards + RE-3 self-heal + RE-104 reconciliation guard + CLI-DX-5 epilogue). Fires BEFORE session-presence-unregister so worktree teardown happens while heartbeat is still live.",
-    canBlock: false,
-    profiles: ["standard", "strict"],
-  });
+  // dotfiles-worktree-cleanup removed in cycle-3 fix (channel 2026-05-08_02-15):
+  // Stop event fires per-turn (not session-end), and the cleanup hook had no
+  // session-end discrimination — destroyed the worktree after the first
+  // turn-end Stop, defeating per-session isolation. Cleanup now happens
+  // exclusively via dotfiles-worktree-gc reaper at next session-start
+  // (mtime + heartbeat-stale based, sibling-parity with dotfiles-catchup).
+  // Branch-cleanup ride-along: removeWorktree (in src/worktrees/index.ts)
+  // now also `git branch -D`s the worktree branch on directory removal.
 
   // session-start
   builder.register("session-start", {

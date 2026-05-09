@@ -235,6 +235,116 @@ describe("removeWorktree", () => {
     const removed = removeWorktree(SID, { dotfilesCanonical: r.dir });
     expect(removed.kind).toBe("removed");
   });
+
+  // Cycle-3 fix: branch-cleanup ride-along. removeWorktree should also
+  // delete the `worktree/<sid-prefix>` branch to prevent UUID-prefix
+  // collisions on future provisioning. See plan v1.1 §"What we gain".
+  it("deletes the worktree branch after removing the directory (branch-cleanup ride-along)", () => {
+    const r = getRepo();
+    const opts = { dotfilesCanonical: r.dir, featureFlagOverride: true };
+    const provisioned = provisionWorktree(SID, opts);
+    expect(provisioned.kind).toBe("ok");
+
+    // Pre-condition: provisioning creates the branch
+    const branchListPre = execFileSync(
+      "git",
+      ["branch", "--list", "worktree/94a8058c"],
+      {
+        cwd: r.dir,
+        encoding: "utf-8",
+      },
+    );
+    expect(branchListPre.trim()).toContain("worktree/94a8058c");
+
+    const removed = removeWorktree(SID, { dotfilesCanonical: r.dir });
+    expect(removed.kind).toBe("removed");
+
+    // Post-condition: branch should be gone
+    const branchListPost = execFileSync(
+      "git",
+      ["branch", "--list", "worktree/94a8058c"],
+      {
+        cwd: r.dir,
+        encoding: "utf-8",
+      },
+    );
+    expect(branchListPost.trim()).toBe("");
+  });
+
+  // Cycle-3 fix per Bravo Lane D TA-1 fold: branch-delete-after-checkout-
+  // in-removed-worktree edge case. Verifies `git worktree remove --force`
+  // properly dissociates the branch BEFORE our `git branch -D` runs, so
+  // the branch deletion succeeds even when the operator was inside the
+  // worktree at remove-time. Locks in this behavior so a future git-version
+  // change wouldn't silently leave the branch behind.
+  it("deletes the branch even when HEAD was checked out inside the removed worktree (TA-1 edge case)", () => {
+    const r = getRepo();
+    const opts = { dotfilesCanonical: r.dir, featureFlagOverride: true };
+    const provisioned = provisionWorktree(SID, opts);
+    expect(provisioned.kind).toBe("ok");
+    if (provisioned.kind !== "ok") return;
+
+    // Operator-style: inside the worktree, HEAD is already at the
+    // sentinel branch by virtue of provisioning. `git worktree add -b
+    // worktree/<sid>` creates the branch + makes it checked-out in the
+    // new worktree. Verify HEAD inside the worktree:
+    const headInWorktree = execFileSync(
+      "git",
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      {
+        cwd: provisioned.path,
+        encoding: "utf-8",
+      },
+    );
+    expect(headInWorktree.trim()).toBe("worktree/94a8058c");
+
+    // Now remove + verify branch is deleted (worktree-remove --force
+    // dissociates the branch first; branch -D succeeds afterward).
+    const removed = removeWorktree(SID, { dotfilesCanonical: r.dir });
+    expect(removed.kind).toBe("removed");
+
+    const branchList = execFileSync(
+      "git",
+      ["branch", "--list", "worktree/94a8058c"],
+      {
+        cwd: r.dir,
+        encoding: "utf-8",
+      },
+    );
+    expect(branchList.trim()).toBe("");
+  });
+
+  // Cycle-3 fix: fail-soft on branch-delete error. If the worktree directory
+  // removal succeeds but `git branch -D` fails (e.g., branch already gone),
+  // removeWorktree should STILL return `kind: "removed"` rather than `error`.
+  // The load-bearing teardown is the directory; branch is best-effort hygiene.
+  it("returns kind: 'removed' even when branch-delete fails (fail-soft)", () => {
+    const r = getRepo();
+    const opts = { dotfilesCanonical: r.dir, featureFlagOverride: true };
+    const provisioned = provisionWorktree(SID, opts);
+    expect(provisioned.kind).toBe("ok");
+
+    // Pre-emptively delete the branch so removeWorktree's `git branch -D`
+    // attempt fails. We do this by switching the worktree off the branch
+    // and then deleting the branch from canonical. After this manipulation,
+    // `git worktree remove --force` will succeed but the subsequent
+    // `git branch -D` will fail with "branch not found".
+    if (provisioned.kind === "ok") {
+      // Detach HEAD inside the worktree so the branch isn't checked out
+      execFileSync("git", ["-C", provisioned.path, "checkout", "--detach"], {
+        encoding: "utf-8",
+      });
+      // Delete the branch from canonical
+      execFileSync("git", ["branch", "-D", "worktree/94a8058c"], {
+        cwd: r.dir,
+        encoding: "utf-8",
+      });
+    }
+
+    const removed = removeWorktree(SID, { dotfilesCanonical: r.dir });
+    // Despite the branch-delete error inside removeWorktree, kind is "removed"
+    expect(removed.kind).toBe("removed");
+  });
 });
 
 describe("listWorktrees", () => {

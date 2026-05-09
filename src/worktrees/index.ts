@@ -148,6 +148,15 @@ export function provisionWorktree(
  * left WIP). RE-2 safety guards (refusing `--force` on mid-write state)
  * are caller-side concerns in the GC reaper hook + Stop-hook integration;
  * this primitive trusts the caller to have run those checks.
+ *
+ * Branch-cleanup ride-along (cycle-3 fix): after the worktree directory is
+ * removed, also delete the `worktree/<sid-prefix-8>` branch via
+ * `git branch -D`. Without this, branches accumulate forever (one per
+ * session ever provisioned) and eventually cause UUID-prefix collisions
+ * that break future provisioning. Branch-delete is fail-soft — if it errors
+ * (branch already gone, ref-update transient), `removeWorktree` still
+ * returns `{kind: "removed"}` since the load-bearing teardown (directory)
+ * succeeded; the branch leak is best-effort hygiene per RE-2 pattern.
  */
 export function removeWorktree(
   sessionId: string,
@@ -173,6 +182,24 @@ export function removeWorktree(
       path,
       detail: stderr || `git worktree remove exited ${String(result.status)}`,
     };
+  }
+
+  // Branch-cleanup ride-along (fail-soft). `git worktree remove --force`
+  // dissociates the branch from the worktree but does NOT delete it —
+  // we have to explicitly `git branch -D`.
+  const branch = `worktree/${sessionId.slice(0, SID_PREFIX_LEN)}`;
+  const branchResult = runGit(opts.dotfilesCanonical, ["branch", "-D", branch]);
+  if (branchResult.status !== 0) {
+    // Best-effort — log breadcrumb to stderr but don't fail the call.
+    // Common benign cause: branch was already deleted by an earlier
+    // cleanup pass or by the operator. Less common: ref-update transient
+    // (e.g., concurrent gc) — caller will retry on next session-start
+    // via dotfiles-worktree-gc reaper.
+    const stderr =
+      decodeStdio(branchResult.stderr) || decodeStdio(branchResult.stdout);
+    process.stderr.write(
+      `[worktrees.removeWorktree] branch-delete failed for ${branch}: ${stderr.trim()}\n`,
+    );
   }
 
   return { kind: "removed", path };
