@@ -50,6 +50,8 @@ import {
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 
+import { getWallClockNow } from "../shared/clock.ts";
+
 export type OwnerInfo = {
   pid: number;
   host: string;
@@ -175,7 +177,7 @@ function tryAcquireOnce(opts: LockOpts): AttemptOutcome {
     const info: OwnerInfo = {
       pid: process.pid,
       host: hostname(),
-      ts: Date.now(),
+      ts: getWallClockNow(),
       tag: ownerTag,
     };
     writeFileSync(ownerFile, JSON.stringify(info), "utf-8");
@@ -321,13 +323,13 @@ function isStale(
     // mkdir succeeded but writer died before writing owner — reap by dir age.
     try {
       const stat = statSync(lockDir);
-      return Date.now() - stat.mtimeMs > maxAgeMs;
+      return getWallClockNow() - stat.mtimeMs > maxAgeMs;
     } catch {
       return true;
     }
   }
 
-  if (Date.now() - owner.ts > maxAgeMs) return true;
+  if (getWallClockNow() - owner.ts > maxAgeMs) return true;
 
   // Cross-host locks can't be probed; only verify liveness on same host.
   if (owner.host !== hostname()) return false;
