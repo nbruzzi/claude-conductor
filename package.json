@@ -90,6 +90,11 @@
       "import": "./src/hooks/bundled-check-names.ts",
       "default": "./src/hooks/bundled-check-names.ts"
     },
+    "./hooks/lock-domain": {
+      "types": "./src/hooks/lock-domain.ts",
+      "import": "./src/hooks/lock-domain.ts",
+      "default": "./src/hooks/lock-domain.ts"
+    },
     "./hooks/registry-assertion": {
       "types": "./src/hooks/registry-assertion.ts",
       "import": "./src/hooks/registry-assertion.ts",

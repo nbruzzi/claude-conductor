@@ -100,6 +100,13 @@ P3_FILE_ALLOWLIST=(
   # entries removed. (config-protection-cli.ts was never in this allowlist.)
   "src/hooks/checks/session-collision-gate.ts"
   "src/hooks/checks/bundled-registrations.ts"
+  # Phase 3 Step F (RE-W2-5) — lock-domain registry's per-row `comment` field
+  # documents the canonical filesystem paths each plugin-bundled check touches
+  # (e.g., `<effectiveHome>/.claude/logs/.session-collision-gate.lock`,
+  # `<effectiveHome>/.claude/logs/.worktree-gc-cursor`). The literals ARE the
+  # documentation; routing via paths.ts in JSDoc would obscure the "where does
+  # this resource live" answer for future race-surface analysis consumers.
+  "src/hooks/lock-domain.ts"
   # CI verification cycle (TIER 2/3/3a/4) — moved to substrate per Cluster 2 of
   # INVERSIONS arc (2026-05-07); allowlist entries removed.
   "src/channels/index.ts"
