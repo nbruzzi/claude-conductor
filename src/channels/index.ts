@@ -43,6 +43,7 @@ import {
   isValidArtifactId,
   isValidSessionId,
 } from "../active-sessions/index.ts";
+import { getWallClockNow } from "../shared/clock.ts";
 import { extractSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 
@@ -288,7 +289,7 @@ async function acquireLock(lockPath: string): Promise<number> {
       lastErr = err instanceof Error ? err : new Error(String(err));
       try {
         const st = statSync(lockPath);
-        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+        if (getWallClockNow() - st.mtimeMs > LOCK_STALE_MS) {
           unlinkSync(lockPath);
           continue;
         }
@@ -744,7 +745,7 @@ export async function closeStalePeerIdentity(args: {
     // other metadata mutators (the peer's own touchHeartbeat is
     // independent; that's the documented narrow race).
     const peerMtime = heartbeatMtime(channelId, claim.session_id);
-    const ageMs = peerMtime === null ? null : Date.now() - peerMtime;
+    const ageMs = peerMtime === null ? null : getWallClockNow() - peerMtime;
     const isStale = ageMs === null || ageMs > staleThresholdMs;
     if (!isStale && !force) {
       return { kind: "still-active", ageMs } as const;
@@ -842,7 +843,8 @@ export async function claimNamedIdentityWithLock(args: {
         holderSessionId !== null
           ? heartbeatMtime(channelId, holderSessionId)
           : null;
-      const ageMs = heartbeatMs === null ? null : Date.now() - heartbeatMs;
+      const ageMs =
+        heartbeatMs === null ? null : getWallClockNow() - heartbeatMs;
       return {
         kind: "active",
         holderSessionId: holderSessionId ?? "(unknown)",
@@ -1091,7 +1093,7 @@ export function touchHeartbeat(channelId: string, sessionId: string): void {
   mkdirSync(heartbeatDir(channelId), { recursive: true });
   writeFileSync(
     heartbeatPath(channelId, sessionId),
-    String(Date.now()),
+    String(getWallClockNow()),
     "utf-8",
   );
 }
@@ -1277,7 +1279,7 @@ export function archiveChannel(channelId: string): void {
   mkdirSync(archive, { recursive: true });
   const dest = join(archive, channelId);
   if (existsSync(dest)) {
-    const stamped = `${channelId}__${Date.now()}`;
+    const stamped = `${channelId}__${getWallClockNow()}`;
     renameSync(src, join(archive, stamped));
     return;
   }
@@ -1292,7 +1294,7 @@ export function pruneArchive(opts: {
 }): string[] {
   const archive = resolveArchiveDir();
   if (!existsSync(archive)) return [];
-  const now = Date.now();
+  const now = getWallClockNow();
   const retentionMs = opts.retentionDays * 24 * 60 * 60 * 1000;
   type ArchiveEntry = { id: string; path: string; mtimeMs: number };
   const entries: ArchiveEntry[] = [];

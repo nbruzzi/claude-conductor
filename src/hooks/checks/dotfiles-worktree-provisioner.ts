@@ -40,6 +40,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { effectiveHome } from "../../shared/home.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import {
   artifactIdFromPath,
   listLivePeers,
@@ -197,7 +198,7 @@ function detectMixedFlagState(self: string): string | null {
     const peers = listLivePeers({
       artifactId: anchorArtifactId,
       self,
-      now: Date.now(),
+      now: getWallClockNow(),
     });
     const flagOffPeers = peers.filter(
       (p) => p.owner.dotfilesRoot === undefined,

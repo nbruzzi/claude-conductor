@@ -57,6 +57,7 @@ import {
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { getWallClockNow } from "../shared/clock.ts";
 import { effectiveHome } from "../shared/home.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import { activeSessionsDir } from "../shared/paths.ts";
@@ -886,7 +887,7 @@ export function resetArtifactRegistry(artifactId: string): {
   }
 
   const artifactPath = readArtifactMeta(artifactId)?.artifactPath ?? null;
-  const heartbeats = listAllHeartbeats({ artifactId, now: Date.now() });
+  const heartbeats = listAllHeartbeats({ artifactId, now: getWallClockNow() });
   const heartbeatsRemoved = heartbeats.map((h) => h.sessionId);
   const metaRemoved = existsSync(metaPath(artifactId));
 
@@ -982,7 +983,7 @@ export function setSentinelDotfilesRoot(args: {
 
   const path = heartbeatPath(artifactId, sessionId);
   const existing = readOwnerRecord(path);
-  const now = Date.now();
+  const now = getWallClockNow();
   const createdAt = existing?.createdAt ?? now;
   const record: OwnerRecord = {
     sessionId,
@@ -1063,7 +1064,7 @@ export function clearSentinelDotfilesRoot(sessionId: string): void {
   if (existing === null) return;
   if (existing.dotfilesRoot === undefined) return;
 
-  const now = Date.now();
+  const now = getWallClockNow();
   const record: OwnerRecord = {
     sessionId: existing.sessionId,
     pid: process.pid,

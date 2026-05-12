@@ -73,6 +73,7 @@ import {
   type UnreachableChannelSummary,
 } from "../../channels/index.ts";
 import { validateIdentityClaim } from "../../channels/claim.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
   identitiesDir,
@@ -308,7 +309,7 @@ function shouldReap(channelId: string): boolean {
   const cursor = reapCursorPath(channelId);
   if (!existsSync(cursor)) return true;
   try {
-    const age = Date.now() - statSync(cursor).mtimeMs;
+    const age = getWallClockNow() - statSync(cursor).mtimeMs;
     return age >= REAP_INTERVAL_MS;
   } catch {
     return true;
@@ -358,7 +359,7 @@ function sweepStaleTmpFiles(channelId: string): void {
   } catch {
     return;
   }
-  const cutoff = Date.now() - LOCK_STALE_MS;
+  const cutoff = getWallClockNow() - LOCK_STALE_MS;
   for (const name of entries) {
     if (!name.startsWith(".tmp.") && !name.startsWith(".reap-tmp.")) continue;
     const tmpPath = join(dir, name);
@@ -395,7 +396,7 @@ async function markPhase(channelId: string): Promise<MarkResult> {
     }
 
     const sentinelLetters = new Set<string>();
-    const now = Date.now();
+    const now = getWallClockNow();
     for (const entry of sentinelEntries) {
       if (!isValidIdentity(entry)) continue;
       sentinelLetters.add(entry);
@@ -507,7 +508,7 @@ function isAckedMarkerFresh(sentinelPath: string): boolean {
   const path = ackedMarkerPath(sentinelPath);
   if (!existsSync(path)) return false;
   try {
-    const age = Date.now() - statSync(path).mtimeMs;
+    const age = getWallClockNow() - statSync(path).mtimeMs;
     return age < ACKED_MARKER_TTL_MS;
   } catch {
     return false;
@@ -518,7 +519,7 @@ function writeAckedMarker(sentinelPath: string): boolean {
   const path = ackedMarkerPath(sentinelPath);
   try {
     writeFileSync(path, "", "utf-8");
-    const now = Date.now() / 1000;
+    const now = getWallClockNow() / 1000;
     utimesSync(path, now, now);
     return true;
   } catch {
@@ -645,7 +646,7 @@ async function pruneStaleLastSeenCursors(channelId: string): Promise<void> {
     } catch {
       return; // ENOENT — channel never had --since-cursor consumers
     }
-    const now = Date.now();
+    const now = getWallClockNow();
     for (const name of entries) {
       if (!name.endsWith(".json")) continue;
       const sid = name.slice(0, -".json".length);

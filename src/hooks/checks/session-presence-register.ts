@@ -21,6 +21,7 @@ import {
   artifactPathFromFile,
   touchHeartbeat,
 } from "../../active-sessions/index.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
@@ -42,7 +43,12 @@ export async function check(input: HookInput): Promise<HookResult> {
     if (!artifactPath) return pass();
 
     const artifactId = artifactIdFromPath(artifactPath);
-    touchHeartbeat({ artifactId, sessionId, artifactPath, now: Date.now() });
+    touchHeartbeat({
+      artifactId,
+      sessionId,
+      artifactPath,
+      now: getWallClockNow(),
+    });
     return pass();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

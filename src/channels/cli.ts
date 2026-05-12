@@ -46,6 +46,7 @@ import {
   isValidSessionId,
 } from "../active-sessions/index.ts";
 import { parseFlags } from "../cli/flags.ts";
+import { getWallClockNow } from "../shared/clock.ts";
 import {
   appendMessage,
   channelIdFromHandoff,
@@ -957,7 +958,7 @@ export async function runChannelsCli(
         const channelId = requireChannelId(ctx, rest, 0);
         const meta = readMetadata(channelId);
         const self = sid();
-        const now = Date.now();
+        const now = getWallClockNow();
         const peers = meta.participants
           .filter((p) => p !== self)
           .map((p) => {
