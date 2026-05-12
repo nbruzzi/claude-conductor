@@ -35,6 +35,11 @@ export type {
   ChannelRole,
   ChannelSummary,
   IdentityClaim,
+  /** Phase 3 Step C (v2.6 fold per cross-audit ARCH-1 / M-1):
+   *  re-exported so external consumers calling
+   *  `listChannels({ includeUnreachable: true })` via this curated
+   *  surface can name the union arm in their own narrowing utilities. */
+  UnreachableChannelSummary,
 } from "./index.ts";
 
 export type { NatoIdentity } from "./identity.ts";

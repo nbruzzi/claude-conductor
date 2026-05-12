@@ -112,6 +112,27 @@ export type ChannelSummary = {
   archived: boolean;
 };
 
+/** Sentinel for channels whose `metadata.json` cannot be read or parsed.
+ *  Surfaced ONLY by `listChannels({ includeUnreachable: true })`. The default
+ *  zero-arg / `{ includeArchived }`-only signatures continue to silently skip
+ *  such channels (legacy semantics — list must not throw).
+ *
+ *  Discriminator: callers narrow via `"kind" in entry && entry.kind === "unreachable"`.
+ *  `ChannelSummary` deliberately has no `kind` field — adding one would change
+ *  `JSON.stringify(listChannels())` output and break the `channels list --json`
+ *  contract (Step C exit-criterion). The discriminator lives only on the
+ *  unreachable arm, and only flows into return types when opted into.
+ *
+ *  Use case: `channels-gc-reaper` consumes the new variant to walk channels
+ *  whose orphan sentinels would otherwise be unreachable (RE-W2-1 closure;
+ *  see `decisions/phase-2.md` Decision A RE-1 + Decision C). */
+export type UnreachableChannelSummary = {
+  kind: "unreachable";
+  id: string;
+  /** Human-readable diagnostic; not stable for programmatic matching. */
+  reason: string;
+};
+
 /** Root directory for all channel state. Delegates to the centralized
  *  resolver in `src/shared/paths.ts` which honors `CLAUDE_CONDUCTOR_CHANNELS_DIR`
  *  (per-component env), `CLAUDE_CONDUCTOR_ROOT` (root prefix), and falls back
@@ -1132,27 +1153,80 @@ export function newestHeartbeatMtime(channelId: string): number | null {
 
 // ─── Listing / GC ───────────────────────────────────────────────
 
-/** Enumerate all channels. Archived channels are included only when asked. */
+/** Enumerate all channels.
+ *
+ *  Archived channels are included only when asked.
+ *
+ *  By default (zero-arg or `{ includeArchived }`-only), channels whose
+ *  `metadata.json` cannot be read/parsed are silently skipped — preserving
+ *  legacy semantics ("list must not throw").
+ *
+ *  Phase 3 Step C addition (RE-W2-1 closure): opting in via
+ *  `{ includeUnreachable: true }` surfaces such channels as
+ *  `UnreachableChannelSummary` entries in the result, so consumers (the
+ *  channel GC reaper, in particular) can act on them — e.g., emit
+ *  operator-actionable breadcrumbs about orphan-sentinel state that would
+ *  otherwise accumulate invisibly.
+ *
+ *  Overload ordering note: the specific `{ includeUnreachable: true }`
+ *  overload is declared FIRST for call-site resolution; the legacy overload
+ *  is declared LAST so `ReturnType<typeof listChannels>` resolves to
+ *  `ChannelSummary[]` and pre-existing callers using that pattern (in
+ *  hooks/checks/{active-channels-load,channel-gc,channels-gc-reaper}.ts)
+ *  see no inferred-type drift.
+ */
+export function listChannels(opts: {
+  includeUnreachable: true;
+  includeArchived?: boolean;
+}): Array<ChannelSummary | UnreachableChannelSummary>;
 export function listChannels(opts?: {
   includeArchived?: boolean;
-}): ChannelSummary[] {
+}): ChannelSummary[];
+export function listChannels(opts?: {
+  includeArchived?: boolean;
+  includeUnreachable?: boolean;
+}): Array<ChannelSummary | UnreachableChannelSummary> {
   const root = resolveChannelsDir();
-  const out: ChannelSummary[] = [];
+  const out: Array<ChannelSummary | UnreachableChannelSummary> = [];
   if (!existsSync(root)) return out;
   for (const entry of readdirSync(root)) {
     if (entry === ".archive") continue;
     const id = entry;
+    // Split try/catch (RE-1 v2.6 fold per Step C cross-audit): a failure
+    // reading `metadata.json` is what defines "unreachable" — orphan
+    // sentinels cannot be safely GC'd without a valid metadata anchor. A
+    // failure reading `messages.jsonl` (via `lastMessageTs`) is a DIFFERENT
+    // failure class (the channel's metadata is fine; just its message log
+    // is unreadable) and must NOT misclassify the channel. Splitting the
+    // catches keeps `UnreachableChannelSummary` semantics honest.
+    let metadata: ChannelMetadata;
     try {
-      const metadata = readMetadata(id);
-      out.push({
-        id,
-        metadata,
-        lastMessageTs: lastMessageTs(id),
-        archived: false,
-      });
-    } catch {
-      /* skip malformed channel dirs — list must not throw */
+      metadata = readMetadata(id);
+    } catch (err) {
+      if (opts?.includeUnreachable) {
+        out.push({
+          kind: "unreachable",
+          id,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+      /* else: skip malformed channel dirs — list must not throw */
+      continue;
     }
+    let lastTs: string | null;
+    try {
+      lastTs = lastMessageTs(id);
+    } catch {
+      /* messages.jsonl unreadable but metadata is fine — surface the channel
+       *  with a null lastMessageTs (legacy semantics: list must not throw). */
+      lastTs = null;
+    }
+    out.push({
+      id,
+      metadata,
+      lastMessageTs: lastTs,
+      archived: false,
+    });
   }
   if (opts?.includeArchived) {
     const archive = resolveArchiveDir();
@@ -1174,8 +1248,15 @@ export function listChannels(opts?: {
             lastMessageTs: null,
             archived: true,
           });
-        } catch {
-          /* skip */
+        } catch (err) {
+          if (opts?.includeUnreachable) {
+            out.push({
+              kind: "unreachable",
+              id: entry,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+          }
+          /* else: skip */
         }
       }
     }

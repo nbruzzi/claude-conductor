@@ -33,6 +33,7 @@ import {
   resolveSessionId,
   touchHeartbeat,
   type ChannelMessage,
+  type ChannelSummary,
 } from "../../src/channels/index.ts";
 
 const SANDBOX = `/tmp/test-channels-${process.pid}`;
@@ -488,6 +489,187 @@ describe("channels", () => {
         "utf-8",
       );
       expect(listChannels().map((c) => c.id)).toEqual(["c-ok"]);
+    });
+
+    it("listChannels({ includeUnreachable: true }) surfaces malformed channels as UnreachableChannelSummary (RE-W2-1)", async () => {
+      await createChannel({
+        channelId: "c-ok",
+        handoffId: "c-ok",
+        sessionId: SESSION,
+      });
+      mkdirSync(join(resolveChannelsDir(), "c-bad"), { recursive: true });
+      writeFileSync(
+        join(resolveChannelsDir(), "c-bad", "metadata.json"),
+        "{ not json",
+        "utf-8",
+      );
+
+      const all = listChannels({ includeUnreachable: true });
+      expect(all.length).toBe(2);
+
+      const okEntries = all.filter(
+        (c) => !("kind" in c && c.kind === "unreachable"),
+      );
+      expect(okEntries.map((c) => c.id)).toEqual(["c-ok"]);
+
+      const unreachable = all.filter(
+        (c): c is { kind: "unreachable"; id: string; reason: string } =>
+          "kind" in c && c.kind === "unreachable",
+      );
+      expect(unreachable.map((c) => c.id)).toEqual(["c-bad"]);
+      // The exact `reason` text is not stable across Node/Bun versions; the
+      // assertion verifies the discriminator + id, not the parser message.
+      expect(typeof unreachable[0]?.reason).toBe("string");
+      expect(unreachable[0]?.reason.length ?? 0).toBeGreaterThan(0);
+    });
+
+    it("listChannels zero-arg behavior is byte-identical pre/post the includeUnreachable addition (no kind field on legacy entries)", async () => {
+      // Legacy semantics: the default signature returns ChannelSummary[]
+      // with no `kind` field. This pins the `channels list --json` output
+      // contract referenced by `src/channels/cli.ts:943` (Step C exit-
+      // criterion). Adding a `kind` field anywhere on ChannelSummary
+      // would break `JSON.stringify(listChannels())` consumers.
+      await createChannel({
+        channelId: "c-x",
+        handoffId: "c-x",
+        sessionId: SESSION,
+      });
+      const channels = listChannels();
+      expect(channels.length).toBe(1);
+      for (const c of channels) {
+        expect("kind" in c).toBe(false);
+      }
+    });
+
+    it("listChannels({ includeArchived: true }) without includeUnreachable preserves legacy skip-on-malformed for active and archived branches", async () => {
+      await createChannel({
+        channelId: "c-live",
+        handoffId: "c-live",
+        sessionId: SESSION,
+      });
+      await createChannel({
+        channelId: "c-archived",
+        handoffId: "c-archived",
+        sessionId: SESSION,
+      });
+      archiveChannel("c-archived");
+
+      // Active-branch malformed
+      mkdirSync(join(resolveChannelsDir(), "c-bad-live"), { recursive: true });
+      writeFileSync(
+        join(resolveChannelsDir(), "c-bad-live", "metadata.json"),
+        "{ not json",
+        "utf-8",
+      );
+
+      // Archive-branch malformed
+      mkdirSync(join(resolveArchiveDir(), "c-bad-archived"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(resolveArchiveDir(), "c-bad-archived", "metadata.json"),
+        "{ also not json",
+        "utf-8",
+      );
+
+      const result = listChannels({ includeArchived: true });
+      // Both malformed entries silently skipped; no `kind` field anywhere.
+      expect(result.map((c) => c.id).sort()).toEqual(["c-archived", "c-live"]);
+      for (const c of result) {
+        expect("kind" in c).toBe(false);
+      }
+    });
+
+    it("listChannels({ includeArchived: true, includeUnreachable: true }) surfaces archive-branch malformed channels (v2.6 m-1 fold — combined-opts coverage)", async () => {
+      // Closes the test-gap Charlie's cross-audit caught: the implementation
+      // applies the includeUnreachable opt-in symmetrically to both branches,
+      // but no test pinned the archive-branch unreachable surface under the
+      // combo opts. This test does.
+      await createChannel({
+        channelId: "c-live-ok",
+        handoffId: "c-live-ok",
+        sessionId: SESSION,
+      });
+      await createChannel({
+        channelId: "c-archived-ok",
+        handoffId: "c-archived-ok",
+        sessionId: SESSION,
+      });
+      archiveChannel("c-archived-ok");
+
+      // Archive-branch malformed
+      mkdirSync(join(resolveArchiveDir(), "c-bad-archived"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(resolveArchiveDir(), "c-bad-archived", "metadata.json"),
+        "{ not json",
+        "utf-8",
+      );
+
+      const all = listChannels({
+        includeArchived: true,
+        includeUnreachable: true,
+      });
+
+      const okIds = all
+        .filter((c) => !("kind" in c && c.kind === "unreachable"))
+        .map((c) => c.id)
+        .sort();
+      expect(okIds).toEqual(["c-archived-ok", "c-live-ok"]);
+
+      const unreachable = all.filter(
+        (c): c is { kind: "unreachable"; id: string; reason: string } =>
+          "kind" in c && c.kind === "unreachable",
+      );
+      expect(unreachable.map((c) => c.id)).toEqual(["c-bad-archived"]);
+      expect(typeof unreachable[0]?.reason).toBe("string");
+      expect((unreachable[0]?.reason.length ?? 0) > 0).toBe(true);
+    });
+
+    it("listChannels({ includeUnreachable: true }) does NOT misclassify metadata-valid channels when messages.jsonl is unreadable (v2.6 RE-1 fold — try-block-split)", async () => {
+      // Charlie's RE cross-audit caught: pre-v2.6 the readMetadata + lastMessageTs
+      // calls shared a single try/catch, so a messages.jsonl failure
+      // (EISDIR, EACCES, EIO) would misclassify a metadata-valid channel as
+      // `unreachable` with a misleading reason. v2.6 splits the catches so
+      // only readMetadata failures produce UnreachableChannelSummary; a
+      // messages.jsonl read failure surfaces the channel normally with
+      // `lastMessageTs: null`.
+      await createChannel({
+        channelId: "c-bad-messages",
+        handoffId: "c-bad-messages",
+        sessionId: SESSION,
+      });
+
+      // Replace messages.jsonl with a directory to force EISDIR on read.
+      const messagesPath = join(
+        resolveChannelsDir(),
+        "c-bad-messages",
+        "messages.jsonl",
+      );
+      // Remove the existing file (created by createChannel) and put a dir
+      // in its place.
+      try {
+        rmSync(messagesPath);
+      } catch {
+        /* the file may not exist if no message was appended; tolerate */
+      }
+      mkdirSync(messagesPath, { recursive: true });
+
+      const all = listChannels({ includeUnreachable: true });
+
+      // The channel surfaces as a normal ChannelSummary (metadata is fine),
+      // NOT as UnreachableChannelSummary.
+      const unreachable = all.filter(
+        (c) => "kind" in c && c.kind === "unreachable",
+      );
+      expect(unreachable.length).toBe(0);
+
+      const channels = all.filter((c): c is ChannelSummary => !("kind" in c));
+      expect(channels.map((c) => c.id)).toEqual(["c-bad-messages"]);
+      // lastMessageTs should be null (legacy semantics: list must not throw
+      // on messages.jsonl failure).
+      expect(channels[0]?.lastMessageTs).toBeNull();
     });
   });
 

@@ -295,4 +295,66 @@ describe("channels-gc-reaper hook", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain("garbage");
   });
+
+  it("surfaces UNREACHABLE breadcrumb for channels whose metadata.json cannot be parsed (Step C RE-W2-1 closure)", async () => {
+    // Set up: one valid channel + one channel-dir with corrupt metadata.json.
+    // The reaper used to silently skip the corrupt one (listChannels caught
+    // + suppressed the readMetadata throw), leaving any orphan sentinels in
+    // that channel invisible to all GC paths. Phase 3 Step C opts into the
+    // new `listChannels({ includeUnreachable: true })` variant + emits a
+    // breadcrumb + summary line so the operator can intervene.
+    await makeChannel("c-live");
+    plantOrphan("c-live", "Foxtrot", { ageSeconds: 120 });
+    ageMetadataBy("c-live", 120);
+
+    const corruptDir = join(SANDBOX, "c-corrupt");
+    mkdirSync(corruptDir, { recursive: true });
+    writeFileSync(join(corruptDir, "metadata.json"), "{ not json", "utf-8");
+
+    const result = await check(inputFor());
+
+    // The valid channel still gets its orphan reaped — narrow scope of
+    // the unreachable-channel handling is preserved (it doesn't disrupt
+    // the normal reap-flow for unrelated channels).
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("reaped channel=c-live letter=Foxtrot");
+
+    // The unreachable channel surfaces a breadcrumb summary line. The
+    // exact `reason` text is parser-dependent, so the assertion only
+    // pins the structural prefix.
+    expect(result.stdout).toContain("UNREACHABLE channel=c-corrupt");
+  });
+
+  it("UNREACHABLE breadcrumb does NOT attempt to reap orphan sentinels in the corrupt channel (no exception, no STUCK marker)", async () => {
+    // Defensive: the reaper has no valid metadata anchor in an unreachable
+    // channel, so it cannot distinguish orphan from live identity claims.
+    // Disposition is breadcrumb-only; no GC attempt. This test pins that
+    // behavior by planting a sentinel in a corrupt channel + verifying
+    // (a) no exception, (b) sentinel survives, (c) no STUCK orphan line.
+    const corruptDir = join(SANDBOX, "c-corrupt2");
+    mkdirSync(corruptDir, { recursive: true });
+    writeFileSync(join(corruptDir, "metadata.json"), "{ not json", "utf-8");
+    // Plant a sentinel-shaped file directly (bypass makeChannel which would
+    // succeed in writing a valid metadata).
+    const identitiesDir = join(corruptDir, "identities");
+    mkdirSync(identitiesDir, { recursive: true });
+    writeFileSync(
+      join(identitiesDir, "Foxtrot"),
+      JSON.stringify({
+        session_id: SESSION_OWNER,
+        role: "queue",
+        joined_at: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const result = await check(inputFor());
+
+    expect(result.exitCode).toBe(0);
+    // Sentinel survives (no unsafe reap attempt).
+    expect(existsSync(join(identitiesDir, "Foxtrot"))).toBe(true);
+    // No STUCK orphan line (which would indicate the reaper tried + failed).
+    expect(result.stdout).not.toContain("STUCK orphan channel=c-corrupt2");
+    // Breadcrumb present.
+    expect(result.stdout).toContain("UNREACHABLE channel=c-corrupt2");
+  });
 });
