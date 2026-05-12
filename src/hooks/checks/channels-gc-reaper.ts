@@ -68,7 +68,9 @@ import {
   resolveLastSeenDir,
   withMetadataLock,
   readMetadata,
+  type ChannelSummary,
   type IdentityClaim,
+  type UnreachableChannelSummary,
 } from "../../channels/index.ts";
 import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
@@ -79,7 +81,10 @@ import {
   type NatoIdentity,
   type UnlinkResult,
 } from "../../channels/identity.ts";
-import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
+import {
+  appendPresenceFailure,
+  redactHome,
+} from "../../shared/presence-failure-log.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
 
@@ -156,14 +161,48 @@ export async function check(_input: HookInput): Promise<HookResult> {
 async function reapAllChannels(): Promise<string[]> {
   const summaryLines: string[] = [];
 
-  let channels: ReturnType<typeof listChannels>;
+  // RE-W2-1 closure (Phase 3 Step C): opt into the `includeUnreachable: true`
+  // variant so channels whose `metadata.json` is unreadable surface as
+  // `UnreachableChannelSummary` entries instead of being silently skipped.
+  // Reaper cannot safely GC orphan sentinels in an unreachable channel
+  // (no valid metadata anchor to distinguish orphan from live), so the
+  // disposition is a breadcrumb-only: append a presence-failure entry +
+  // surface a summary line so the operator notices. The actual orphan
+  // sentinels remain in place; recovery is an explicit operator action
+  // (fix metadata.json or close-peer the channel).
+  let channels: Array<ChannelSummary | UnreachableChannelSummary>;
   try {
-    channels = listChannels();
+    channels = listChannels({ includeUnreachable: true });
   } catch {
     return summaryLines;
   }
 
   for (const ch of channels) {
+    if ("kind" in ch) {
+      // `kind` is declared only on UnreachableChannelSummary (literal
+      // `"unreachable"`), so the in-operator alone is sufficient to
+      // narrow. Avoiding a redundant `ch.kind === "unreachable"` keeps
+      // TS narrowing on the negative branch unambiguous → `ch.archived`
+      // below is reachable as `ChannelSummary`.
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        source: "channels-identity",
+        kind: "registry-contention",
+        sessionId: null,
+        artifactPath: ch.id,
+        detail: `gc-reaper: unreachable channel — cannot read metadata.json; orphan sentinels (if any) cannot be safely GC'd. reason=${ch.reason}`,
+      });
+      // RE-3 v2.6 fold (Step C cross-audit): redact $HOME paths in the
+      // operator-facing summary line. `appendPresenceFailure` already
+      // redacts via `redactEvent`; the stdout breadcrumb path was missing
+      // the same discipline, so paths could leak into transcripts +
+      // SessionStart briefings + peer channel messages.
+      summaryLines.push(
+        `  UNREACHABLE channel=${ch.id} reason=${redactHome(ch.reason)} — orphan sentinels (if any) not GC'd; fix metadata.json or close-peer.`,
+      );
+      continue;
+    }
+
     if (ch.archived) continue;
 
     try {

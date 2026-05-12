@@ -27,6 +27,7 @@ import type {
   ChannelSummary as ApiChannelSummary,
   IdentityClaim as ApiIdentityClaim,
   NatoIdentity as ApiNatoIdentity,
+  UnreachableChannelSummary as ApiUnreachableChannelSummary,
 } from "claude-conductor/channels/api";
 
 import type {
@@ -37,6 +38,7 @@ import type {
   ChannelRole as SourceChannelRole,
   ChannelSummary as SourceChannelSummary,
   IdentityClaim as SourceIdentityClaim,
+  UnreachableChannelSummary as SourceUnreachableChannelSummary,
 } from "../../src/channels/index.ts";
 
 import type { NatoIdentity as SourceNatoIdentity } from "../../src/channels/identity.ts";
@@ -107,6 +109,20 @@ type _AssertNatoIdentityBackward = SourceNatoIdentity extends ApiNatoIdentity
 const _natoIdentityForward: _AssertNatoIdentityForward = true;
 const _natoIdentityBackward: _AssertNatoIdentityBackward = true;
 
+// Phase 3 Step C v2.6 fold (ARCH-1 / M-1 cross-audit): pin the
+// `UnreachableChannelSummary` re-export so future drift between
+// `api.ts` and `index.ts` fails compile.
+type _AssertUnreachableChannelSummaryForward =
+  ApiUnreachableChannelSummary extends SourceUnreachableChannelSummary
+    ? true
+    : never;
+type _AssertUnreachableChannelSummaryBackward =
+  SourceUnreachableChannelSummary extends ApiUnreachableChannelSummary
+    ? true
+    : never;
+const _unreachableChannelSummaryForward: _AssertUnreachableChannelSummaryForward = true;
+const _unreachableChannelSummaryBackward: _AssertUnreachableChannelSummaryBackward = true;
+
 // Suppress unused-variable lint warnings — the const declarations ARE the
 // assertions (their types must be `true` not `never` to compile).
 void _channelKindForward;
@@ -125,3 +141,5 @@ void _identityClaimForward;
 void _identityClaimBackward;
 void _natoIdentityForward;
 void _natoIdentityBackward;
+void _unreachableChannelSummaryForward;
+void _unreachableChannelSummaryBackward;
