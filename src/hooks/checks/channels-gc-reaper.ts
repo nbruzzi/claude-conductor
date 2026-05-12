@@ -72,6 +72,7 @@ import {
   type IdentityClaim,
   type UnreachableChannelSummary,
 } from "../../channels/index.ts";
+import { validateIdentityClaim } from "../../channels/claim.ts";
 import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
   identitiesDir,
@@ -413,7 +414,7 @@ async function markPhase(channelId: string): Promise<MarkResult> {
         continue;
       }
 
-      const markedClaim = parseClaim(sentinelContent);
+      const markedClaim = validateIdentityClaim(sentinelContent);
       if (markedClaim === null) continue;
 
       orphans.push({
@@ -496,20 +497,6 @@ async function sweepPhase(
 
 function metadataJsonPath(channelId: string): string {
   return join(resolveChannelsDir(), channelId, "metadata.json");
-}
-
-function parseClaim(raw: string): IdentityClaim | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const c = parsed as IdentityClaim;
-    if (typeof c.session_id !== "string") return null;
-    if (typeof c.role !== "string") return null;
-    if (typeof c.joined_at !== "string") return null;
-    return c;
-  } catch {
-    return null;
-  }
 }
 
 function ackedMarkerPath(sentinelPath: string): string {
