@@ -290,21 +290,34 @@ else
   fail "hooks-layer.md missing correct breadcrumb path"
 fi
 
-# ─── Scenario 27: Cross-edge — dotfiles shim resolves Phase 2 hooks ───
-scenario 27 "Cross-edge dotfiles shim resolves Phase 2 hooks (skip if dotfiles tree absent)"
+# ─── Scenario 27: Cross-edge — dotfiles resolves Phase 2 hooks via claude-conductor (post-INVERSIONS) ───
+# Updated 2026-05-13 (post-INVERSIONS arc, commit b18ca59 2026-05-01): dotfiles
+# no longer carries shim files at src/hooks/checks/<name>.ts. The dispatcher
+# imports plugin Phase 2 hooks directly from claude-conductor via
+# bundled-registrations.ts. Three sanity checks per hook:
+#   (a) shim file ABSENT — proves INVERSIONS landed
+#   (b) name in dotfiles' ALL_CHECK_NAMES — proves registration intact
+#   (c) direct import in bundled-registrations.ts — proves dispatcher routing
+scenario 27 "Cross-edge dotfiles resolves Phase 2 hooks via claude-conductor (post-INVERSIONS; skip if dotfiles tree absent)"
 DOTFILES="${CLAUDE_DOTFILES_ROOT:-${HOME}/.claude-dotfiles}"
-if [[ -d "${DOTFILES}/src/hooks/checks" ]]; then
+CHECK_NAMES_FILE="${DOTFILES}/src/hooks/check-names.ts"
+BUNDLED_REG_FILE="${DOTFILES}/src/hooks/checks/bundled-registrations.ts"
+if [[ -d "${DOTFILES}/src/hooks" ]]; then
   HOOKS=("teammate-idle-reminder" "task-coordinator" "identity-injector" "channels-gc-reaper")
-  MISSING=""
+  BROKEN=""
   for h in "${HOOKS[@]}"; do
-    if [[ ! -f "${DOTFILES}/src/hooks/checks/${h}.ts" ]]; then
-      MISSING+="${h} "
+    if [[ -f "${DOTFILES}/src/hooks/checks/${h}.ts" ]]; then
+      BROKEN+="${h}(shim-present-post-INVERSIONS) "
+    elif ! grep -q "\"${h}\"" "${CHECK_NAMES_FILE}" 2>/dev/null; then
+      BROKEN+="${h}(missing-from-ALL_CHECK_NAMES) "
+    elif ! grep -q "claude-conductor/hooks/checks/${h}" "${BUNDLED_REG_FILE}" 2>/dev/null; then
+      BROKEN+="${h}(no-direct-import-in-bundled-registrations) "
     fi
   done
-  if [[ -z "${MISSING}" ]]; then
-    ok "dotfiles tree has all 4 Phase 2 hook shims"
+  if [[ -z "${BROKEN}" ]]; then
+    ok "dotfiles tree resolves all 4 Phase 2 hooks via claude-conductor (post-INVERSIONS)"
   else
-    fail "dotfiles tree missing shims: ${MISSING}"
+    fail "dotfiles tree cross-edge resolution broken: ${BROKEN}"
   fi
 else
   ok "skipped (dotfiles tree absent at ${DOTFILES})"
