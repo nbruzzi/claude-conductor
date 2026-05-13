@@ -14,10 +14,11 @@
  * Plan: ~/.claude/plans/prismatic-orbiting-mesh.md REV 2.1 §Slice 5.
  *
  * Emission cadence (CLI-W0-2 fix): persist a per-session cursor at
- * `<channel-dir>/identity-emit/<sid>.json`; emit ONLY when the current
- * (identity, role, peer-letter-set) tuple differs from the cursor (or no
- * cursor exists). Avoids spamming SessionStart with the same context every
- * `/resume`.
+ * `<channel-dir>/identity-emit-cursors/<sid>.json` (Step G renamed from
+ * `identity-emit/`; LEGACY dual-read fallback ≥30d); emit ONLY when the
+ * current (identity, role, peer-letter-set) tuple differs from the cursor
+ * (or no cursor exists). Avoids spamming SessionStart with the same context
+ * every `/resume`.
  *
  * Failure-mode class (CLI-W0-6): **fail-open + breadcrumb**. Read failures
  * (corrupt metadata, IO error) are caught + breadcrumb'd via

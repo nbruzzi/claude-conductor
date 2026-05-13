@@ -79,7 +79,7 @@ Each hook lists event, can-block, failure-mode class, breadcrumb kinds, and sour
 - **Purpose:** sweeps orphan channel-identity sentinels (per-letter sentinel files under `<channel-dir>/identities/<letter>` with no matching `metadata.identities[<letter>]` entry). Genesis path is a `claimIdentity` that won the `linkSync` but crashed before `commitIdentityClaim` wrote metadata, OR a `closeStalePeerIdentity` whose metadata removal succeeded but sentinel-unlink failed (EACCES/EBUSY).
 - **Race-against-claimIdentity guards:** mtime gate (90 s = 3 × `LOCK_STALE_MS`) + sweep-phase invariant re-check + `<letter>.reaper-acked` 7-day suppression marker (file lives at `<channel-dir>/identities/<letter>.reaper-acked`).
 - **Breadcrumb kinds:** `lock-timeout` (mark/sweep/last-seen-prune lock-acquire failure), `write-failed` (sentinel-unlink or marker-write failure), `registry-contention` (transient skip on metadata read race), `unhandled` (catch-all for unexpected throws). All under `source: "channels-identity"`.
-- **Rate-gate:** `REAP_INTERVAL_MS = 5 min`. Successive SessionStarts within 5 minutes short-circuit before the mark/sweep runs (cursor at `<channel-dir>/gc-reap/cursor` tracks last-reap mtime).
+- **Rate-gate:** `REAP_INTERVAL_MS = 5 min`. Successive SessionStarts within 5 minutes short-circuit before the mark/sweep runs (cursor at `<channel-dir>/reap-cursors/cursor` tracks last-reap mtime — Step G renamed from `gc-reap/`; the rate-gate consults MAX(newMtime, legacyMtime) during the ≥30-day dual-read window).
 - **Source:** [src/hooks/checks/channels-gc-reaper.ts](../../src/hooks/checks/channels-gc-reaper.ts)
 - **Tests:** [test/hooks/checks/channels-gc-reaper.test.ts](../../test/hooks/checks/channels-gc-reaper.test.ts)
 
@@ -89,7 +89,7 @@ Each hook lists event, can-block, failure-mode class, breadcrumb kinds, and sour
 - **Can block:** No
 - **Failure mode:** **fail-open + breadcrumb**. Read failures (corrupt metadata, IO error) are caught and the per-channel emission is skipped; the outer try/catch returns a silent pass without an `unhandled` breadcrumb.
 - **Purpose:** for each channel where this session has a NATO claim, emits one block with the assigned letter, current role, peer roster, and canonical CLI form for the four common coordination verbs (`whoami`, `set-role`, `send`, `peers`).
-- **Cadence:** per-session cursor at `<channel-dir>/identity-emit/<sid>.json` records the last `(identity, role, peer-letter-set)` tuple emitted; emission is suppressed when the tuple is unchanged. This avoids spamming SessionStart with the same context every `/resume`.
+- **Cadence:** per-session cursor at `<channel-dir>/identity-emit-cursors/<sid>.json` records the last `(identity, role, peer-letter-set)` tuple emitted; emission is suppressed when the tuple is unchanged. This avoids spamming SessionStart with the same context every `/resume`. (Step G renamed from `identity-emit/`; reader falls back to the legacy path during the ≥30-day dual-read window.)
 - **Breadcrumb kinds:** `write-failed` (cadence-cursor write failure). Under `source: "channels-identity"`. The hook does NOT emit `registry-contention` or `unhandled` — the outer catch returns pass silently.
 - **Source:** [src/hooks/checks/identity-injector.ts](../../src/hooks/checks/identity-injector.ts)
 - **Tests:** [test/hooks/checks/identity-injector.test.ts](../../test/hooks/checks/identity-injector.test.ts)
@@ -116,7 +116,7 @@ Each hook lists event, can-block, failure-mode class, breadcrumb kinds, and sour
 - **Failure mode:** **fail-open + breadcrumb**. An outer try/catch ensures a thrown helper never breaks the UserPromptSubmit chain.
 - **Purpose:** for each channel where this session has a claim, surfaces idle peers (heartbeat-mtime older than `DEFAULT_IDLE_THRESHOLD_MS = 5 min`) so operators discover stuck/crashed siblings without manual `peers` queries.
 - **Clock-skew sanity check:** before flagging a peer as idle, reads `readHeartbeatBody` (the peer's `Date.now()` written into the body at the same instant the kernel set mtime). If `|mtime − body_ts| > 5 min`, the divergence is suspected to be clock skew → reminder is suppressed and a `kind: "clock-skew"` breadcrumb is logged. Body=null (legacy peer pre-Slice-7 / corrupt) skips the skew check and treats mtime as authoritative.
-- **Rate-limit:** per-(channel, observer-session) cursor at `<channel-dir>/idle-emit/<sid>.json` keyed by peer letter; emission is suppressed for 30 minutes after the last emission for that peer.
+- **Rate-limit:** per-(channel, observer-session) cursor at `<channel-dir>/idle-emit-cursors/<sid>.json` keyed by peer letter; emission is suppressed for 30 minutes after the last emission for that peer. (Step G renamed from `idle-emit/`; reader falls back to the legacy path during the ≥30-day dual-read window.)
 - **Idle threshold tuning:** `CLAUDE_CONDUCTOR_IDLE_THRESHOLD_MS=<positive-integer-ms>` env var overrides the 5-min default. Validated by `/^\d+$/` regex pre-check + `Number.isFinite` + `Number.isInteger` + `n > 0`; invalid values silently fall back to the default with NO breadcrumb (operators reading the breadcrumb log will not see a misconfigured-env-var entry).
 - **Breadcrumb kinds:** `clock-skew` (peer body-vs-mtime skew > 5 min — reminder suppressed), `write-failed` (rate-limit-cursor write failure). Under `source: "channels-identity"`. The hook does NOT emit an `unhandled` breadcrumb — outer try/catch returns pass without log.
 - **Source:** [src/hooks/checks/teammate-idle-reminder.ts](../../src/hooks/checks/teammate-idle-reminder.ts)
@@ -170,7 +170,7 @@ claude-conductor channels read <channel-id> --since-cursor
 ```
 
 - **Bootstrap behavior:** first use on a channel returns full history with a stderr advisory (`[since-cursor] no prior cursor for <sid> on <channel-id>; reading full history (N messages). Subsequent --since-cursor calls will be incremental.`). Successful filtered reads advance the cursor.
-- **Cursor location:** `~/.claude/channels/<channel-id>/last-seen/<sid>.json` with shape `{mtime: number, ts: string}`.
+- **Cursor location:** `~/.claude/channels/<channel-id>/last-seen-cursors/<sid>.json` with shape `{mtime: number, ts: string}`. (Step G renamed from `last-seen/`; reader falls back to the legacy path during the ≥30-day dual-read window.)
 - **Mutual exclusivity:** see `--since-mtime`.
 - **Cursor advance vs. read failure:** if the cursor write fails post-read, the read still returns its results (exit 0) but a `since-cursor write failed` breadcrumb is logged + a stderr warning surfaces. Subsequent `--since-cursor` calls will re-read the same range until the cursor write succeeds.
 - **`--quiet` × `--json` matrix:** `--quiet` suppresses the stderr advisory; `--json` emits the message array as raw JSON. Combine for programmatic consumers (`--quiet --json`).
@@ -221,26 +221,28 @@ tail -100 ~/.claude/logs/.presence-gate-failures.log | jq -r '.kind' | sort | un
 | `identity-injector`      | `write-failed`                                                     | Cadence-cursor write failure                                               |
 | `task-coordinator`       | `registry-contention`                                              | `getIdentityContextForSession` threw                                       |
 | `teammate-idle-reminder` | `clock-skew`, `write-failed`                                       | Peer NTP drift / unusual write-delay; rate-limit-cursor write failure      |
-| Cursor write path        | `write-failed`                                                     | EACCES/EBUSY on `last-seen/<sid>.json`                                     |
+| Cursor write path        | `write-failed`                                                     | EACCES/EBUSY on `last-seen-cursors/<sid>.json`                             |
 
 ---
 
 ## Per-channel substrate layout
 
-The `~/.claude/channels/<channel-id>/` directory is the per-channel substrate. Phase 2 adds three subdirs (`last-seen/`, `gc-reap/`, `identity-emit/` plus the Slice-7 `idle-emit/`) to the Phase 1 layout. Naming is partially inconsistent (per ARCH-W2-4) — current convention is documented here; standardization is filed as a Phase 3 backlog item (`substrate-rename`).
+The `~/.claude/channels/<channel-id>/` directory is the per-channel substrate. Phase 2 added three per-session cursor subdirs plus a fourth (Slice 7) reminder cursor. Phase 3 Step G (ARCH-W2-4) standardized the naming to noun-form with explicit "cursor" terminology and set-plurality on `heartbeats/`; the legacy single-form subdir names are retained via dual-read for a ≥30-day window (through ≥2026-06-12, per Decision F in `decisions/phase-3.md`) so pre-Step-G peers' artifacts remain visible during the transition. Writers write NEW-only; readers try NEW first, fall back to LEGACY on ENOENT; clear/unlink walks BOTH; enumerate unions BOTH; the rate-gate cursor uses MAX(newMtime, legacyMtime).
 
-| Path                               | Slice           | Owner                    | Content                                                                                          | File format                                      |
-| ---------------------------------- | --------------- | ------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| `metadata.json`                    | Phase 0/1       | (multiple)               | Channel metadata: kind, identities map, role assignments, archived flag.                         | JSON                                             |
-| `messages.jsonl`                   | Phase 0         | `appendMessage`          | Append-only message log.                                                                         | JSONL                                            |
-| `bodies/`                          | Phase 0         | `--body-file` writer     | Externalized large message bodies (referenced via `body_ref`).                                   | Per-message file                                 |
-| `heartbeat/<sid>`                  | Phase 0/1       | `touchHeartbeat`         | Per-session liveness file. Phase 2 Slice 7 extends body to integer epoch-ms (was empty pre-S7).  | Plain integer ms (Slice 7+); empty file (legacy) |
-| `identities/<letter>`              | Phase 1 Slice 1 | `claimIdentity`          | Per-letter sentinel file (presence = claim held); content = JSON `IdentityClaim`.                | JSON                                             |
-| `identities/<letter>.reaper-acked` | Phase 2 Slice 4 | `channels-gc-reaper`     | 7-day TTL marker suppressing repeated stuck-orphan reminders for one letter.                     | Empty file (mtime = TTL anchor)                  |
-| `last-seen/<sid>.json`             | Phase 2 Slice 8 | `read --since-cursor`    | Per-session cursor: last message mtime + ts the session has read up to.                          | JSON `{mtime, ts}`                               |
-| `gc-reap/`                         | Phase 2 Slice 4 | `channels-gc-reaper`     | Per-reaper-run cursors (mtime gate state, sweep marks).                                          | JSON                                             |
-| `identity-emit/<sid>.json`         | Phase 2 Slice 5 | `identity-injector`      | Last-emitted (identity, role, peer-letter-set) tuple per session — drives cadence suppression.   | JSON                                             |
-| `idle-emit/<sid>.json`             | Phase 2 Slice 7 | `teammate-idle-reminder` | Per-(channel, observer-session) rate-limit cursor: peer letter → ISO timestamp of last reminder. | JSON `Record<peerLetter, isoTimestamp>`          |
+| Path                                   | Slice           | Owner                    | Content                                                                                          | File format                                      |
+| -------------------------------------- | --------------- | ------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `metadata.json`                        | Phase 0/1       | (multiple)               | Channel metadata: kind, identities map, role assignments, archived flag.                         | JSON                                             |
+| `messages.jsonl`                       | Phase 0         | `appendMessage`          | Append-only message log.                                                                         | JSONL                                            |
+| `bodies/`                              | Phase 0         | `--body-file` writer     | Externalized large message bodies (referenced via `body_ref`).                                   | Per-message file                                 |
+| `heartbeats/<sid>` ⁽ᴳ⁾                 | Phase 0/1       | `touchHeartbeat`         | Per-session liveness file. Phase 2 Slice 7 extends body to integer epoch-ms (was empty pre-S7).  | Plain integer ms (Slice 7+); empty file (legacy) |
+| `identities/<letter>`                  | Phase 1 Slice 1 | `claimIdentity`          | Per-letter sentinel file (presence = claim held); content = JSON `IdentityClaim`.                | JSON                                             |
+| `identities/<letter>.reaper-acked`     | Phase 2 Slice 4 | `channels-gc-reaper`     | 7-day TTL marker suppressing repeated stuck-orphan reminders for one letter.                     | Empty file (mtime = TTL anchor)                  |
+| `last-seen-cursors/<sid>.json` ⁽ᴳ⁾     | Phase 2 Slice 8 | `read --since-cursor`    | Per-session cursor: last message mtime + ts the session has read up to.                          | JSON `{mtime, ts}`                               |
+| `reap-cursors/cursor` ⁽ᴳ⁾              | Phase 2 Slice 4 | `channels-gc-reaper`     | Single per-reaper rate-gate cursor (mtime tracks last-reap timestamp).                           | JSON                                             |
+| `identity-emit-cursors/<sid>.json` ⁽ᴳ⁾ | Phase 2 Slice 5 | `identity-injector`      | Last-emitted (identity, role, peer-letter-set) tuple per session — drives cadence suppression.   | JSON                                             |
+| `idle-emit-cursors/<sid>.json` ⁽ᴳ⁾     | Phase 2 Slice 7 | `teammate-idle-reminder` | Per-(channel, observer-session) rate-limit cursor: peer letter → ISO timestamp of last reminder. | JSON `Record<peerLetter, isoTimestamp>`          |
+
+> ⁽ᴳ⁾ = renamed in Step G (`heartbeat/`, `last-seen/`, `gc-reap/`, `identity-emit/`, `idle-emit/` respectively); dual-read fallback retained ≥30 days post-merge (through ≥2026-06-12 per Decision F).
 
 ---
 
@@ -288,6 +290,10 @@ ls ~/.claude/channels/<channel-id>/identities/<letter>  # → should report not-
 # IMPORTANT: clear the reap-rate-gate cursor first, otherwise the next
 # SessionStart will short-circuit (REAP_INTERVAL_MS = 5 min) and you'll
 # falsely conclude the fix worked when the reaper hasn't re-evaluated:
+rm -f ~/.claude/channels/<channel-id>/reap-cursors/cursor
+# [step-g-transition] Dual-read window (through ≥2026-06-12): also clear the
+# legacy path so the MAX(newMtime, legacyMtime) rate-gate fully resets. Drop
+# these 2 lines when the legacy-removal cycle lands (rg "step-g-transition").
 rm -f ~/.claude/channels/<channel-id>/gc-reap/cursor
 ```
 
@@ -310,15 +316,21 @@ Rare; the marker auto-clears on each successful reap. Manual removal is a backst
 **Diagnose:**
 
 ```bash
-# Read the cadence cursor:
-cat ~/.claude/channels/<channel-id>/identity-emit/<sid>.json
+# Read the cadence cursor. The reader mirrors runtime semantics: NEW first,
+# LEGACY fallback (Step G dual-read window through ≥2026-06-12 — see
+# [step-g-transition] markers below):
+echo "[new]"; cat ~/.claude/channels/<channel-id>/identity-emit-cursors/<sid>.json 2>/dev/null
+# [step-g-transition] drop the next 2 lines when the legacy-removal cycle lands:
+echo "[legacy]"; cat ~/.claude/channels/<channel-id>/identity-emit/<sid>.json 2>/dev/null
 
 # Read current authoritative state:
 claude-conductor channels meta <channel-id> | jq '.identities'
 claude-conductor channels whoami <channel-id>
 ```
 
-If `identity-emit/<sid>.json` differs from authoritative state, the cursor is stale (or never written).
+<!-- [step-g-transition] drop "(or the legacy ...)" parenthetical when legacy-removal cycle lands -->
+
+If `identity-emit-cursors/<sid>.json` (or the legacy `identity-emit/<sid>.json` during the dual-read window) differs from authoritative state, the cursor is stale (or never written).
 If they match but the operator perceives it as wrong, the metadata itself is wrong → see `close-peer` below.
 
 **Recover:**
@@ -331,14 +343,19 @@ claude-conductor channels join <channel-id>
 For a stuck cadence cursor specifically:
 
 ```bash
-rm ~/.claude/channels/<channel-id>/identity-emit/<sid>.json
+rm -f ~/.claude/channels/<channel-id>/identity-emit-cursors/<sid>.json
+# [step-g-transition] Dual-read window (through ≥2026-06-12): also clear the
+# legacy path so a pre-Step-G cursor file (still readable via dual-read
+# fallback) doesn't resurrect the suppression. Drop these 2 lines when the
+# legacy-removal cycle lands (rg "step-g-transition").
+rm -f ~/.claude/channels/<channel-id>/identity-emit/<sid>.json
 ```
 
 Next SessionStart will treat the channel as never-emitted-before and surface fresh context.
 
 **Verify:**
 
-Re-fire `/resume`. Identity context should reflect current authoritative state and `identity-emit/<sid>.json` should regenerate **on this run** (cadence cursor was just removed, so the suppression check fires once with no prior tuple). After this verifying re-fire, subsequent `/resume` will resume normal cadence-suppression — silent emission is the success state, not a failure.
+Re-fire `/resume`. Identity context should reflect current authoritative state and `identity-emit-cursors/<sid>.json` should regenerate **on this run** (cadence cursor was just removed, so the suppression check fires once with no prior tuple). After this verifying re-fire, subsequent `/resume` will resume normal cadence-suppression — silent emission is the success state, not a failure.
 
 ### `task-coordinator`
 
@@ -384,8 +401,12 @@ Re-fire the Task dispatch. Should no longer block (under `pen`) or warn (under `
 # Show authoritative peer state (mtime ages, body timestamps if Slice 7+):
 claude-conductor channels peers <channel-id>
 
-# Inspect the rate-limit cursor (suppresses re-emission for 30 min per peer):
-cat ~/.claude/channels/<channel-id>/idle-emit/<sid>.json
+# Inspect the rate-limit cursor (suppresses re-emission for 30 min per peer).
+# Reader semantics: NEW first, LEGACY fallback (Step G dual-read window
+# through ≥2026-06-12 — see [step-g-transition] markers below):
+echo "[new]"; cat ~/.claude/channels/<channel-id>/idle-emit-cursors/<sid>.json 2>/dev/null
+# [step-g-transition] drop the next 2 lines when the legacy-removal cycle lands:
+echo "[legacy]"; cat ~/.claude/channels/<channel-id>/idle-emit/<sid>.json 2>/dev/null
 
 # Check the breadcrumb log for clock-skew kind on this peer:
 grep clock-skew ~/.claude/logs/.presence-gate-failures.log | tail
@@ -402,7 +423,12 @@ For false-positive clock-skew suppression — operator must investigate the peer
 For the rate-limit cursor blocking emission of a real idle:
 
 ```bash
-rm ~/.claude/channels/<channel-id>/idle-emit/<sid>.json
+rm -f ~/.claude/channels/<channel-id>/idle-emit-cursors/<sid>.json
+# [step-g-transition] Dual-read window (through ≥2026-06-12): also clear the
+# legacy path so a pre-Step-G cursor file doesn't resurrect the suppression
+# via fallback. Drop these 2 lines when the legacy-removal cycle lands
+# (rg "step-g-transition").
+rm -f ~/.claude/channels/<channel-id>/idle-emit/<sid>.json
 ```
 
 Forces a fresh emission cycle; next prompt-submit will re-evaluate without the suppression cursor.

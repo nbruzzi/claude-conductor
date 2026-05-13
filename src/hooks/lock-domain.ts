@@ -193,7 +193,7 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
         "per-channel-cursor",
       ],
       comment:
-        "RE-1 v2.12 fold: `archiveChannel(id)` does whole-dir `renameSync(<channelsDir>/<id>, <archiveDir>/<id>)` at `src/channels/index.ts:1276-1287` — atomically moves EVERY subdirectory (metadata, lockfile, heartbeat/, last-seen/, identity-emit/, gc-reap/, bodies/, messages.jsonl) PLUS identities sentinels. The whole-dir rename has the full per-channel blast radius. BYPASSES `withMetadataLock` (substrate-fix concurrency hazard filed for backlog at `src/channels/index.ts:1276-1287`). pruneArchive also rmSync's whole archived entries past retention. Does NOT call appendPresenceFailure.",
+        "RE-1 v2.12 fold: `archiveChannel(id)` does whole-dir `renameSync(<channelsDir>/<id>, <archiveDir>/<id>)` at `src/channels/index.ts:1276-1287` — atomically moves EVERY subdirectory (metadata, lockfile, heartbeats/, last-seen-cursors/, identity-emit-cursors/, reap-cursors/, bodies/, messages.jsonl — plus any legacy `heartbeat/`/`last-seen/`/`identity-emit/`/`gc-reap/` still present from the Step G dual-read window) PLUS identities sentinels. The whole-dir rename has the full per-channel blast radius. BYPASSES `withMetadataLock` (substrate-fix concurrency hazard filed for backlog at `src/channels/index.ts:1276-1287`). pruneArchive also rmSync's whole archived entries past retention. Does NOT call appendPresenceFailure.",
     },
     {
       phase: "channels-gc-reaper",
@@ -205,14 +205,14 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
         "presence-failure-log",
       ],
       comment:
-        "Three NON-CONTIGUOUS `withMetadataLock(channelId, fn)` sections: `markPhase` + `sweepPhase` + `pruneStaleLastSeenCursors`. Holds metadata lock (under-lock READ only — sibling-shape note: `per-channel-metadata` here means lock-serialization-touched, not metadata-write — see RE-4 deferred for taxonomy refinement). Sentinel-sweep `unlinkSync` on `identities/<letter>` + `.tmp.*` + `.reap-tmp.*` + `.reaper-acked`. Cursors: `gc-reap/cursor` (rate-gate) + `last-seen/<sid>.json` (prune). Documented at `channels-gc-reaper.ts:36-49`. Error-path appendPresenceFailure writes.",
+        "Three NON-CONTIGUOUS `withMetadataLock(channelId, fn)` sections: `markPhase` + `sweepPhase` + `pruneStaleLastSeenCursors`. Holds metadata lock (under-lock READ only — sibling-shape note: `per-channel-metadata` here means lock-serialization-touched, not metadata-write — see RE-4 deferred for taxonomy refinement). Sentinel-sweep `unlinkSync` on `identities/<letter>` + `.tmp.*` + `.reap-tmp.*` + `.reaper-acked`. Cursors: `reap-cursors/cursor` (rate-gate) + `last-seen-cursors/<sid>.json` (prune); both readers fall back to legacy `gc-reap/`/`last-seen/` during the Step G dual-read window. Documented at `channels-gc-reaper.ts:36-49`. Error-path appendPresenceFailure writes.",
     },
     {
       phase: "active-channels-load",
       event: "session-start",
       domains: ["per-channel-heartbeat"],
       comment:
-        "For each participating channel: `touchHeartbeat(channelId, sessionId)` → `writeFileSync(<channelsDir>/<id>/heartbeat/<sid>, String(getWallClockNow()))`. Kernel-atomic small-body write; no userspace lock (last-write-wins). Does NOT call appendPresenceFailure (top-level fail-open returns pass without breadcrumb).",
+        "For each participating channel: `touchHeartbeat(channelId, sessionId)` → `writeFileSync(<channelsDir>/<id>/heartbeats/<sid>, String(getWallClockNow()))` (Step G renamed from `heartbeat/`; writer is NEW-only, readers fall back to legacy during the 30-day dual-read window). Kernel-atomic small-body write; no userspace lock (last-write-wins). Does NOT call appendPresenceFailure (top-level fail-open returns pass without breadcrumb).",
     },
     {
       phase: "session-presence-register",
@@ -230,7 +230,7 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
       event: "session-start",
       domains: ["per-channel-cursor", "presence-failure-log"],
       comment:
-        "Per-(channel, session) emission rate-limit cursor at `<channelsDir>/<id>/identity-emit/<sid>.json`. Direct `writeFileSync` (NOT tmp+rename atomic; corrupt-on-crash self-heals via parse-fail → emit-anyway). Error-path appendPresenceFailure on cursor write failure.",
+        "Per-(channel, session) emission rate-limit cursor at `<channelsDir>/<id>/identity-emit-cursors/<sid>.json` (Step G renamed from `identity-emit/`; writer is NEW-only, reader falls back to legacy during the 30-day dual-read window). Direct `writeFileSync` (NOT tmp+rename atomic; corrupt-on-crash self-heals via parse-fail → emit-anyway). Error-path appendPresenceFailure on cursor write failure.",
     },
     {
       phase: "dotfiles-worktree-provisioner",
@@ -264,7 +264,7 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
       event: "user-prompt-submit",
       domains: ["per-channel-cursor", "presence-failure-log"],
       comment:
-        "Sibling-shape to `identity-injector` cursor pattern. Per-(channel, session) idle-emit rate-limit cursor at `<channelsDir>/<id>/idle-emit/<sid>.json` (tmp+rename atomic, unlike identity-injector's direct write). 30-min rate gate; clock-skew suppression (>5min divergence between body-ts + mtime). Multi-source appendPresenceFailure on read failures + clock-skew + idle-emit cursor write failures.",
+        "Sibling-shape to `identity-injector` cursor pattern. Per-(channel, session) idle-emit rate-limit cursor at `<channelsDir>/<id>/idle-emit-cursors/<sid>.json` (Step G renamed from `idle-emit/`; writer is NEW-only, reader falls back to legacy during the 30-day dual-read window; tmp+rename atomic, unlike identity-injector's direct write). 30-min rate gate; clock-skew suppression (>5min divergence between body-ts + mtime). Multi-source appendPresenceFailure on read failures + clock-skew + idle-emit cursor write failures.",
     },
   ],
 } as const satisfies Record<HookEvent, readonly BundledPhaseLockDomains[]>;

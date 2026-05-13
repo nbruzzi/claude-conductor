@@ -154,7 +154,7 @@ Phase 2's hooks read substrate that Phase 1 established. The composition rules:
 
 4. **`teammate-idle-reminder` (Phase 2 Slice 7) reads heartbeat mtime (Phase 1) AND heartbeat body timestamp (Phase 2 Slice 7 schema extension).** Backwards-compat: pre-Slice-7 heartbeats with empty body resolve via mtime-only; Slice-7+ heartbeats with `Date.now()` written into the body get clock-skew sanity checks.
 
-5. **`identity-injector` cadence cursor at `<channel-dir>/identity-emit/<sid>.json`** is independent of Phase 1's substrate. The cursor lives alongside `last-seen/` (Slice 8) and `identities/` (Phase 1) sibling-directory pattern.
+5. **`identity-injector` cadence cursor at `<channel-dir>/identity-emit-cursors/<sid>.json`** is independent of Phase 1's substrate. The cursor lives alongside `last-seen-cursors/` (Slice 8) and `identities/` (Phase 1) sibling-directory pattern. (Step G renamed `identity-emit/` → `identity-emit-cursors/` and `last-seen/` → `last-seen-cursors/`; legacy paths retained via dual-read fallback for ≥30 days.)
 
 ---
 

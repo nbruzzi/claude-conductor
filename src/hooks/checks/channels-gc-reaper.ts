@@ -639,7 +639,11 @@ function runRaceDetectionBreadcrumb(
  * `withMetadataLock` block (RE-3 + RE-6 closures — separate from
  * `sweepPhase`'s lock; re-reads `metadata.identities` inside the lock).
  *
- * For each `<channel-dir>/last-seen/<sid>.json`:
+ * For each `<channel-dir>/last-seen-cursors/<sid>.json` AND each
+ * `<channel-dir>/last-seen/<sid>.json` (Step G dual-read: pruner
+ * enumerates BOTH dirs during the ≥30d transition window — see
+ * `legacyLastSeenDir` / `legacyLastSeenCursorPath` below; writer code
+ * post-Step-G emits to the NEW dir only):
  *   1. Validate filename has the `<uuid>.json` shape (skip non-UUID
  *      debris like `.tmp` partial-write leftovers).
  *   2. Check the owning `sid` is NOT in any `metadata.identities[*].session_id`
