@@ -150,6 +150,44 @@ describe("identity", () => {
       expect(reconciled.identities["Alpha"].session_id).toBe(SESSION);
     });
 
+    it("findExistingClaim rejects sentinels with invalid role — call-site role-enum narrow is live (Phase 3 Step D2 M.0 closure)", async () => {
+      await createChannel({
+        channelId: "c-bad-role",
+        handoffId: "c-bad-role",
+        sessionId: SESSION,
+      });
+      // Tamper: write a Bravo sentinel directly with SESSION matching but
+      // role OUTSIDE `ChannelRole`'s enum (still `typeof === "string"`, so
+      // `validateIdentityClaim` accepts; `findExistingClaim`'s call-site
+      // role-enum narrow MUST reject). Bypass `claimIdentity` so the
+      // metadata does not record the tampered claim — forcing the rejoin
+      // flow through sentinel-scan (mirrors the `reconcile-on-rejoin`
+      // torn-write pattern above).
+      const identitiesPath = join(SANDBOX, "c-bad-role", "identities");
+      mkdirSync(identitiesPath, { recursive: true });
+      writeFileSync(
+        join(identitiesPath, "Bravo"),
+        JSON.stringify({
+          session_id: SESSION,
+          role: "not-a-real-channel-role-value",
+          joined_at: "2026-01-01T00:00:00.000Z",
+        }),
+        "utf-8",
+      );
+
+      // `claimIdentity` with SESSION: `findExistingClaim` scans, sees the
+      // tampered Bravo sentinel, runs the call-site role-enum narrow, and
+      // MUST return null (bad role). Flow falls through to fresh-claim,
+      // which assigns Alpha (lowest unclaimed per empty metadata).
+      const result = await claimIdentity({
+        channelId: "c-bad-role",
+        sessionId: SESSION,
+      });
+      expect(result.is_new_participant).toBe(true);
+      expect(result.identity).toBe("Alpha"); // NOT Bravo (tampered)
+      expect(result.role).toBe("queue");
+    });
+
     it("two different sessions get distinct letters (Alpha + Bravo)", async () => {
       await createChannel({
         channelId: "c-claim-3",
