@@ -60,7 +60,12 @@ const SOURCE = "teammate-idle-reminder";
 const DEFAULT_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MS = 30 * 60 * 1000;
 const CLOCK_SKEW_THRESHOLD_MS = 5 * 60 * 1000;
-const CURSOR_DIR_NAME = "idle-emit";
+// Step G (ARCH-W2-4) renamed `idle-emit/` to `idle-emit-cursors/` (noun-form
+// standardization). LEGACY name retained for 30-day dual-read transition per
+// `feedback-live-substrate-sequencing.md`; readers fall back to LEGACY,
+// writers use NEW only. Removal commit deferred to follow-up cycle.
+const CURSOR_DIR_NAME = "idle-emit-cursors";
+const LEGACY_CURSOR_DIR_NAME = "idle-emit";
 const ENV_VAR_IDLE_THRESHOLD = "CLAUDE_CONDUCTOR_IDLE_THRESHOLD_MS";
 
 /** Per-(channel, observer-session) rate-limit cursor. Key = peer letter, value = ISO timestamp of last emission. */
@@ -71,6 +76,15 @@ function cursorPath(channelId: string, sessionId: string): string {
     resolveChannelsDir(),
     channelId,
     CURSOR_DIR_NAME,
+    `${sessionId}.json`,
+  );
+}
+
+function legacyCursorPath(channelId: string, sessionId: string): string {
+  return join(
+    resolveChannelsDir(),
+    channelId,
+    LEGACY_CURSOR_DIR_NAME,
     `${sessionId}.json`,
   );
 }
@@ -92,8 +106,17 @@ function isValidCursor(parsed: unknown): parsed is EmitCursor {
 }
 
 function readCursor(channelId: string, sessionId: string): EmitCursor {
-  const path = cursorPath(channelId, sessionId);
-  if (!existsSync(path)) return {};
+  // Step G dual-read: try NEW `idle-emit-cursors/` first, fall back to LEGACY
+  // `idle-emit/` for pre-rename peers. First-existing path wins; absent both
+  // = empty cursor.
+  const newPath = cursorPath(channelId, sessionId);
+  const legacyPath = legacyCursorPath(channelId, sessionId);
+  const path = existsSync(newPath)
+    ? newPath
+    : existsSync(legacyPath)
+      ? legacyPath
+      : null;
+  if (path === null) return {};
   let raw: string;
   try {
     raw = readFileSync(path, "utf-8");

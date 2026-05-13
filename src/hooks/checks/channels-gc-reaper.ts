@@ -66,6 +66,7 @@ import {
   listChannels,
   resolveChannelsDir,
   resolveLastSeenDir,
+  resolveLegacyLastSeenDir,
   withMetadataLock,
   readMetadata,
   type ChannelSummary,
@@ -110,8 +111,12 @@ const ORPHAN_MTIME_GATE_MS = 3 * LOCK_STALE_MS;
 const ACKED_MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Subdirectory holding the per-channel rate-gate cursor file.
- *  `<channel-dir>/gc-reap/cursor` is touched after each reap pass. */
-const CURSOR_SUBDIR = "gc-reap";
+ *  Step G (ARCH-W2-4) renamed from `gc-reap/` to `reap-cursors/` (noun-form
+ *  standardization). LEGACY name retained for 30-day dual-read transition
+ *  per `feedback-live-substrate-sequencing.md`; readers fall back to LEGACY,
+ *  writers use NEW only. Removal commit deferred to follow-up cycle. */
+const CURSOR_SUBDIR = "reap-cursors";
+const LEGACY_CURSOR_SUBDIR = "gc-reap";
 const CURSOR_FILENAME = "cursor";
 
 /** Per-process suppression set for cursor-write failures (RE-2 closure):
@@ -304,16 +309,28 @@ async function reapChannel(channelId: string): Promise<string[]> {
 }
 
 /** Returns true if the cursor mtime is older than REAP_INTERVAL_MS (or
- *  doesn't exist — first pass on this channel). */
+ *  doesn't exist — first pass on this channel).
+ *  Step G dual-read (v2.14 fold of ARCH-2): take MAX(newMtime, legacyMtime)
+ *  so the rate-gate respects whichever peer-version touched the cursor
+ *  most recently. First-existing-wins would defeat the gate during the
+ *  30-day transition (e.g., stale NEW cursor + fresh LEGACY cursor would
+ *  bypass the 5-min interval). */
 function shouldReap(channelId: string): boolean {
-  const cursor = reapCursorPath(channelId);
-  if (!existsSync(cursor)) return true;
-  try {
-    const age = getWallClockNow() - statSync(cursor).mtimeMs;
-    return age >= REAP_INTERVAL_MS;
-  } catch {
-    return true;
+  let newestMtime: number | null = null;
+  for (const cursor of [
+    reapCursorPath(channelId),
+    legacyReapCursorPath(channelId),
+  ]) {
+    if (!existsSync(cursor)) continue;
+    try {
+      const m = statSync(cursor).mtimeMs;
+      if (newestMtime === null || m > newestMtime) newestMtime = m;
+    } catch {
+      continue;
+    }
   }
+  if (newestMtime === null) return true;
+  return getWallClockNow() - newestMtime >= REAP_INTERVAL_MS;
 }
 
 /** Touch the rate-gate cursor. On EROFS/ENOSPC/EACCES, surface ONE
@@ -343,6 +360,16 @@ function reapCursorDir(channelId: string): string {
 
 function reapCursorPath(channelId: string): string {
   return join(reapCursorDir(channelId), CURSOR_FILENAME);
+}
+
+/** Step G dual-read: LEGACY `gc-reap/cursor` path for pre-rename peers. */
+function legacyReapCursorPath(channelId: string): string {
+  return join(
+    resolveChannelsDir(),
+    channelId,
+    LEGACY_CURSOR_SUBDIR,
+    CURSOR_FILENAME,
+  );
 }
 
 /** Sweep stale `.tmp.*` and `.reap-tmp.*` files older than LOCK_STALE_MS
@@ -639,40 +666,48 @@ async function pruneStaleLastSeenCursors(channelId: string): Promise<void> {
     for (const claim of Object.values(metaIdentities)) {
       liveSids.add(claim.session_id);
     }
-    const dir = resolveLastSeenDir(channelId);
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return; // ENOENT — channel never had --since-cursor consumers
-    }
+    // Step G dual-read: prune stale entries from BOTH new
+    // `last-seen-cursors/` and legacy `last-seen/` dirs. Each cursor file is
+    // considered independently; one session may have left a cursor in either
+    // dir depending on which side of the rename their writer code ran on.
     const now = getWallClockNow();
-    for (const name of entries) {
-      if (!name.endsWith(".json")) continue;
-      const sid = name.slice(0, -".json".length);
-      if (!isValidSessionId(sid)) continue; // skip .tmp partial-write debris
-      if (liveSids.has(sid)) continue; // session is current participant
-      const cursorPath = join(dir, name);
-      let mtimeMs: number;
+    for (const dir of [
+      resolveLastSeenDir(channelId),
+      resolveLegacyLastSeenDir(channelId),
+    ]) {
+      let entries: string[];
       try {
-        mtimeMs = statSync(cursorPath).mtimeMs;
+        entries = readdirSync(dir);
       } catch {
-        continue; // race-cleared
+        continue; // ENOENT — this dir doesn't exist yet (e.g., new dir before any session writes)
       }
-      if (now - mtimeMs < LAST_SEEN_TTL_MS) continue;
-      try {
-        unlinkSync(cursorPath);
-      } catch (err: unknown) {
-        const code = (err as NodeJS.ErrnoException | undefined)?.code;
-        if (code === "ENOENT") continue;
-        appendPresenceFailure({
-          timestamp: new Date().toISOString(),
-          source: "channels-identity",
-          kind: "write-failed",
-          sessionId: sid,
-          artifactPath: cursorPath,
-          detail: `gc-reaper last-seen prune unlink failed: ${err instanceof Error ? err.message : String(err)}`,
-        });
+      for (const name of entries) {
+        if (!name.endsWith(".json")) continue;
+        const sid = name.slice(0, -".json".length);
+        if (!isValidSessionId(sid)) continue; // skip .tmp partial-write debris
+        if (liveSids.has(sid)) continue; // session is current participant
+        const cursorPath = join(dir, name);
+        let mtimeMs: number;
+        try {
+          mtimeMs = statSync(cursorPath).mtimeMs;
+        } catch {
+          continue; // race-cleared
+        }
+        if (now - mtimeMs < LAST_SEEN_TTL_MS) continue;
+        try {
+          unlinkSync(cursorPath);
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException | undefined)?.code;
+          if (code === "ENOENT") continue;
+          appendPresenceFailure({
+            timestamp: new Date().toISOString(),
+            source: "channels-identity",
+            kind: "write-failed",
+            sessionId: sid,
+            artifactPath: cursorPath,
+            detail: `gc-reaper last-seen prune unlink failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
       }
     }
   });

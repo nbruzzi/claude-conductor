@@ -175,7 +175,7 @@ describe("channels-gc-reaper hook", () => {
 
     await check(inputFor());
 
-    const cursorPath = join(channelDir("c10"), "gc-reap", "cursor");
+    const cursorPath = join(channelDir("c10"), "reap-cursors", "cursor");
     const past = Date.now() / 1000 - 6 * 60;
     utimesSync(cursorPath, past, past);
 
@@ -258,7 +258,7 @@ describe("channels-gc-reaper hook", () => {
 
     await check(inputFor());
 
-    const cursorPath = join(channelDir("ccursor"), "gc-reap", "cursor");
+    const cursorPath = join(channelDir("ccursor"), "reap-cursors", "cursor");
     expect(existsSync(cursorPath)).toBe(true);
   });
 

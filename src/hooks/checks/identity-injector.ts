@@ -45,7 +45,12 @@ import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
 
 const SOURCE = "identity-injector";
-const CURSOR_DIR_NAME = "identity-emit";
+// Step G (ARCH-W2-4) renamed `identity-emit/` to `identity-emit-cursors/`
+// (noun-form standardization). LEGACY name retained for 30-day dual-read
+// transition per `feedback-live-substrate-sequencing.md`; readers fall back
+// to LEGACY, writers use NEW only. Removal commit deferred to follow-up cycle.
+const CURSOR_DIR_NAME = "identity-emit-cursors";
+const LEGACY_CURSOR_DIR_NAME = "identity-emit";
 
 /** Per-session emission cursor — last (identity, role, peer-set) we surfaced. */
 type EmitCursor = {
@@ -64,20 +69,36 @@ function cursorPath(channelId: string, sessionId: string): string {
   );
 }
 
+function legacyCursorPath(channelId: string, sessionId: string): string {
+  return join(
+    resolveChannelsDir(),
+    channelId,
+    LEGACY_CURSOR_DIR_NAME,
+    `${sessionId}.json`,
+  );
+}
+
 function readCursor(channelId: string, sessionId: string): EmitCursor | null {
-  const path = cursorPath(channelId, sessionId);
-  if (!existsSync(path)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const cursor = parsed as EmitCursor;
-    if (typeof cursor.identity !== "string") return null;
-    if (typeof cursor.role !== "string") return null;
-    if (!Array.isArray(cursor.peer_letters)) return null;
-    return cursor;
-  } catch {
-    return null;
+  // Step G dual-read: try NEW `identity-emit-cursors/` first, fall back to
+  // LEGACY `identity-emit/` for pre-rename peers.
+  for (const path of [
+    cursorPath(channelId, sessionId),
+    legacyCursorPath(channelId, sessionId),
+  ]) {
+    if (!existsSync(path)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+      if (typeof parsed !== "object" || parsed === null) continue;
+      const cursor = parsed as EmitCursor;
+      if (typeof cursor.identity !== "string") continue;
+      if (typeof cursor.role !== "string") continue;
+      if (!Array.isArray(cursor.peer_letters)) continue;
+      return cursor;
+    } catch {
+      continue;
+    }
   }
+  return null;
 }
 
 function writeCursor(

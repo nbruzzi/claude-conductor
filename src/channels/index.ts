@@ -218,11 +218,12 @@ export function resolveSessionId(
 //   - metadata.json + metadata.json.lock — channel metadata + RMW lock
 //   - messages.jsonl                     — append-only message log
 //   - bodies/                            — large message bodies (body_ref)
-//   - heartbeat/<sid>                    — per-session liveness markers
+//   - heartbeats/<sid>                   — per-session liveness markers (renamed from heartbeat/ in Step G; dual-read fallback to heartbeat/ retained ≥30d)
 //   - identities/<NATO-letter>           — per-letter sentinel files (Phase 1 Slice 2)
-//   - identity-emit/<sid>.json           — identity-injector emission cursors (Phase 2 Slice 5)
-//   - gc-reap/cursor                     — channels-gc-reaper rate-gate cursor (Phase 2 Slice 4)
-//   - last-seen/<sid>.json               — channels read --since-cursor cursors (Phase 2 Slice 8)
+//   - identity-emit-cursors/<sid>.json   — identity-injector emission cursors (Phase 2 Slice 5; renamed from identity-emit/ in Step G; dual-read fallback ≥30d)
+//   - reap-cursors/cursor                — channels-gc-reaper rate-gate cursor (Phase 2 Slice 4; renamed from gc-reap/ in Step G; dual-read fallback ≥30d)
+//   - last-seen-cursors/<sid>.json       — channels read --since-cursor cursors (Phase 2 Slice 8; renamed from last-seen/ in Step G; dual-read fallback ≥30d)
+//   - idle-emit-cursors/<sid>.json       — teammate-idle-reminder emission cursors (Phase 2 Slice 7; renamed from idle-emit/ in Step G; dual-read fallback ≥30d)
 // ─────────────────────────────────────────────────────────────────────
 
 function channelDir(id: string): string {
@@ -240,17 +241,39 @@ function messagesPath(id: string): string {
 function bodyDir(id: string): string {
   return join(channelDir(id), "bodies");
 }
+// ─── Step G (ARCH-W2-4) substrate-rename: noun-form standardization ───
+// Per-channel subdir names standardized to noun-form per `feedback-live-substrate-sequencing.md`
+// additive-first discipline. Each subdir has a NEW name (current) + LEGACY name (pre-rename).
+// Readers consult NEW first, fall back to LEGACY (dual-read). Writers write to NEW only.
+// Legacy names retained ≥30 days; removal commit deferred to follow-up cycle.
+const HEARTBEAT_SUBDIR = "heartbeats";
+const LEGACY_HEARTBEAT_SUBDIR = "heartbeat";
+const LAST_SEEN_SUBDIR = "last-seen-cursors";
+const LEGACY_LAST_SEEN_SUBDIR = "last-seen";
+
 function heartbeatDir(id: string): string {
-  return join(channelDir(id), "heartbeat");
+  return join(channelDir(id), HEARTBEAT_SUBDIR);
+}
+function legacyHeartbeatDir(id: string): string {
+  return join(channelDir(id), LEGACY_HEARTBEAT_SUBDIR);
 }
 function heartbeatPath(id: string, sessionId: string): string {
   return join(heartbeatDir(id), sessionId);
 }
+function legacyHeartbeatPath(id: string, sessionId: string): string {
+  return join(legacyHeartbeatDir(id), sessionId);
+}
 function lastSeenDir(id: string): string {
-  return join(channelDir(id), "last-seen");
+  return join(channelDir(id), LAST_SEEN_SUBDIR);
+}
+function legacyLastSeenDir(id: string): string {
+  return join(channelDir(id), LEGACY_LAST_SEEN_SUBDIR);
 }
 function lastSeenCursorPath(id: string, sessionId: string): string {
   return join(lastSeenDir(id), `${sessionId}.json`);
+}
+function legacyLastSeenCursorPath(id: string, sessionId: string): string {
+  return join(legacyLastSeenDir(id), `${sessionId}.json`);
 }
 function archivedChannelDir(id: string): string {
   return join(resolveArchiveDir(), id);
@@ -1098,7 +1121,9 @@ export function touchHeartbeat(channelId: string, sessionId: string): void {
   );
 }
 
-/** mtimeMs of the heartbeat marker, or null if none exists. */
+/** mtimeMs of the heartbeat marker, or null if none exists.
+ *  Step G dual-read: tries NEW `heartbeats/` first, falls back to LEGACY
+ *  `heartbeat/` for pre-rename peers. */
 export function heartbeatMtime(
   channelId: string,
   sessionId: string,
@@ -1106,7 +1131,11 @@ export function heartbeatMtime(
   try {
     return statSync(heartbeatPath(channelId, sessionId)).mtimeMs;
   } catch {
-    return null;
+    try {
+      return statSync(legacyHeartbeatPath(channelId, sessionId)).mtimeMs;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -1126,7 +1155,12 @@ export function readHeartbeatBody(
   try {
     raw = readFileSync(heartbeatPath(channelId, sessionId), "utf-8");
   } catch {
-    return null;
+    // Step G dual-read fallback: try LEGACY `heartbeat/` for pre-rename peers.
+    try {
+      raw = readFileSync(legacyHeartbeatPath(channelId, sessionId), "utf-8");
+    } catch {
+      return null;
+    }
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
@@ -1137,17 +1171,20 @@ export function readHeartbeatBody(
   return n;
 }
 
-/** Newest heartbeat mtime across all participants. Null if no heartbeats. */
+/** Newest heartbeat mtime across all participants. Null if no heartbeats.
+ *  Step G dual-read: UNIONs NEW `heartbeats/` + LEGACY `heartbeat/` entries
+ *  so pre-rename peers' heartbeats stay visible during 30-day transition. */
 export function newestHeartbeatMtime(channelId: string): number | null {
-  const dir = heartbeatDir(channelId);
-  if (!existsSync(dir)) return null;
   let newest: number | null = null;
-  for (const name of readdirSync(dir)) {
-    try {
-      const m = statSync(join(dir, name)).mtimeMs;
-      if (newest === null || m > newest) newest = m;
-    } catch {
-      /* skip */
+  for (const dir of [heartbeatDir(channelId), legacyHeartbeatDir(channelId)]) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      try {
+        const m = statSync(join(dir, name)).mtimeMs;
+        if (newest === null || m > newest) newest = m;
+      } catch {
+        /* skip */
+      }
     }
   }
   return newest;
@@ -1368,12 +1405,21 @@ export function readLastSeenCursor(
       `[channels] readLastSeenCursor: invalid sessionId "${sessionId}"`,
     );
   }
-  const path = lastSeenCursorPath(channelId, sessionId);
+  // Step G dual-read: try NEW `last-seen-cursors/` first, fall back to LEGACY
+  // `last-seen/` so pre-rename peers' cursors remain readable during the
+  // 30-day transition window.
   let raw: string;
   try {
-    raw = readFileSync(path, "utf-8");
+    raw = readFileSync(lastSeenCursorPath(channelId, sessionId), "utf-8");
   } catch {
-    return null;
+    try {
+      raw = readFileSync(
+        legacyLastSeenCursorPath(channelId, sessionId),
+        "utf-8",
+      );
+    } catch {
+      return null;
+    }
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -1453,19 +1499,39 @@ export function clearLastSeenCursor(
       `[channels] clearLastSeenCursor: invalid sessionId "${sessionId}"`,
     );
   }
-  const path = lastSeenCursorPath(channelId, sessionId);
-  try {
-    unlinkSync(path);
-    return { kind: "cleared" };
-  } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    const detail = err instanceof Error ? err.message : String(err);
-    if (code === "ENOENT") return { kind: "absent" };
-    if (code === "EACCES" || code === "EBUSY") {
-      return { kind: "error", code, detail };
+  // Step G dual-clear: unlink BOTH NEW + LEGACY paths so the cursor is fully
+  // cleared regardless of which path the writer used. Return "cleared" if
+  // EITHER unlink succeeds; "absent" only if both ENOENT.
+  let anyCleared = false;
+  let firstError: { code: string; detail: string } | null = null;
+  for (const path of [
+    lastSeenCursorPath(channelId, sessionId),
+    legacyLastSeenCursorPath(channelId, sessionId),
+  ]) {
+    try {
+      unlinkSync(path);
+      anyCleared = true;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT") continue;
+      const detail = err instanceof Error ? err.message : String(err);
+      if (firstError === null) {
+        firstError = {
+          code: code === "EACCES" || code === "EBUSY" ? code : "OTHER",
+          detail,
+        };
+      }
     }
-    return { kind: "error", code: "OTHER", detail };
   }
+  if (anyCleared) return { kind: "cleared" };
+  if (firstError !== null) {
+    return {
+      kind: "error",
+      code: firstError.code as "EACCES" | "EBUSY" | "OTHER",
+      detail: firstError.detail,
+    };
+  }
+  return { kind: "absent" };
 }
 
 /** True iff the channel exists in the archive directory (per-channel
@@ -1481,8 +1547,11 @@ export function isChannelArchived(channelId: string): boolean {
   return existsSync(archivedChannelDir(channelId));
 }
 
-/** Path to the per-channel `last-seen/` subdirectory. Exported so the
- *  Slice 4 GC reaper can scan + prune stale cursors (RE-W0-5). */
+/** Path to the per-channel `last-seen-cursors/` subdirectory (renamed in
+ *  Step G from `last-seen/`). Exported so the Slice 4 GC reaper can scan +
+ *  prune stale cursors (RE-W0-5). Reaper should ALSO consult
+ *  `resolveLegacyLastSeenDir` for legacy-named entries during the 30-day
+ *  dual-read transition window. */
 export function resolveLastSeenDir(channelId: string): string {
   if (!isValidArtifactId(channelId)) {
     throw new Error(
@@ -1490,6 +1559,19 @@ export function resolveLastSeenDir(channelId: string): string {
     );
   }
   return lastSeenDir(channelId);
+}
+
+/** Step G dual-read: path to the LEGACY per-channel `last-seen/`
+ *  subdirectory. Exported so the GC reaper can enumerate + prune stale
+ *  cursors written by pre-rename peers. Reaper unlinks stale entries from
+ *  BOTH new + legacy dirs during the dual-read transition window. */
+export function resolveLegacyLastSeenDir(channelId: string): string {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] resolveLegacyLastSeenDir: invalid channelId "${channelId}"`,
+    );
+  }
+  return legacyLastSeenDir(channelId);
 }
 
 /** Path to a specific session's last-seen cursor file. Exported for the
