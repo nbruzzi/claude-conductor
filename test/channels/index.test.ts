@@ -350,8 +350,8 @@ describe("channels", () => {
       });
       // Simulate a legacy peer that wrote an empty heartbeat body.
       const channelsRoot = resolveChannelsDir();
-      const path = join(channelsRoot, "c-hb-empty", "heartbeat", SESSION);
-      mkdirSync(join(channelsRoot, "c-hb-empty", "heartbeat"), {
+      const path = join(channelsRoot, "c-hb-empty", "heartbeats", SESSION);
+      mkdirSync(join(channelsRoot, "c-hb-empty", "heartbeats"), {
         recursive: true,
       });
       writeFileSync(path, "", "utf-8");
@@ -365,8 +365,8 @@ describe("channels", () => {
         sessionId: SESSION,
       });
       const channelsRoot = resolveChannelsDir();
-      const path = join(channelsRoot, "c-hb-ws", "heartbeat", SESSION);
-      mkdirSync(join(channelsRoot, "c-hb-ws", "heartbeat"), {
+      const path = join(channelsRoot, "c-hb-ws", "heartbeats", SESSION);
+      mkdirSync(join(channelsRoot, "c-hb-ws", "heartbeats"), {
         recursive: true,
       });
       writeFileSync(path, "   \n\t  ", "utf-8");
@@ -380,7 +380,7 @@ describe("channels", () => {
         sessionId: SESSION,
       });
       const channelsRoot = resolveChannelsDir();
-      const heartbeatsDir = join(channelsRoot, "c-hb-corrupt", "heartbeat");
+      const heartbeatsDir = join(channelsRoot, "c-hb-corrupt", "heartbeats");
       mkdirSync(heartbeatsDir, { recursive: true });
 
       // Each invalid form gets a separate session id so reads are isolated.
@@ -424,7 +424,7 @@ describe("channels", () => {
         sessionId: SESSION,
       });
       const channelsRoot = resolveChannelsDir();
-      const heartbeatsDir = join(channelsRoot, "c-hb-valid", "heartbeat");
+      const heartbeatsDir = join(channelsRoot, "c-hb-valid", "heartbeats");
       mkdirSync(heartbeatsDir, { recursive: true });
 
       // Valid body — integer ms timestamp.
@@ -760,7 +760,7 @@ describe("channels", () => {
     it("readLastSeenCursor returns null when JSON has NaN-ish mtime (RE-1)", async () => {
       const { readLastSeenCursor } =
         await import("../../src/channels/index.ts");
-      const dir = join(resolveChannelsDir(), "ch1", "last-seen");
+      const dir = join(resolveChannelsDir(), "ch1", "last-seen-cursors");
       mkdirSync(dir, { recursive: true });
       // Mtime is null in raw JSON (JSON can't serialize NaN); after parse,
       // typeof === "object" so isFinite check rejects.
@@ -774,7 +774,7 @@ describe("channels", () => {
     it("readLastSeenCursor returns null on malformed JSON", async () => {
       const { readLastSeenCursor } =
         await import("../../src/channels/index.ts");
-      const dir = join(resolveChannelsDir(), "ch1", "last-seen");
+      const dir = join(resolveChannelsDir(), "ch1", "last-seen-cursors");
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, `${UUID_SID}.json`), "{not json");
       expect(readLastSeenCursor("ch1", UUID_SID)).toBe(null);

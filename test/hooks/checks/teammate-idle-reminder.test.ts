@@ -72,13 +72,52 @@ function inputFor(sessionId: string | undefined): HookInput {
 }
 
 /** Backdate heartbeat mtime + body to a specific past wall-clock time. */
+// Step G v2.14 fold (ARCH-4 / KS-4): backdateHeartbeat writes to NEW
+// `heartbeats/` subdir (mirroring touchHeartbeat's post-rename write path).
+// Use backdateHeartbeatLegacy below to explicitly exercise the dual-read
+// fallback from the old `heartbeat/` path during the 30-day transition.
 function backdateHeartbeat(
   channelId: string,
   sessionId: string,
   ageMs: number,
   bodyOverrideMs?: number | null | "empty" | "corrupt",
 ): void {
-  const path = join(resolveChannelsDir(), channelId, "heartbeat", sessionId);
+  backdateHeartbeatAtDir(
+    channelId,
+    sessionId,
+    ageMs,
+    "heartbeats",
+    bodyOverrideMs,
+  );
+}
+
+/** Step G dual-read fallback test helper — writes heartbeat to LEGACY path
+ *  `<channel-dir>/heartbeat/<sid>`. Only the explicit dual-read fallback
+ *  test should call this; production-equivalent backdating should use the
+ *  NEW-path helper above. */
+function backdateHeartbeatLegacy(
+  channelId: string,
+  sessionId: string,
+  ageMs: number,
+  bodyOverrideMs?: number | null | "empty" | "corrupt",
+): void {
+  backdateHeartbeatAtDir(
+    channelId,
+    sessionId,
+    ageMs,
+    "heartbeat",
+    bodyOverrideMs,
+  );
+}
+
+function backdateHeartbeatAtDir(
+  channelId: string,
+  sessionId: string,
+  ageMs: number,
+  subdir: "heartbeats" | "heartbeat",
+  bodyOverrideMs?: number | null | "empty" | "corrupt",
+): void {
+  const path = join(resolveChannelsDir(), channelId, subdir, sessionId);
   const targetMs = Date.now() - ageMs;
   const targetSec = targetMs / 1000;
 
@@ -89,7 +128,7 @@ function backdateHeartbeat(
     body = String(targetMs);
   else body = String(bodyOverrideMs);
 
-  mkdirSync(join(resolveChannelsDir(), channelId, "heartbeat"), {
+  mkdirSync(join(resolveChannelsDir(), channelId, subdir), {
     recursive: true,
   });
   writeFileSync(path, body, "utf-8");
@@ -100,7 +139,7 @@ function cursorPath(channelId: string, sessionId: string): string {
   return join(
     resolveChannelsDir(),
     channelId,
-    "idle-emit",
+    "idle-emit-cursors",
     `${sessionId}.json`,
   );
 }
@@ -363,7 +402,11 @@ describe("teammate-idle-reminder hook", () => {
     touchHeartbeat("ch-rate-recent", SESSION_SELF);
     backdateHeartbeat("ch-rate-recent", SESSION_BRAVO, 6 * 60 * 1000);
 
-    const dir = join(resolveChannelsDir(), "ch-rate-recent", "idle-emit");
+    const dir = join(
+      resolveChannelsDir(),
+      "ch-rate-recent",
+      "idle-emit-cursors",
+    );
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, `${SESSION_SELF}.json`),
@@ -397,7 +440,11 @@ describe("teammate-idle-reminder hook", () => {
     touchHeartbeat("ch-rate-stale", SESSION_SELF);
     backdateHeartbeat("ch-rate-stale", SESSION_BRAVO, 6 * 60 * 1000);
 
-    const dir = join(resolveChannelsDir(), "ch-rate-stale", "idle-emit");
+    const dir = join(
+      resolveChannelsDir(),
+      "ch-rate-stale",
+      "idle-emit-cursors",
+    );
     mkdirSync(dir, { recursive: true });
     const oldTs = new Date(Date.now() - 31 * 60 * 1000).toISOString();
     writeFileSync(
@@ -459,7 +506,11 @@ describe("teammate-idle-reminder hook", () => {
     touchHeartbeat("ch-cursor-parse", SESSION_SELF);
     backdateHeartbeat("ch-cursor-parse", SESSION_BRAVO, 6 * 60 * 1000);
 
-    const dir = join(resolveChannelsDir(), "ch-cursor-parse", "idle-emit");
+    const dir = join(
+      resolveChannelsDir(),
+      "ch-cursor-parse",
+      "idle-emit-cursors",
+    );
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${SESSION_SELF}.json`), "not-json {{", "utf-8");
 
@@ -486,7 +537,11 @@ describe("teammate-idle-reminder hook", () => {
     touchHeartbeat("ch-cursor-shape", SESSION_SELF);
     backdateHeartbeat("ch-cursor-shape", SESSION_BRAVO, 6 * 60 * 1000);
 
-    const dir = join(resolveChannelsDir(), "ch-cursor-shape", "idle-emit");
+    const dir = join(
+      resolveChannelsDir(),
+      "ch-cursor-shape",
+      "idle-emit-cursors",
+    );
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, `${SESSION_SELF}.json`),
@@ -583,7 +638,7 @@ describe("teammate-idle-reminder hook", () => {
     touchHeartbeat("ch-eacces", SESSION_SELF);
     backdateHeartbeat("ch-eacces", SESSION_BRAVO, 6 * 60 * 1000);
 
-    const dir = join(resolveChannelsDir(), "ch-eacces", "idle-emit");
+    const dir = join(resolveChannelsDir(), "ch-eacces", "idle-emit-cursors");
     mkdirSync(dir, { recursive: true });
     if (process.getuid?.() !== 0) {
       const { chmodSync } = await import("node:fs");
@@ -733,5 +788,36 @@ describe("teammate-idle-reminder hook", () => {
     } finally {
       delete process.env[ENV_KEY];
     }
+  });
+
+  // Step G dual-read fallback coverage (v2.14 fold of ARCH-5 / ARCH-4 / KS-4):
+  // A pre-Step-G peer's heartbeat lives at the LEGACY `heartbeat/<sid>` path.
+  // This session's `heartbeatMtime` + `readHeartbeatBody` dual-read MUST find
+  // it via the LEGACY fallback so peer-staleness detection survives the
+  // dual-read transition window.
+  it("25. Step G dual-read fallback — LEGACY-only heartbeat is still observable to idle-reminder", async () => {
+    await createChannel({
+      channelId: "ch-legacy-hb",
+      handoffId: "ch-legacy-hb",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-legacy-hb",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-legacy-hb",
+      sessionId: SESSION_DELTA,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-legacy-hb", SESSION_SELF);
+    // Pre-Step-G peer wrote ONLY to legacy `heartbeat/` (no `heartbeats/`).
+    // The dual-read fallback in heartbeatMtime + readHeartbeatBody must
+    // surface this heartbeat so the idle-reminder still observes the peer.
+    backdateHeartbeatLegacy("ch-legacy-hb", SESSION_DELTA, 6 * 60 * 1000); // 6 min idle
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toContain("Peer Bravo");
   });
 });

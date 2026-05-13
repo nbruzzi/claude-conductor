@@ -386,3 +386,61 @@ per tight-fold criteria.
     that peer-audits missed.
 
 ---
+
+## Decision F — `substrate-rename` (Phase 3 Step G; ARCH-W2-4 closure) — atomic-commit-1 (additive new-name + dual-read protocol) (2026-05-12)
+
+**Status:** SHIPPED — atomic-commit-1 via plugin SHA `2843438` on branch `substrate-rename` (PR #37). Legacy-name removal commit DEFERRED to a follow-up cycle, earliest 2026-06-12 (≥30 days post-merge); see Out of scope below.
+
+**Context:** Phase 2 `decisions/phase-2.md` Decision C deferred `substrate-rename` (ARCH-W2-4) to Phase 3 as one of 5 routed substrate-fix backlog items. Step G of Phase 3 substrate-completion cycle 2026-05-12 closes the atomic-commit-1 portion (write to NEW name; read with dual-read fallback to LEGACY). The 30-day verification window precedes a separate removal commit.
+
+**5 per-channel subdirectory renames (noun-form standardization):**
+
+| Legacy name      | New canonical name       | Rationale                                                                                                     |
+| ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `heartbeat/`     | `heartbeats/`            | Set-plurality consistency with `identities/` (per-session liveness markers; a SET of heartbeats per channel). |
+| `last-seen/`     | `last-seen-cursors/`     | Noun-form (was adjective+participle); explicit "cursor" terminology.                                          |
+| `gc-reap/`       | `reap-cursors/`          | Noun-form (was abbreviation+verb); preserves "reap" type-identifier in path.                                  |
+| `identity-emit/` | `identity-emit-cursors/` | Noun-form (was noun+verb); explicit "cursor" terminology.                                                     |
+| `idle-emit/`     | `idle-emit-cursors/`     | Noun-form (was adjective+verb); explicit "cursor" terminology.                                                |
+
+**Naming-decision: Option (A) flat noun-suffix over Option (B) bundled `cursors/` hierarchy.** Reasoning (KS-lens, channel `2026-05-11_08-15` consensus 2026-05-13 ~00:50 UTC):
+
+1. Sibling-parity diff-minimality — Option A is single-level rename; matches `feedback-live-substrate-sequencing.md` additive-first discipline. Option B (cursors/<x>/) would double the dual-read fallback complexity.
+2. Discoverability preserved — path keeps type-identifier ("reap" still in path; not buried under generic `cursors/`).
+3. Less test-infrastructure rewrite — option A touches paths 1:1; option B would require test dir-creation logic to nest under `cursors/`.
+4. Hierarchy can come later — if cursor-collection abstraction emerges as a need, a follow-up cycle adds `cursors/` parent dir over the renamed siblings. Future-proofed without overcommitting now.
+5. `heartbeat/` → `heartbeats/` for set-plurality consistency matches `identities/` (already plural for set-of-letters).
+
+**Dual-read protocol (each path):**
+
+- **READ:** try NEW path first; fall back to LEGACY on ENOENT.
+- **WRITE:** NEW path only.
+- **CLEAR / UNLINK:** walk BOTH paths (preserve clear semantic regardless of which writer-version produced the file).
+- **ENUMERATE:** union BOTH directories (`newestHeartbeatMtime`, reaper's `pruneStaleLastSeenCursors`).
+- **Rate-gate (`shouldReap`):** take MAX(newMtime, legacyMtime) — first-existing-wins would defeat the gate during transition (ARCH-2 fold in v2.14).
+
+**Pre-flight discipline applied:**
+
+- Active-session abort criterion (plan-spec line 583): verified 0 peer sessions live <60min via `bun run src/active-sessions/cli.ts list` — only self-heartbeats present. PROCEED.
+- Per-phase write-graph trace verified each consumer's read/write/clear/enumerate semantics against the rename pattern.
+- Step F (Decision E in phase-3.md predecessor cycle — see plan-spec) lock-domain registry's `per-channel-cursor` + `per-channel-heartbeat` domain coverage holds across the rename (resource-type-based, not path-literal-based).
+
+**Audit lineage:** Plan v2.11 → atomic-commit-1 at `2843438` → multi-lens audit (ARCH + KS subagents per plan-spec audit-class). ARCH returned 1 CRITICAL (cross-edge dotfiles paired-update required) + 5 MAJOR (shouldReap fix, doc lag, test helper, missing dual-read tests, 30-day tracking) + 3 MINOR. KS returned 5 MAJOR (runbook lag, missing Decision F entry, orphan memory cross-ref, test helper, CHANGELOG + backlog stale) + 3 MINOR. v2.14 commit-amend folded findings inline (this Decision F entry is one of them).
+
+**Out of scope (deferred to follow-up cycles):**
+
+- **Legacy-name removal commit** — earliest 2026-06-12 (≥30 days post-Step-G merge). Trigger conditions (any of): (a) 30-day-empirical-absence of pre-Step-G peer writes verified via `find <channelsDir>/*/{heartbeat,last-seen,gc-reap,identity-emit,idle-emit} -mtime -7` returning empty; (b) Phase 4 public-release decision; (c) explicit cleanup slice scheduled.
+- **Optional bundled `cursors/` hierarchy refactor** (Option B) — future cycle if cursor-collection abstraction becomes load-bearing.
+- **Active-sessions registry subdir naming** — separate cycle scope; Step G is channel-subdir-rename only per plan-spec line 591.
+- **Cross-edge dotfiles paired-update** — handled in dotfiles repo via paired PR per `feedback-handshake-before-merge-parallel-sessions.md` (Delta sibling lane).
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/coordination-substrate-completion-next-session.md` Step G section (v2.11 → v2.14)
+- Backlog (closed via this Decision): `~/Documents/Obsidian Vault/wiki/backlog.md:624` `substrate-rename` — original spec proposed `_cursor` singular suffix; actual landing chose `_cursors` plural for sibling-parity with `identities/`. See backlog correction note.
+- New backlog item filed: `substrate-rename-legacy-removal` — Phase 3 Step G follow-up commit; trigger ≥2026-06-12.
+- Memory: `feedback-live-substrate-sequencing.md` (additive-first discipline; bundled at `memories/` per Step G v2.14 KS-3 fold).
+- ARCH-W2-4 source: `decisions/phase-2.md:167`.
+- Related Decision: Step F (`lock-domain.ts` registry) — `per-channel-cursor` + `per-channel-heartbeat` domains cover renamed paths without registry update needed.
+
+---

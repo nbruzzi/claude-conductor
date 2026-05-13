@@ -119,7 +119,7 @@ const VERB_HELP: Record<string, string> = {
   join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
   send: "send <channel-id> <kind>\n  Append a message; body read from stdin. kind ∈ {note, question, handoff, status}.",
-  read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen/<sid>.json.\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
+  read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen-cursors/<sid>.json (legacy: last-seen/; dual-read fallback ≥30d post-Step-G).\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
   list: "list [--include-archived]\n  Print active (or active+archived) channels as JSON.",
   meta: "meta <channel-id>\n  Print parsed metadata as JSON.",
   heartbeat:
@@ -808,7 +808,8 @@ export async function runChannelsCli(
         // Slice 8 since-cursor logic: resolve threshold + bootstrap state
         // before filtering. flags.sinceMtime is the parsed numeric ms;
         // flags.sinceCursor is the no-value alias that auto-resolves to
-        // the per-session cursor at <channel-dir>/last-seen/<sid>.json.
+        // the per-session cursor at <channel-dir>/last-seen-cursors/<sid>.json
+        // (Step G renamed from last-seen/; dual-read fallback ≥30d).
         let sinceMtime: number | null = null;
         let bootstrap = false;
         if (flags.sinceMtime !== undefined) {

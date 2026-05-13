@@ -183,10 +183,10 @@ describe("identity-injector hook", () => {
     const cursorPath = join(
       SANDBOX,
       "c-corrupt-cursor",
-      "identity-emit",
+      "identity-emit-cursors",
       `${SESSION_A}.json`,
     );
-    mkdirSync(join(SANDBOX, "c-corrupt-cursor", "identity-emit"), {
+    mkdirSync(join(SANDBOX, "c-corrupt-cursor", "identity-emit-cursors"), {
       recursive: true,
     });
     writeFileSync(cursorPath, "{ not json", "utf-8");
@@ -215,7 +215,7 @@ describe("identity-injector hook", () => {
     const cursorPath = join(
       SANDBOX,
       "c-shape",
-      "identity-emit",
+      "identity-emit-cursors",
       `${SESSION_A}.json`,
     );
     const cursor = JSON.parse(readFileSync(cursorPath, "utf-8")) as Record<
