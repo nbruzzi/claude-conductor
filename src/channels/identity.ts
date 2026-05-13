@@ -98,6 +98,7 @@ import {
   type ChannelRole,
   type IdentityClaim,
 } from "./index.ts";
+import { validateIdentityClaim } from "./claim.ts";
 
 /**
  * Thrown when all 26 NATO letters are claimed and the channel is full.
@@ -574,6 +575,17 @@ export const INTERNAL = {
  * Scan the identities/ directory for an existing claim by `sessionId`.
  * Returns the {identity, claim} pair on first match, or null. Used for
  * idempotent rejoin in `claimIdentity`.
+ *
+ * Delegates the 4-step shape-validation (JSON.parse → non-null object →
+ * `string`-typed `session_id`/`role`/`joined_at`) to
+ * {@link validateIdentityClaim} in `./claim.ts` (Phase 3 Step D2 close-out
+ * per Decision A ARCH-2 + Charlie's pre-flight scout M.0 disposition). The
+ * role-enum narrowing (`"pen" | "queue" | "out"`) and the `sessionId`
+ * filter stay at this call site — `validateIdentityClaim` intentionally
+ * treats `role` as opaque-string (see `test/channels/claim.test.ts` test 9
+ * pinning the contract). Behavior contract: byte-for-byte equivalent to
+ * the pre-D2 inline 4-step check + 2 additional narrows; same
+ * skip-vs-match outcome for every observable sentinel-file shape.
  */
 function findExistingClaim(
   channelId: string,
@@ -590,32 +602,28 @@ function findExistingClaim(
   for (const entry of entries) {
     if (!isValidIdentity(entry)) continue;
     const path = identitySentinelPath(channelId, entry);
-    let parsed: unknown;
+    let raw: string;
     try {
-      parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+      raw = readFileSync(path, "utf-8");
     } catch {
       continue;
     }
+    const claim = validateIdentityClaim(raw);
+    if (claim === null || claim.session_id !== sessionId) continue;
+    // `validateIdentityClaim` treats `role` as opaque-string per
+    // `test/channels/claim.test.ts` test 9 — the runtime value may
+    // legitimately be outside `ChannelRole`'s compile-time union. Widen to
+    // `string` so the inequality chain isn't TS-narrowed to `never` (the
+    // narrow stays runtime-live; lint will not flag as unreachable).
+    const roleRuntime: string = claim.role;
     if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      (parsed as { session_id?: unknown }).session_id !== sessionId
+      roleRuntime !== "pen" &&
+      roleRuntime !== "queue" &&
+      roleRuntime !== "out"
     ) {
       continue;
     }
-    const c = parsed as Record<string, unknown>;
-    const role = c["role"];
-    const joined_at = c["joined_at"];
-    if (
-      (role !== "pen" && role !== "queue" && role !== "out") ||
-      typeof joined_at !== "string"
-    ) {
-      continue;
-    }
-    return {
-      identity: entry,
-      claim: { session_id: sessionId, role, joined_at },
-    };
+    return { identity: entry, claim };
   }
   return null;
 }
