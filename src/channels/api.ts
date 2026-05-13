@@ -8,7 +8,11 @@
  * via this narrow re-export rather than the full `./channels` flat root.
  * This keeps the public auditable manifest small and explicit; internal
  * helpers (`renderMessage`, migration heuristics, lock primitives) stay
- * private.
+ * private. The one render.ts seam exposed on the public surface is
+ * `renderKindPrefix` (added in Phase 0 of Phase 4 Step A) — a kind→prefix
+ * lookup consumed by kind-aware renderer callers (Layer 1 hook in plugin,
+ * and any future dotfiles cross-edge surface that wants consistent kind
+ * markers).
  *
  * Re-export rule (per `feedback-type-only-exports-erase-at-runtime.md`):
  * value re-exports and type re-exports are kept in SEPARATE blocks. Value
@@ -64,6 +68,7 @@ export type { NatoIdentity } from "./identity.ts";
 export {
   appendMessage,
   archiveChannel,
+  CHANNEL_KINDS,
   ChannelClosedError,
   channelIdFromHandoff,
   closeChannel,
@@ -82,5 +87,11 @@ export {
   touchHeartbeat,
   validateChannelMetadata,
 } from "./index.ts";
+
+// Layer 1 / Layer 3 fold (Phase 4 Step A): kind-aware renderer helper.
+// Exposed on the curated surface so dotfiles cross-edge consumers can
+// render peer messages with consistent kind prefixes if needed; primary
+// in-plugin consumer is `src/hooks/checks/peer-message-deliverer.ts`.
+export { renderKindPrefix } from "./render.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";

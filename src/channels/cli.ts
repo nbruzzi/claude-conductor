@@ -56,6 +56,7 @@ import {
   createChannel,
   heartbeatMtime,
   isChannelArchived,
+  CHANNEL_KINDS,
   joinChannel,
   listChannels,
   newestHeartbeatMtime,
@@ -91,12 +92,10 @@ import {
 } from "./identity.ts";
 import { renderMessage } from "./render.ts";
 
-const VALID_KINDS: readonly ChannelKind[] = [
-  "note",
-  "question",
-  "handoff",
-  "status",
-];
+// Pull directly from the SSOT tuple — `CHANNEL_KINDS` in
+// `src/channels/index.ts` is the single edit point. Adding a new kind
+// there widens this acceptance set automatically.
+const VALID_KINDS: readonly ChannelKind[] = CHANNEL_KINDS;
 const VALID_ROLES: readonly ChannelRole[] = ["pen", "queue", "out"];
 const LIVE_WINDOW_MS = 30 * 60 * 1000;
 const ONLINE_WINDOW_MS = 24 * 60 * 60 * 1000;

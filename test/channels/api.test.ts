@@ -58,7 +58,8 @@ afterEach(() => {
 
 // ─── (a) Value-export presence ──────────────────────────────────────
 // One test per value name; explicit (not it.each) so failure messages
-// point at the broken export by name. 20 names total.
+// point at the broken export by name. 22 names total (added
+// `CHANNEL_KINDS` + `renderKindPrefix` in Phase 0 of Phase 4 Step A).
 
 describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", () => {
   it("appendMessage is a function", () => {
@@ -66,6 +67,10 @@ describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", ()
   });
   it("archiveChannel is a function", () => {
     expect(typeof api.archiveChannel).toBe("function");
+  });
+  it("CHANNEL_KINDS is an array", () => {
+    expect(Array.isArray(api.CHANNEL_KINDS)).toBe(true);
+    expect(api.CHANNEL_KINDS.length).toBeGreaterThan(0);
   });
   it("channelIdFromHandoff is a function", () => {
     expect(typeof api.channelIdFromHandoff).toBe("function");
@@ -106,6 +111,9 @@ describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", ()
   });
   it("readMetadata is a function", () => {
     expect(typeof api.readMetadata).toBe("function");
+  });
+  it("renderKindPrefix is a function", () => {
+    expect(typeof api.renderKindPrefix).toBe("function");
   });
   it("resolveArchiveDir is a function", () => {
     expect(typeof api.resolveArchiveDir).toBe("function");

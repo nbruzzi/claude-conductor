@@ -65,7 +65,22 @@ const LOCK_BASE_DELAY_MS = 50;
 
 export type ChannelLifecycle = "parallel";
 
-export type ChannelKind = "note" | "question" | "handoff" | "status";
+/**
+ * Single source of truth for the set of channel message kinds. The
+ * `ChannelKind` union derives from this tuple via
+ * `(typeof CHANNEL_KINDS)[number]`, and runtime validators import
+ * `CHANNEL_KINDS` so the type-level and runtime acceptance stay in
+ * lockstep (no 3-sync-point drift bait when extending the set).
+ *
+ * Sibling pattern: `BUNDLED_CHECKS_BY_EVENT` `as const` at
+ * `src/hooks/bundled-check-names.ts:58-72`. Extension order is the
+ * declaration order shown here — Phase 1 kinds first; future kinds
+ * (e.g., Phase 4 Step A Layer 3 walkie-talkie primitives, Layer 4
+ * `digest`) append after.
+ */
+export const CHANNEL_KINDS = ["note", "question", "handoff", "status"] as const;
+
+export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 
 /** Role posture per parent plan §266-271. `pen` = actively writing;
  *  `queue` = ready to take pen; `out` = observing only (sends blocked). */
@@ -1109,15 +1124,12 @@ export function readMessages(channelId: string): ChannelMessage[] {
 export function isChannelMessage(v: unknown): v is ChannelMessage {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
-  const validKinds: readonly ChannelKind[] = [
-    "note",
-    "question",
-    "handoff",
-    "status",
-  ];
+  // Validator pulls directly from the SSOT tuple — adding a new kind to
+  // `CHANNEL_KINDS` automatically widens this acceptance set (no separate
+  // edit required here).
   if (typeof o["ts"] !== "string") return false;
   if (typeof o["from"] !== "string") return false;
-  if (!validKinds.includes(o["kind"] as ChannelKind)) return false;
+  if (!CHANNEL_KINDS.includes(o["kind"] as ChannelKind)) return false;
   if (o["body"] !== undefined && typeof o["body"] !== "string") return false;
   if (o["body_ref"] !== undefined && typeof o["body_ref"] !== "string")
     return false;

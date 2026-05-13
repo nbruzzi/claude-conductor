@@ -37,10 +37,10 @@ import { tmpdir } from "node:os";
 
 import {
   appendMessage,
+  CHANNEL_KINDS,
   createChannel,
   readMessages,
   resolveChannelsDir,
-  type ChannelKind,
   type ChannelMessage,
   type ChannelRole,
 } from "../../src/channels/api.ts";
@@ -88,18 +88,23 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
       expect(received?.body).toBe(sent.body);
     });
 
-    it("preserves all 4 ChannelKind values", async () => {
+    it("preserves every CHANNEL_KINDS value across round-trip", async () => {
+      // Anchored to the SSOT tuple (per ARCH-2 fold on Phase 0). When
+      // Layer 3 / Layer 4 commits append walkie-talkie + digest kinds
+      // to `CHANNEL_KINDS`, this loop body widens automatically — no
+      // separate edit to a parallel literal kind-list.
       await setup("c-kinds");
-      const kinds: ChannelKind[] = ["note", "question", "handoff", "status"];
-      for (const k of kinds) {
+      for (const k of CHANNEL_KINDS) {
         await appendMessage({
           channelId: "c-kinds",
           message: baseMsg({ kind: k, body: `body-${k}` }),
         });
       }
       const messages = readMessages("c-kinds");
-      expect(messages).toHaveLength(4);
-      expect(messages.map((m) => m.kind).sort()).toEqual(kinds.slice().sort());
+      expect(messages).toHaveLength(CHANNEL_KINDS.length);
+      expect(messages.map((m) => m.kind).sort()).toEqual(
+        [...CHANNEL_KINDS].sort(),
+      );
     });
   });
 
