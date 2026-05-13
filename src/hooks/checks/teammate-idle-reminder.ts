@@ -20,8 +20,9 @@
  *      detected → suppress the reminder + log `kind: "clock-skew"`
  *      breadcrumb. Body=null (legacy peer / corrupt) skips skew check.
  *   4. Honors a per-(channel, observer-session) rate-limit cursor stored
- *      at `<channel-dir>/idle-emit/<sid>.json`. Each peer letter has an
- *      independent ISO-timestamp; emission is suppressed for 30 minutes
+ *      at `<channel-dir>/idle-emit-cursors/<sid>.json` (Step G renamed from
+ *      `idle-emit/`; LEGACY dual-read fallback ≥30d). Each peer letter has
+ *      an independent ISO-timestamp; emission is suppressed for 30 minutes
  *      after the last emission.
  *   5. Emits one `[teammate-idle]` system-reminder block per still-eligible
  *      idle peer with the canonical `close-peer --force` recovery hint.

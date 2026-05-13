@@ -106,7 +106,7 @@ echo "msg-bootstrap-2" | CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels send "${
 READ_OUT="$(CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels read "${CH}" --since-cursor --json 2>/dev/null)"
 STATUS="$(echo "${READ_OUT}" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("meta",{}).get("since_cursor_status",""))')"
 COUNT="$(echo "${READ_OUT}" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(len(d.get("messages",[])))')"
-CURSOR_FILE="${CLAUDE_CONDUCTOR_CHANNELS_DIR}/${CH}/last-seen/${SID_A}.json"
+CURSOR_FILE="${CLAUDE_CONDUCTOR_CHANNELS_DIR}/${CH}/last-seen-cursors/${SID_A}.json"
 if [[ "${STATUS}" == "bootstrap" && "${COUNT}" == "2" && -f "${CURSOR_FILE}" ]]; then
   ok "bootstrap returns 2 messages + cursor written"
 else
@@ -197,7 +197,7 @@ CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels create "${CH}" "${CH}" >/dev/null
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels join "${CH}" >/dev/null
 echo "x" | CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels send "${CH}" note >/dev/null
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels read "${CH}" --since-cursor --json >/dev/null
-CURSOR_FILE="${CLAUDE_CONDUCTOR_CHANNELS_DIR}/${CH}/last-seen/${SID_A}.json"
+CURSOR_FILE="${CLAUDE_CONDUCTOR_CHANNELS_DIR}/${CH}/last-seen-cursors/${SID_A}.json"
 if [[ -f "${CURSOR_FILE}" ]]; then
   CURSOR_BODY="$(cat "${CURSOR_FILE}")"
   HAS_MTIME="$(echo "${CURSOR_BODY}" | python3 -c 'import json,sys;d=json.load(sys.stdin);print("yes" if "mtime" in d else "no")')"
@@ -216,7 +216,7 @@ scenario 20 "heartbeat body is integer ms (Slice 7 schema extension)"
 CH="smoke-20-${RANDOM}"
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels create "${CH}" "${CH}" >/dev/null
 CLAUDE_SESSION_ID="${SID_A}" "${BIN}" channels join "${CH}" >/dev/null
-HB_FILE="${CLAUDE_CONDUCTOR_CHANNELS_DIR}/${CH}/heartbeat/${SID_A}"
+HB_FILE="${CLAUDE_CONDUCTOR_CHANNELS_DIR}/${CH}/heartbeats/${SID_A}"
 if [[ -f "${HB_FILE}" ]]; then
   HB_BODY="$(cat "${HB_FILE}")"
   if python3 -c "n=int('${HB_BODY}'); assert n > 1700000000000 and n < 9999999999999" 2>/dev/null; then

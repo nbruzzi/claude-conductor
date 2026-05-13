@@ -111,8 +111,9 @@ P3_FILE_ALLOWLIST=(
   # INVERSIONS arc (2026-05-07); allowlist entries removed.
   "src/channels/index.ts"
   # Phase 2 Slice 8 — `read` verb help text references the per-channel
-  # cursor path `~/.claude/channels/<id>/last-seen/<sid>.json` in
-  # operator-facing help output. The literal IS the operator-facing
+  # cursor path `~/.claude/channels/<id>/last-seen-cursors/<sid>.json` (Step
+  # G renamed; legacy `last-seen/` also cited as dual-read-window callout)
+  # in operator-facing help output. The literal IS the operator-facing
   # documentation; routing via paths.ts would require template
   # interpolation in help strings and obscure the answer to the
   # "where does my cursor live" operator question.

@@ -36,8 +36,9 @@ export type FlagSpec = {
   readonly sinceMtime?: boolean;
   /**
    * Accept `--since-cursor` (no value — uses stored cursor at
-   * `<channel-dir>/last-seen/<sid>.json`). Phase 2 Slice 8. Mutually
-   * exclusive with `--since-mtime`.
+   * `<channel-dir>/last-seen-cursors/<sid>.json` — Step G renamed from
+   * `last-seen/`; LEGACY dual-read fallback ≥30d). Phase 2 Slice 8.
+   * Mutually exclusive with `--since-mtime`.
    */
   readonly sinceCursor?: boolean;
   /**
