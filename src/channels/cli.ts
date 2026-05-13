@@ -59,6 +59,7 @@ import {
   CHANNEL_KINDS,
   joinChannel,
   listChannels,
+  makeSendOutMutator,
   newestHeartbeatMtime,
   readBodyFile,
   readLastSeenCursor,
@@ -846,7 +847,24 @@ export async function runChannelsCli(
         // the sender has no claim (legacy / pre-join), the message
         // ships without identity+role and renders as `<unknown>: <body>`
         // per matrix row 5.
-        printJson(await appendMessage({ channelId, message }));
+        //
+        // Phase 4 Step A Layer 3 (plan v5 RE-3 fold): manual `send out`
+        // is a true terminal transition — pass `makeSendOutMutator(sid)`
+        // so the same withMetadataLock callback that appends the JSONL
+        // line ALSO sets `metadata.identities[<L>].role = "out"` and
+        // `out_posted_at = ts` on the sender's identity. Three reader
+        // predicates (whoami / explicitlyOutPeers / message+metadata
+        // join) converge on the post-mutation state. Claimless senders
+        // get a no-op mutator return (the message still lands).
+        const result =
+          kind === "out"
+            ? await appendMessage({
+                channelId,
+                message,
+                extraMetadataMutator: makeSendOutMutator(sid(), message.ts),
+              })
+            : await appendMessage({ channelId, message });
+        printJson(result);
         return;
       }
       case "read": {

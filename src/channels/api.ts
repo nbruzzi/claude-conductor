@@ -76,6 +76,7 @@ export {
   heartbeatMtime,
   joinChannel,
   listChannels,
+  makeSendOutMutator,
   newestHeartbeatMtime,
   pruneArchive,
   readBodyFile,
@@ -93,5 +94,12 @@ export {
 // render peer messages with consistent kind prefixes if needed; primary
 // in-plugin consumer is `src/hooks/checks/peer-message-deliverer.ts`.
 export { renderKindPrefix } from "./render.ts";
+
+// Layer 3 fold (Phase 4 Step A): explicit-out predicate. Returns the
+// NATO letters whose claim has `out_posted_at` set on a channel.
+// Consumed by `active-sessions/listLivePeers({excludeOut: true})` (lands
+// in follow-up commit) and by any operator-facing surface that needs to
+// filter "terminal until takeover" peers.
+export { explicitlyOutPeers } from "./explicitly-out-peers.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";

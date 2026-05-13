@@ -41,7 +41,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -193,15 +193,15 @@ describe("cli send-case merged invariants (TA-8 gate)", () => {
     expect(parsed["code"]).toBe(4);
   });
 
-  it("(d) stdin body + role=out + kind=out → succeeds (Layer 3 carve-out per plan v4)", async () => {
+  it("(d) stdin body + role=out + kind=out → succeeds (Layer 3 carve-out per plan v5)", async () => {
     // Phase 4 Step A Layer 3 carve-out: an out-role peer can still
     // announce departure via kind=out. The role-gate at cli.ts blocks
     // ALL other kinds. This is the one allowed send from an out-role
-    // peer — sibling to the auto-`out` extension of
-    // `session-presence-unregister.ts` (Stop hook posts kind=out for
-    // every channel the session touched). Manual kind=out is the
-    // operator-driven path; auto-out is the Stop-hook path. Both must
-    // succeed when role=out.
+    // peer — and per plan v5 it is the SOLE writer of `out_posted_at`
+    // this arc (auto-out Stop-hook extension dropped; SessionStart-
+    // reaper deferred to Phase 4 Step B; see
+    // `src/hooks/checks/session-presence-unregister.ts` header note
+    // for the per-turn-Stop rationale).
     await createChannel({
       channelId: "c-merged-d",
       handoffId: "c-merged-d",
@@ -223,6 +223,75 @@ describe("cli send-case merged invariants (TA-8 gate)", () => {
 
     const messagesPath = join(tempChannelsDir, "c-merged-d", "messages.jsonl");
     expect(existsSync(messagesPath)).toBe(true);
+  });
+
+  it("(f) send out + role=queue → succeeds + role + out_posted_at land atomically (Phase 4 Step A v5 RE-3 fold)", async () => {
+    // Manual `channels send <id> out` is the sole writer of
+    // `out_posted_at` this arc (plan v5 dropped the Stop-hook auto-out
+    // extension; SessionStart-reaper deferred). The send is a true
+    // terminal transition: role + out_posted_at + JSONL line all land
+    // atomically under a single `withMetadataLock`.
+    await createChannel({
+      channelId: "c-merged-f",
+      handoffId: "c-merged-f",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-f",
+      sessionId: TEST_SESSION_ID,
+    });
+    // Default role on claim is "queue" — explicit set-role would be a
+    // no-op here; verify auto-attached pre-state in the assertion.
+    const beforeMeta = JSON.parse(
+      readFileSync(
+        join(tempChannelsDir, "c-merged-f", "metadata.json"),
+        "utf-8",
+      ),
+    ) as {
+      identities: Record<string, { role: string; out_posted_at?: string }>;
+    };
+    const preLetter = Object.keys(beforeMeta.identities)[0] ?? "";
+    expect(beforeMeta.identities[preLetter]?.role).toBe("queue");
+    expect(beforeMeta.identities[preLetter]?.out_posted_at).toBeUndefined();
+
+    const result = runSend(
+      ["send", "c-merged-f", "out"],
+      "leaving channel; session winding down",
+    );
+    expect(result.exitCode).toBe(0);
+
+    // JSONL line landed.
+    const messagesPath = join(tempChannelsDir, "c-merged-f", "messages.jsonl");
+    expect(existsSync(messagesPath)).toBe(true);
+    const jsonl = readFileSync(messagesPath, "utf-8")
+      .split("\n")
+      .filter((l: string) => l.length > 0);
+    expect(jsonl.length).toBe(1);
+    const parsedMsg = JSON.parse(jsonl[0] ?? "{}") as {
+      kind: string;
+      role?: string;
+    };
+    expect(parsedMsg.kind).toBe("out");
+    // Auto-attach runs BEFORE the mutator → message records the sender's
+    // PRIOR role ("queue"). The metadata's new role ("out") and the
+    // message's prior role ("queue") together encode the transition:
+    // "this peer was queue at write-start and committed to out
+    // atomically with this line".
+    expect(parsedMsg.role).toBe("queue");
+
+    // Metadata transitioned to role=out + out_posted_at set.
+    const afterMeta = JSON.parse(
+      readFileSync(
+        join(tempChannelsDir, "c-merged-f", "metadata.json"),
+        "utf-8",
+      ),
+    ) as {
+      identities: Record<string, { role: string; out_posted_at?: string }>;
+    };
+    expect(afterMeta.identities[preLetter]?.role).toBe("out");
+    expect(afterMeta.identities[preLetter]?.out_posted_at).toBeDefined();
+    const postedAt = afterMeta.identities[preLetter]?.out_posted_at ?? "";
+    expect(Date.parse(postedAt)).not.toBeNaN();
   });
 
   it("(e) role=out + every non-out CHANNEL_KINDS member → role-die exit 4 (SSOT-iteration coverage per audit RE-MINOR-1 + ARCH-2 folds)", async () => {
