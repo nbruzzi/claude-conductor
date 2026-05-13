@@ -78,7 +78,25 @@ export type ChannelLifecycle = "parallel";
  * (e.g., Phase 4 Step A Layer 3 walkie-talkie primitives, Layer 4
  * `digest`) append after.
  */
-export const CHANNEL_KINDS = ["note", "question", "handoff", "status"] as const;
+export const CHANNEL_KINDS = [
+  // Phase 1 kinds (informational + protocol carriers)
+  "note",
+  "question",
+  "handoff",
+  "status",
+  // Phase 4 Step A Layer 3 — walkie-talkie protocol primitives
+  // (see `docs/conventions/message-kinds-and-verification.md`):
+  //   - `ack`      — receipt confirmation; presence-of-message is the signal
+  //   - `roger`    — receipt + commitment; sender will act on what was read
+  //   - `over`     — sender hint: "I posted, expecting reply"
+  //   - `standby`  — sender hint: "heard you, working, hold the channel"
+  //   - `out`      — peer terminates this channel (additive; `claim --force` resets)
+  "ack",
+  "roger",
+  "over",
+  "standby",
+  "out",
+] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 
