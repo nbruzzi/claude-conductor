@@ -22,6 +22,34 @@ Set a local flag for the rest of the skill:
 - `MODE = "parallel"` if the arg is `parallel`
 - `MODE = "default"` otherwise
 
+### Step 0a: Pre-load common deferred tools
+
+The Claude Code harness defers most tool schemas — only tool names appear in the session-start system prompt; full schemas must be loaded via `ToolSearch` before the tool is callable. Skills that ALWAYS enter plan mode and manage TaskList shouldn't have to ask for those schemas after-the-fact. Make a single `ToolSearch` call up front to pre-load the common batch:
+
+- **Default mode** — call `ToolSearch` with this exact query:
+
+  ```
+  select:EnterPlanMode,ExitPlanMode,TaskCreate,TaskUpdate,TaskList,LSP
+  ```
+
+  Six tools: plan-mode scoping (`EnterPlanMode` / `ExitPlanMode`), TaskList rehydration in Step 5a (`TaskCreate` / `TaskUpdate` / `TaskList`), and code intelligence (`LSP`, per CLAUDE.md's "LSP-first over Grep" tool-priority rule).
+
+- **Parallel mode** — same six PLUS `Monitor` (single call, seven tools total):
+
+  ```
+  select:EnterPlanMode,ExitPlanMode,TaskCreate,TaskUpdate,TaskList,LSP,Monitor
+  ```
+
+  The `Monitor` schema is loaded here so Step 4a can arm it without a round-trip once peer presence is confirmed. **Step 0a does NOT arm Monitor.** Arming follows the rule in `feedback-arm-symmetric-monitor-at-resume.md`: arm AFTER determining a peer is on the channel, which happens in Step 4a (`channel meta` / `peers`). Pre-loading the schema here is purely an optimization for the eventual arming call.
+
+**Response handling — what success looks like:**
+
+- A `ToolSearch` response containing schemas for one or more tools is success. Proceed to Step 1.
+- A response of `"No matching deferred tools found"` (or an equivalent empty result) is ALSO success — it just means every name in the `select:` list was either already loaded or unrecognized by the current harness version. Do NOT retry, do NOT abort; proceed to Step 1.
+- A genuine transport/network error from `ToolSearch` (rare): log briefly and proceed to Step 1 anyway. The skill works without the pre-load; degraded performance is preferable to abort. Any tool that failed to pre-load falls back to the original after-the-fact `ToolSearch` pattern when that tool is first called.
+
+**Silent batch load — no chat output, no progress message, no "loading tools..." announcement.** Setup, not signal. Proceed directly to Step 1.
+
 ---
 
 ## Step 1: Find the handoff and load history
