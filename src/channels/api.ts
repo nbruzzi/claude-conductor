@@ -48,6 +48,12 @@ export type {
 
 export type { NatoIdentity } from "./identity.ts";
 
+// Phase 4 Step A Layer 4 — `digest` kind body schema type. Consumers
+// that pattern-match on the parsed body (operator tools, future arc
+// analysis tooling, dotfiles cross-edge consumers) import this type
+// from `claude-conductor/channels/api` alongside `parseDigestBody`.
+export type { DigestBody } from "./digest.ts";
+
 // ─── Value re-exports ──────────────────────────────────────────────
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
@@ -101,5 +107,14 @@ export { renderKindPrefix } from "./render.ts";
 // in follow-up commit) and by any operator-facing surface that needs to
 // filter "terminal until takeover" peers.
 export { explicitlyOutPeers } from "./explicitly-out-peers.ts";
+
+// Layer 4 (Phase 4 Step A — B2): `digest` kind shared parser. Any
+// reader consuming `digest` messages should use this single parser
+// rather than re-implementing JSON-parse + shape-check per call site
+// (sibling-shape to the SSOT pattern at index.ts). The verification-
+// budget contract for `digest` (trust SHAPE; primary-source-verify
+// audit-class/SHA citations) lives in
+// `docs/conventions/message-kinds-and-verification.md`.
+export { parseDigestBody } from "./digest.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";

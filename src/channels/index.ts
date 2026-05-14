@@ -96,6 +96,14 @@ export const CHANNEL_KINDS = [
   "over",
   "standby",
   "out",
+  // Phase 4 Step A Layer 4 — mental-model-sync structured summary
+  // (see `src/channels/digest.ts` for the shared parser + body schema,
+  // and `docs/conventions/message-kinds-and-verification.md` for the
+  // verification-budget convention per kind):
+  //   - `digest` — JSON body conforming to `DigestBody`; readers
+  //                trust the SHAPE but primary-source-verify any
+  //                audit-class claim or SHA cited within.
+  "digest",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

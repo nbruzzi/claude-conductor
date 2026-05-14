@@ -374,8 +374,8 @@ describe("cli kinds verb (Layer 3 per-kind help)", () => {
     // Paired structural test: any future CHANNEL_KINDS extension that
     // forgets to extend KINDS_HELP fails here by the specific missing
     // kind name. Sibling-shape to channel-kinds-ssot.test.ts's
-    // renderKindPrefix exhaustive test. Future Layer 4 `digest`
-    // addition is the immediate forcing function.
+    // renderKindPrefix exhaustive test. Layer 4 `digest` was the first
+    // forcing-function for this drift catch — surfaced on the B2 commit.
     const proc = runKinds();
     const stdout = new TextDecoder().decode(proc.stdout);
     expect(proc.exitCode).toBe(0);
@@ -385,5 +385,88 @@ describe("cli kinds verb (Layer 3 per-kind help)", () => {
       // false-match against the carve-out prose ("kind=out").
       expect(stdout).toContain(`  ${k.padEnd(10, " ")}—`);
     }
+  });
+
+  it("VERB_HELP.send enumerates every CHANNEL_KINDS member (SSOT-iteration drift catch per CLI-1 fold)", () => {
+    // Paired structural test (CLI-1 fold from B2 staged-diff audit):
+    // KINDS_HELP iteration already catches drift on the `kinds` verb
+    // output; VERB_HELP.send was the second sync-point un-covered by
+    // the SSOT discipline. Layer 4 `digest` was the forcing function.
+    const proc = Bun.spawnSync({
+      cmd: ["bun", CLI_PATH, "send", "--help"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        CLAUDE_CONDUCTOR_CHANNELS_DIR: tempChannelsDir,
+        CLAUDE_SESSION_ID: TEST_SESSION_ID,
+      },
+    });
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    for (const k of CHANNEL_KINDS) {
+      // VERB_HELP.send inline list is comma-separated inside braces;
+      // assert the literal kind token appears in stdout (regardless
+      // of position in the list).
+      expect(stdout).toContain(k);
+    }
+  });
+
+  it("send kind=digest with malformed body dies with VALIDATION (per CLI-2 fold)", async () => {
+    await createChannel({
+      channelId: "c-digest-bad",
+      handoffId: "c-digest-bad",
+      sessionId: TEST_SESSION_ID,
+    });
+    const result = runSend(
+      ["send", "c-digest-bad", "digest", "--json"],
+      '{"not_a_digest": "this body fails parseDigestBody"}',
+    );
+    expect(result.exitCode).toBe(2);
+    const firstLine = result.stderr.trim().split("\n")[0] ?? "";
+    const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+    expect(parsed["category"]).toBe("VALIDATION");
+    expect(parsed["code"]).toBe(2);
+    const msg = typeof parsed["message"] === "string" ? parsed["message"] : "";
+    expect(msg).toContain("digest body failed schema validation");
+    expect(msg).toContain("DigestBody");
+  });
+
+  it("send kind=digest with valid body succeeds (per CLI-2 fold positive control)", async () => {
+    await createChannel({
+      channelId: "c-digest-ok",
+      handoffId: "c-digest-ok",
+      sessionId: TEST_SESSION_ID,
+    });
+    const validDigest = JSON.stringify({
+      kind_version: 1,
+      what_shipped: ["PR #41 at 3e1ab3d"],
+      what_verified: ["typecheck", "test"],
+      audit_class_paid: ["sibling-shape-miss"],
+      next_pickable: "backlog-item-42",
+      blockers: [],
+      verification_budget_consumed_ms: 12000,
+    });
+    const result = runSend(["send", "c-digest-ok", "digest"], validDigest);
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { kind?: string };
+    expect(parsed.kind).toBe("digest");
+  });
+
+  it("KINDS_HELP describes `digest` with SHAPE-vs-citation verification contract (Layer 4)", () => {
+    // Plan v5 §Phase 3 — digest line in KINDS_HELP teaches the unique
+    // verification posture for this kind: trust the SHAPE (validator-
+    // enforced via parseDigestBody), but primary-source-verify any
+    // audit-class claim or SHA cited within. The contract is the
+    // operator-facing reason `digest` is structurally different from
+    // every other walkie-talkie kind.
+    const proc = runKinds();
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    expect(stdout).toContain("digest");
+    expect(stdout).toContain("structured summary");
+    expect(stdout).toContain("Trust the SHAPE");
+    expect(stdout).toContain("primary-source-verify");
+    expect(stdout).toContain("DigestBody");
   });
 });
