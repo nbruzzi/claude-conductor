@@ -401,3 +401,57 @@ affects: [channels-substrate, hook-substrate-deferred-to-step-b]
 - Phase 4 Step B backlog: SessionStart-driven reaper for departed-peer auto-out (deferred from this arc).
 
 **Letter note:** plan v5 §B1 names this "Decision E §Layer 3", but Decision E is already taken in this file by the 2026-05-01 Slice 2 soak-time entry (line 147). Using next-available letter I.
+
+## 2026-05-13 — Decision J: Phase 4 Step A Layer 4 — `digest` kind via shared `parseDigestBody` + per-kind verification-budget convention
+
+```yaml
+status: chosen
+severity: load-bearing
+phase: 4
+affects: [channels-substrate, channel-protocol-conventions]
+```
+
+**Context:** Layer 4 of Phase 4 Step A (inter-sibling communication arc) introduces `digest` as the "mental-model-sync" kind — a structured arc-summary one session emits to peers or to its future self capturing shipped/verified/audit-class-paid/next-pickable/blockers/budget-ms state. Two design questions:
+
+1. **Schema design** — typed shared parser vs free-form prose body parsed ad-hoc per consumer?
+2. **Reader verification budget** — uniform "trust verbatim" across all kinds OR per-kind verification posture that names the right shape for each kind's content?
+
+**Options considered for schema (Q1):**
+
+1. **Free-form prose body** — readers parse with regex / heuristics per consumer. Lowest substrate cost; highest drift cost (every reader re-invents the parse; arc-summary state isn't queryable without text-mining).
+2. **JSON-schema-validated body** with a single shared parser (chosen) — `DigestBody` type at `src/channels/digest.ts` + `parseDigestBody` re-exported via `api.ts`. Six required fields (`kind_version` + 4 string-arrays + 1 string + 1 number). Permissive on extra fields (forward-compatible); strict on required fields (`null` return on mis-shape).
+3. **Stronger schema** (e.g., enums on `audit_class_paid` values) — over-constrains; the schema-validation value is in the structure (which fields exist) not in policed enumerations (which strings appear in `audit_class_paid`). Convention layer can name the canonical strings; substrate doesn't enforce.
+
+**Options considered for verification budget (Q2):**
+
+1. **Uniform "trust verbatim"** across all kinds — under-verifies citation-bearing kinds (`question` / `handoff` / `digest`); operator + automated readers cascade on unverified claims.
+2. **Uniform "verify all"** — over-verifies protocol-state primitives (`ack` / `roger` / `over` / `standby` / `out` / `note` / `status` carry no factual claims requiring re-verification); operational cost without operational benefit.
+3. **Per-kind verification posture** (chosen) — name the right verification budget for each kind's content shape. Protocol primitives + `note`/`status` trust verbatim; `question` verifies claims it relies on; `handoff` verifies SHA/path/run-id citations; `digest` trusts SHAPE (validator-enforced via `parseDigestBody`) but primary-source-verifies any audit-class-string / SHA / PR-number / backlog-ID cited in field contents.
+
+**Chosen for Q1:** Option 2 (JSON-schema-validated + single shared parser).
+**Chosen for Q2:** Option 3 (per-kind verification posture).
+
+**Reason — schema (Q1):** the SSOT pattern established in Phase 0 (`CHANNEL_KINDS` tuple) eliminated 3 sync points at the kind-set layer; the shared parser extends the same discipline to the convention layer. Without a shared parser, in-tree readers (operator tools, future Phase 4 Step B reaper, dotfiles cross-edge consumers, future analysis tooling) each re-implement JSON-parse + shape-check — same drift surface, one layer down. The parser is permissive on extra fields so future schema bumps don't break the v1 subset reader; strict on required fields so partial-decode cascades don't operate on incomplete data silently.
+
+**Reason — verification budget (Q2):** the cost of misplaced trust scales with the consequence of the kind. A `roger`'s commitment is checked when the commitment lands (the action follows the promise); verifying the `roger` itself adds no signal. A `digest`'s `audit_class_paid` array tells the reader what catch-shape was claimed; without primary-source verification, downstream memory annotation work cascades on unverified rent. Naming the per-kind posture in `docs/conventions/message-kinds-and-verification.md` + the paired memory `feedback-verification-budget-by-kind.md` keeps readers (operators + automated tooling) from defaulting to one wrong-shape verification across all kinds.
+
+**Operationalized as:**
+
+- `src/channels/index.ts` — `CHANNEL_KINDS` extended with `"digest"` (1-line edit via SSOT).
+- `src/channels/digest.ts` — `DigestBody` type + `parseDigestBody` shared parser (~170 LOC including JSDoc).
+- `src/channels/api.ts` — re-export `parseDigestBody` (value) + `DigestBody` (type) on the curated surface (25 value names; 8 type names).
+- `src/channels/cli.ts` KINDS_HELP — `digest` entry with SHAPE-vs-citation verification contract.
+- `docs/conventions/message-kinds-and-verification.md` — first inhabitant of `docs/conventions/`; operator + developer reference for all 10 kinds + the per-kind verification budget table.
+- `memories/feedback-digest-message-convention.md` — schema rationale + sole-shared-parser discipline.
+- `memories/feedback-verification-budget-by-kind.md` — per-kind verification posture as a stable cross-arc memory.
+- `test/channels/digest.test.ts` — 15 parser cases (happy / round-trip / parse failures × 9 / forward-compat).
+- `INDEX.md` — catalog entries for `digest.ts`, the docs/conventions/ inhabitant, and the two new bundled memories.
+
+**Cross-references:**
+
+- Memory `feedback-distinct-lenses-over-repeat-verifications.md` — the per-kind verification budget extends this discipline from audit-lens-shape to read-time-budget-shape.
+- Memory `feedback-cross-edge-contract-via-paired-tests.md` — shared parser + paired structural tests = the convention-layer analog of the cross-edge-contract pattern.
+- Memory `feedback-no-known-gaps.md` — adding a new kind without a verification-budget row is a known gap; the convention table in `docs/conventions/message-kinds-and-verification.md` is the single source of operator-facing verification posture, and future kind additions land their posture in the same place.
+- Decision I §Layer 3 — sibling design rationale for the Layer 3 walkie-talkie kinds + `out`-kind atomicity primitives that this layer builds on.
+
+**Letter note:** plan v5 §B2 names this "Decision E §Layer 4", but Decisions E + I are already taken (2026-05-01 Slice 2 soak-time + this session's Layer 3 entry respectively). Using next-available letter J.

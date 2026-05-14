@@ -39,7 +39,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 
 ## Conventions (`docs/conventions/`)
 
-- _(none yet — convention page extraction from vault is a Phase 0 deliverable; decision-log schema documentation is a Phase 0 deliverable)_
+- [docs/conventions/message-kinds-and-verification.md](docs/conventions/message-kinds-and-verification.md) — **Phase 4 Step A Layer 3 + Layer 4 (Bravo lane):** first inhabitant of `docs/conventions/`. Operator + developer reference for the 10 message kinds the `channels send` verb accepts (4 Phase 1 + 5 walkie-talkie + 1 digest), plus the verification-budget convention per kind (when to trust verbatim vs primary-source-verify cited claims). Paired with `feedback-verification-budget-by-kind.md` (the stable cross-arc memory form).
 
 ## Operations runbooks (`docs/operations/`)
 
@@ -96,6 +96,9 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 - `feedback-wind-down-ordering.md` — three composing rules: checklist first (DEFAULT), early snapshot for >30-min reconstruction risk (EXCEPTION), no infrastructure teardown before explicit stop signal.
 - `feedback-tiered-wind-down.md` — Quick (~5–10 min) vs Full (~15–30 min) wind-down tier selection by session character.
 - `feedback-wind-down-backlog-consolidation.md` — backlog scan as wind-down step before handoff write; mark resolved with PR/SHA evidence, cross-link siblings, file new debt.
+- `feedback-walkie-talkie-out-semantics.md` — **Phase 4 Step A Layer 3 (Bravo lane):** `out` kind's terminal-until-takeover semantics; sole-writer-this-arc is manual `channels send <id> out` via `makeSendOutMutator`; auto-out Stop-hook draft dropped per per-turn-Stop precedent; SessionStart-reaper deferred to Phase 4 Step B.
+- `feedback-digest-message-convention.md` — **Phase 4 Step A Layer 4 (Bravo lane):** `digest` kind's schema rationale (6 required fields) + sole-shared-parser discipline (`parseDigestBody` enforces SHAPE; readers primary-source-verify field-content citations).
+- `feedback-verification-budget-by-kind.md` — **Phase 4 Step A Layer 4 (Bravo lane):** per-kind verification posture convention (note/status trust verbatim; walkie-talkie kinds trust verbatim; question/handoff verify citations; digest trusts SHAPE but primary-source-verifies content citations). Stable cross-arc reference paired with the operator-facing `docs/conventions/message-kinds-and-verification.md`.
 
 ## Bundled agents (`agents/`)
 
@@ -163,6 +166,7 @@ Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME
 - [src/channels/api.ts](src/channels/api.ts) — Phase 1 Slice 1 curated public API surface for Phase 2+ hook consumers (per plan v2 §Q4). Slice 3a widened to 18 value + 8 type re-exports for Slice 3b's dotfiles shim. Internal helpers stay private; identity primitives + internal-flow primitives intentionally NOT re-exported per Decisions E/H + Slice 8 ARCH-W2-6 surface-curation policy comment.
 - [src/channels/render.ts](src/channels/render.ts) — Phase 1 Slice 6 7-cell display matrix for `read` rendering per parent plan §311-321. Handles all `(identity, role)` × `(message-shape)` cells including legacy `<unknown>: <body>` fallback. 2 soft-wrap edge handlers for terminal width. **Phase 4 Step A Layer 3 (Bravo lane):** `renderKindPrefix(kind: ChannelKind): string` — centralized kind→prefix seam consumed by Layer 1 `peer-message-deliverer` and any future kind-aware renderer; auto-covers new CHANNEL_KINDS members via tuple derivation.
 - [src/channels/explicitly-out-peers.ts](src/channels/explicitly-out-peers.ts) — **Phase 4 Step A Layer 3 (Bravo lane):** O(1) predicate over `metadata.identities[<L>].out_posted_at` returning NATO letters whose peer has explicitly announced channel departure via manual `channels send <id> out`. Terminal-until-takeover per RE-7 — `claim --force` is the only reset path. Skip-on-error: unreadable metadata returns empty array. Consumed by `listLivePeers({excludeOut: true})` (follow-up commit) and any operator-facing surface filtering departed peers. Stop-hook auto-out extension was DROPPED in plan v5 per RE staged-diff catch citing `bundled-registrations.ts:71-78` per-turn-Stop precedent; SessionStart-reaper deferred to Phase 4 Step B.
+- [src/channels/digest.ts](src/channels/digest.ts) — **Phase 4 Step A Layer 4 (Bravo lane):** `digest` kind shared body parser (`parseDigestBody`) + schema type (`DigestBody`). Six required fields: `kind_version: 1` + `what_shipped` / `what_verified` / `audit_class_paid` / `blockers` (readonly string arrays) + `next_pickable` (string) + `verification_budget_consumed_ms` (finite non-negative number). Parser is permissive on EXTRA fields (forward-compatible to a future v2 schema); strict on required fields (`null` return on mis-shape rather than partial decode). Sole shared parser per the SSOT discipline at the convention layer — any reader consuming `digest` messages goes through this parser rather than re-implementing JSON-parse + shape-check. Verification posture per `docs/conventions/message-kinds-and-verification.md`: trust SHAPE, primary-source-verify audit-class / SHA / PR-number citations.
 
 ### Active sessions (`src/active-sessions/`)
 

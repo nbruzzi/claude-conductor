@@ -77,6 +77,7 @@ import {
   readPeerMessageCursor,
   readPendingPeerMessageCursor,
 } from "./peer-message-cursors.ts";
+import { parseDigestBody } from "./digest.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   claimIdentity,
@@ -123,7 +124,7 @@ const VERB_HELP: Record<string, string> = {
     "create <channel-id> <handoff-id>\n  Create a new channel with metadata for the given handoff id.",
   join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
-  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).",
+  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.",
   kinds:
     "kinds\n  Print the message-kind reference: semantic gloss + recommended body content\n  per kind + reader verification budget. See also: docs/conventions/message-kinds-and-verification.md.",
   read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen-cursors/<sid>.json (legacy: last-seen/; dual-read fallback ≥30d post-Step-G).\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
@@ -152,14 +153,12 @@ const VERB_HELP: Record<string, string> = {
 
 /**
  * Per-kind help text printed by the `channels kinds` verb. Single source
- * of operator-facing per-kind documentation (CLI-3 + MINOR-1 fold per
- * plan v4 §Layer 3 design).
- *
- * Layer 4 `digest` kind is omitted here — added in B2 commit alongside
- * the `parseDigestBody` shared parser + verification-budget memory.
+ * of operator-facing per-kind documentation (CLI-3 + MINOR-1 folds per
+ * plan v4 §Layer 3 design + Layer 4 §Phase 3 — `digest` body schema
+ * lives in `src/channels/digest.ts` via the shared `parseDigestBody`).
  *
  * For verification-budget detail per kind, see
- * `docs/conventions/message-kinds-and-verification.md` (lands in B2).
+ * `docs/conventions/message-kinds-and-verification.md`.
  */
 const KINDS_HELP =
   "Channel message kinds:\n" +
@@ -172,12 +171,13 @@ const KINDS_HELP =
   '  over      — sender hint ("I posted, expecting reply"). Body: 1-line hint of expected reply (e.g. `your turn on L3`).\n' +
   '  standby   — sender hint ("heard you, working, hold the channel"). Body: 1-line reason (e.g. `running tests; ~5 min`).\n' +
   "  out       — peer terminates this channel (additive; `claim --force` resets). Body: reason (e.g. `session ended`).\n" +
+  "  digest    — structured summary (mental-model sync). Trust the SHAPE; primary-source-verify any audit-class claim or SHA. Body: JSON conforming to DigestBody (see src/channels/digest.ts).\n" +
   "\n" +
   "Send is blocked when this session's role is 'out' unless kind=out\n" +
   "(announcing departure is the one send allowed from an out-role peer).\n" +
   "\n" +
   "For verification-budget detail per kind, see:\n" +
-  "  docs/conventions/message-kinds-and-verification.md  (lands with Layer 4 / B2)";
+  "  docs/conventions/message-kinds-and-verification.md";
 
 const TOP_LEVEL_HELP =
   "channels CLI — see src/channels/cli.ts header for full usage.\n" +
@@ -848,6 +848,30 @@ export async function runChannelsCli(
         // ships without identity+role and renders as `<unknown>: <body>`
         // per matrix row 5.
         //
+        // Phase 4 Step A Layer 4 (plan v5 §Phase 3 + CLI-2 fold from
+        // staged-diff audit): validate `digest` body against the
+        // DigestBody schema BEFORE appendMessage. Operators get
+        // immediate feedback at the send-side rather than discovering
+        // mis-shape via silently-dropped downstream parses. The
+        // shared parser at `src/channels/digest.ts` is the SSOT for
+        // shape; any divergence between send-side and read-side
+        // would be the exact drift the convention-layer is built to
+        // prevent. Note: claimless / pre-join senders pass through
+        // the same gate (parse is body-content-only; identity is
+        // attached later inside appendMessage's lock callback).
+        if (kind === "digest" && parseDigestBody(body) === null) {
+          die(
+            ctx,
+            `[send] digest body failed schema validation — body must be JSON conforming to DigestBody (see src/channels/digest.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, what_shipped/what_verified/audit_class_paid/blockers (string arrays), next_pickable (string), verification_budget_consumed_ms (finite non-negative number).`,
+            {
+              code: 2,
+              category: "VALIDATION",
+              remediation:
+                "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md for the verification-budget contract.",
+            },
+          );
+        }
+
         // Phase 4 Step A Layer 3 (plan v5 RE-3 fold): manual `send out`
         // is a true terminal transition — pass `makeSendOutMutator(sid)`
         // so the same withMetadataLock callback that appends the JSONL
