@@ -70,7 +70,7 @@
  * NOT call from production code.
  */
 
-import type { ChannelMessage } from "./index.ts";
+import type { ChannelKind, ChannelMessage } from "./index.ts";
 
 export type RenderMessageOptions = {
   /**
@@ -145,6 +145,35 @@ function warnOnce(key: string, message: string): void {
   if (warnedKeys.has(key)) return;
   warnedKeys.add(key);
   console.error(message);
+}
+
+/**
+ * Per-kind line-prefix helper. Centralized seam for kind→prefix mapping
+ * used by `peer-message-deliverer` (Phase 4 Step A — Layer 1) and any
+ * future kind-aware renderer.
+ *
+ * Today returns the uniform `[<kind>]` shape for all kinds — sibling to
+ * existing inline markers like `[note]` / `[status]` in operator-facing
+ * surfaces. The function exists as the centralized seam: future kinds
+ * extending `CHANNEL_KINDS` are covered automatically; if any kind ever
+ * needs a distinct prefix (emoji, ANSI color, structural framing), this
+ * is the single point of edit.
+ *
+ * **Exported.** Unlike `renderMessage`, this is a stable cross-file
+ * helper consumed by hooks (specifically the Layer 1 push-delivery
+ * surface). Adding it to `package.json` exports map is NOT required —
+ * `peer-message-deliverer` lives in-plugin and imports via relative
+ * path; if a dotfiles caller ever needs it, expose via `api.ts` then.
+ *
+ * **Layer 3 fold (MAJOR-2 per Bravo cross-audit on plan v2 → v3 +
+ * Bravo MINOR-3 fold on v3 → v4):** A1 imports this stable signature
+ * from the start of Phase 0 SSOT commit; B1's subsequent commits
+ * extend `CHANNEL_KINDS` with walkie-talkie kinds — the helper
+ * auto-covers them because the input domain widens via the tuple
+ * derivation. No A1/B1 cross-PR file edit on this file post-Phase-0.
+ */
+export function renderKindPrefix(kind: ChannelKind): string {
+  return `[${kind}]`;
 }
 
 /**

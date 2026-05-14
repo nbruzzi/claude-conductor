@@ -278,3 +278,73 @@ _Phase 4 SHIPPED 2026-05-01:_
 - Plugin Lane #6 CI: runs 25214969349 + 25214803801 conclusion: success
 - Post-merge dotfiles CI: run 25215256785 conclusion: success
 - 4-lens audit: REV 3 (RE 7.0 / ARCH 7.5 / CS 7.5 / Bravo 8.5) → REV-1 ops audit (RE 6.5 / ARCH 7.5 / Workflow 7.0) → REV-1.5 verification loop (8.57/10) → REV-1.6/1.7 amendments → REV-1.8 course correction → Subagent (RE) Nick-lens 7.5/10 → Bravo Lane (4) cross-instance 8.5/10
+
+---
+
+## 2026-05-14 — Decision K: Phase 4 Step A Layer 1 — `peer-message-deliverer` hook with two-phase cursor commit + defense-in-depth body fencing
+
+```yaml
+status: chosen
+severity: load-bearing
+phase: 4
+affects: [hook-substrate, channels-substrate, package-exports]
+```
+
+**Context:** Layer 1 of Phase 4 Step A (inter-sibling communication arc) closes the "no cross-window delivery" gap — before this hook, peer messages were only seen via manual `channels read --since-cursor` poll or `SessionStart` fire (which only runs at `/resume`, not mid-session). Nick's 2026-04-25 caveat ("I was still required for your communication to work") stood until this layer landed. Three design questions emerged during the arc:
+
+1. **Cursor mechanics** — how to advance the per-(channel, session) emission cursor such that a session crash between emit + cursor-write cannot silently lose messages.
+2. **Body trust** — peer body is free-form text from another Claude session; how to defend against accidentally-or-deliberately-injected platform-control markup without breaking legitimate markdown content (multibyte UTF-8 punctuation, emoji, etc.).
+3. **Emission volume** — a session offline for a week could see thousands of pending messages on first prompt; how to bound surface noise without losing the cursor advance.
+
+**Options considered for cursor mechanics (Q1):**
+
+1. **Single-write committed cursor** — write cursor at emit time, advance atomically via tmp+rename. Simple; but a crash between write + operator-consumes-output leaves the cursor advanced beyond what was delivered → silent message-loss on next session.
+2. **Two-phase commit with `.pending` sidecar** (chosen) — emit-turn writes `<sid>.json.pending`; next `UserPromptSubmit` fire promotes pending → committed via atomic rename. Recovery: if session crashes between emit and promote, next session sees stale pending + still-old committed and re-emits. Silent loss is impossible because cursor advance is gated on the operator reaching the next prompt (the prompt-fire IS the evidence the prior emission was consumed).
+3. **Append-only emit-log with replay** — write each emission as a JSONL entry; on session-start, replay un-acked entries. Robust but heavyweight; new substrate file per channel; reaping is its own design.
+
+**Options considered for body trust (Q2):**
+
+1. **No sanitization** — surface body verbatim. Vulnerable to prompt-injection — a body containing `system-reminder` tags / `function_calls` traces / role-confusion strings corrupts the receiving Claude's prompt structure.
+2. **Structural escape only** — replace bare `<` with `&lt;`. Catches markdown-significant injections but leaves named patterns (`<system-reminder>`) intact.
+3. **Strip high-byte content** — replace any byte > 0x7E. Defends against nothing the targeted-strip doesn't already handle, AND breaks legitimate prose (em-dashes, smart quotes, emoji, ellipsis are all multibyte UTF-8). This was the v3 plan; folded out at v4 per Bravo MINOR-3.
+4. **Defense-in-depth: targeted-pattern strip + bare-`<` escape + per-emission UUID-nonce fence + 200-char truncate + body_ref overflow** (chosen). Pass (a): strip `<system-reminder>` open/close + `<function_calls>` open/close + `<*>` namespace tags + fence-marker `[peer-body-<hex>]` + bare `</` close-sequence; replace each with `[redacted-platform-marker]`. Pass (b): escape any remaining bare `<` via `&lt;`. Wrap sanitized body in `[peer-body-<8hex-nonce>] ... [/peer-body-<8hex-nonce>]` per emission (nonce uniqueness defends against collision even though pass (a) strips the fence marker). Truncate at 200 chars; longer bodies → `body_ref` note with recovery hint pointing at `channels read --since-cursor`. **Multibyte UTF-8 preserved verbatim per Bravo MINOR-3 fold.**
+
+**Options considered for emission volume (Q3):**
+
+1. **No cap** — surface every new message every prompt. Operator-hostile on long-offline returns.
+2. **Per-channel cap with discard** — drop messages past cap. Loses data; cursor advance ambiguous.
+3. **Aggregate 50/prompt cap with per-channel summary mode** (chosen) — across all channels with new messages, surface up to 50 individual messages; channels that exceed remaining budget switch to summary mode (one block: "N new messages — M suppressed by 50-message cap"). Cursor still advances to newest-suppressed mtime → full batch readable via `channels read --since-cursor`. No data loss; bounded operator surface.
+
+**Chosen:** Option 2 for Q1; Option 4 for Q2; Option 3 for Q3.
+
+**Reason — cursor mechanics (Q1):** the two-phase commit pattern leverages the operator-reaches-prompt event as the natural consumption signal. Mirrors POSIX-rename atomicity (the same primitive the substrate uses for `identitiesDir` sentinel claims + metadata RMW). Sibling-shape to `LastSeenCursor` keeps the schema discoverable; distinct cursor dir (`peer-message-emit-cursors/`) avoids racing the CLI `read --since-cursor` reader. Recovery is data-preserving (re-emit on crash) — the worst-case operator-visible outcome is a duplicate emission, not silent loss.
+
+**Reason — body trust (Q2):** the MAJOR-1 prompt-injection finding came from Bravo's sibling cross-audit on plan v2 — the 4-persona pre-audit (RE + Architecture + CLI DX + KS) missed it entirely. Distinct lens (`feedback-distinct-lenses-over-repeat-verifications.md`) caught what shared-pipeline review couldn't see. The MINOR-3 refinement (Bravo, plan v3 → v4) further tightened — high-byte strip was both insufficient (named injections still pass) and over-aggressive (breaks legitimate Unicode prose); defense-in-depth via four orthogonal layers is the lowest-cost-and-highest-correctness shape.
+
+**Reason — emission volume (Q3):** the 50/prompt aggregate-with-per-channel-summary preserves data integrity (cursor advances, full batch readable) while bounding surface area. Most-common case (1-10 messages per turn) is unaffected; long-offline edge case degrades gracefully.
+
+**Operationalized as:**
+
+- `src/hooks/checks/peer-message-deliverer.ts` (NEW, ~265 LOC) — the hook itself. `user-prompt-submit` event, position 1 (per plan v5 §Phase 1 §Order placement; fires BEFORE `teammate-idle-reminder`). `canBlock: false`. Fail-open + breadcrumb outer catch.
+- `src/channels/peer-message-cursors.ts` (already shipped at `d44fa14`, 440 LOC; 47 tests) — substrate helpers: `readPeerMessageCursor`, `readPendingPeerMessageCursor`, `writePendingPeerMessageCursor`, `promotePendingPeerMessageCursor`, `clearPeerMessageCursor`, `sanitizePeerBody`, `fencePeerBody`, `resolvePeerMessageEmitDir`, `resolvePeerMessageEmitCursorPath`, `resolvePendingPeerMessageEmitCursorPath`, `MAX_INLINE_BODY_CHARS`.
+- `src/channels/render.ts` — cherry-picked `renderKindPrefix(kind: ChannelKind): string` from B1's branch (file-edit-disjoint per MAJOR-2 fold; trivial squash-merge reconcile when B1 lands).
+- `src/channels/cli.ts` — two new CLI verbs (`show-message-cursor` + `forget-message-cursor`) sibling-pattern to `show-cursor` + `forget-cursor`. `VERB_HELP` + `TOP_LEVEL_HELP` updated.
+- `src/hooks/bundled-check-names.ts:71` — `"peer-message-deliverer"` added to `user-prompt-submit` array at position 1.
+- `src/hooks/checks/bundled-registrations.ts` — import + `register` call.
+- `src/hooks/lock-domain.ts` — new row under `user-prompt-submit`: `domains: ["per-channel-cursor", "presence-failure-log"]`.
+- `test/hooks/bundled-registrations.test.ts:77` — `EXPECTED_COUNT` 11 → 12.
+- `package.json` exports map — two new entries (`./channels/peer-message-cursors` + `./hooks/checks/peer-message-deliverer`).
+- `test/hooks/checks/peer-message-deliverer.test.ts` (NEW, ~580 LOC after formatter) — 25 tests covering plan v5 §Phase 1 §Tests matrix (happy paths × 5, cursor 2PC × 6, message discovery × 4, body fencing × 3, input validation × 3, failure handling × 4). All green; full-suite 810 pass / 1 skip / 1 todo / 0 fail across 60 files.
+- `docs/architecture/inter-sibling-communication-layers.md` (NEW, ~120 LOC) — 4-layer model permanent home.
+- `docs/operations/phase-2-hooks.md` — extended with `peer-message-deliverer` user-prompt-submit firing-order entry + catalog entry + Symptom/Diagnose/Recover/Verify section.
+
+**Cross-references:**
+
+- Memory `feedback-distinct-lenses-over-repeat-verifications.md` — Bravo cross-audit MAJOR-1 prompt-injection catch is the ur-example.
+- Memory `feedback-atomic-wiring-discipline.md` — `bundled-check-names.ts` + `bundled-registrations.ts` + `lock-domain.ts` + `EXPECTED_COUNT` + exports map land in one atomic commit.
+- Memory `feedback-cross-edge-deletion-substrate-import-first.md` (applied in reverse — substrate-first, consumer-second) — substrate (`peer-message-cursors.ts`) shipped at `d44fa14` BEFORE this consumer (the hook) per Bravo's pre-flight sequencing.
+- Plan: `~/.claude/plans/eventual-marinating-wall.md` v5 §Phase 1 — the design SoT (5 audit cycles + Bravo sibling cross-audit cycles validated this shape).
+- Decision I (Layer 3) + Decision J (Layer 4) — co-arc decisions ship in B1 + B2 respectively; Decision K (this one) is the Layer 1 sibling.
+- Post-arc memory candidates (Bravo lane): `feedback-peer-content-prompt-injection-defense.md` (plugin-bundled; born from MAJOR-1) — Bravo authors per lane-split.
+
+**Letter note:** plan v5 §Phase 1 names this "Decision E (umbrella) §Layer 1", but Decision E is already taken in this file by the 2026-05-01 Slice 2 soak-time entry (line 147). Following Bravo's precedent on Decision I — narrowly-scoped per layer with the next-available letter. B1 = I (Layer 3), B2 = J (Layer 4); A1 = K (Layer 1, this entry). Final on-main order after all three merge: A–H, I (Layer 3 — B1), J (Layer 4 — B2), K (Layer 1 — A1, this entry).

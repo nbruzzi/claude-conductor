@@ -145,6 +145,16 @@
       "import": "./src/channels/identity-context.ts",
       "default": "./src/channels/identity-context.ts"
     },
+    "./channels/peer-message-cursors": {
+      "types": "./src/channels/peer-message-cursors.ts",
+      "import": "./src/channels/peer-message-cursors.ts",
+      "default": "./src/channels/peer-message-cursors.ts"
+    },
+    "./hooks/checks/peer-message-deliverer": {
+      "types": "./src/hooks/checks/peer-message-deliverer.ts",
+      "import": "./src/hooks/checks/peer-message-deliverer.ts",
+      "default": "./src/hooks/checks/peer-message-deliverer.ts"
+    },
     "./hooks/checks/session-collision-gate": {
       "types": "./src/hooks/checks/session-collision-gate.ts",
       "import": "./src/hooks/checks/session-collision-gate.ts",
