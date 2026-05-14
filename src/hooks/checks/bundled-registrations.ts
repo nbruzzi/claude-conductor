@@ -2,7 +2,7 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Bundled-check registrations (16 multi-instance-coordination-machinery checks).
+ * Bundled-check registrations (12 multi-instance-coordination-machinery checks).
  *
  * Cluster 1 of INVERSIONS arc (2026-05-07): 9 universal-coding-discipline
  * checks (auto-format, branch-enforcement, destructive-cmd, no-any, no-enum,

@@ -269,7 +269,7 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
       event: "user-prompt-submit",
       domains: ["per-channel-cursor", "presence-failure-log"],
       comment:
-        "Phase 4 Step A Layer 1 — per-(channel, session) peer-message emit cursor at `<channelsDir>/<id>/peer-message-emit-cursors/<sid>.json` with two-phase commit (writes `<path>.pending` on emit; promotes pending → committed via atomic rename on next UserPromptSubmit fire). Sibling-shape to `idle-emit-cursors` / `identity-emit-cursors` (noun-form per Step G convention; no LEGACY dual-read here — fresh substrate). writePendingPeerMessageCursor uses pid+timestamp+random tmp suffix + linkSync-equivalent O_CREAT|O_EXCL flag (RE-NEW-1 sibling pattern). Error-path `appendPresenceFailure` on cursor write failures + bootstrap-without-emit cursor writes + promote failures.",
+        'Phase 4 Step A Layer 1 — per-(channel, session) peer-message emit cursor at `<channelsDir>/<id>/peer-message-emit-cursors/<sid>.json` with two-phase commit (writes `<path>.pending` on emit; promotes pending → committed via atomic rename on next UserPromptSubmit fire). Sibling-shape to `idle-emit-cursors` / `identity-emit-cursors` (noun-form per Step G convention; no LEGACY dual-read here — fresh substrate). `writePendingPeerMessageCursor` (see `src/channels/peer-message-cursors.ts:writePendingPeerMessageCursor`) uses pid+timestamp+random tmp suffix + `writeFileSync` with `flag: "wx"` (O_CREAT|O_EXCL) per the RE-NEW-1 sibling pattern from `teammate-idle-reminder`\'s atomic-rename cursor write. Error-path `appendPresenceFailure` on cursor write failures + bootstrap-without-emit cursor writes + promote failures.',
     },
     {
       phase: "teammate-idle-reminder",

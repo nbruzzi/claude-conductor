@@ -1042,7 +1042,9 @@ export async function setIdentityRole(args: {
 export class ChannelClosedError extends Error {
   constructor(channelId: string, closedAt: string) {
     super(
-      `[channels] channel '${channelId}' is closed (at ${closedAt}); cannot append`,
+      `[channels] channel '${channelId}' is closed (at ${closedAt}); cannot append. ` +
+        `Recovery: open a new channel via 'claude-conductor channels create <new-id> <handoff-id>', ` +
+        `or pick a non-closed channel via 'claude-conductor channels list'.`,
     );
     this.name = "ChannelClosedError";
   }
