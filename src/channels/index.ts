@@ -1071,7 +1071,13 @@ export function readMessages(channelId: string): ChannelMessage[] {
   return out;
 }
 
-function isChannelMessage(v: unknown): v is ChannelMessage {
+/** Strict ChannelMessage shape validator. Exported per Phase 4 Step A Layer 1
+ *  RE-1 / ARCH-4 convergent fold (2026-05-14) — `peer-message-deliverer` hook
+ *  consumes this primitive instead of re-implementing a weaker `typeof === "object"`
+ *  check that would let prompt-injected schema metadata (non-string `from`,
+ *  non-`ChannelKind` `kind`, etc.) slip past the body-fencing surface. Substrate
+ *  is the SSOT; consumers validate via this exported predicate. */
+export function isChannelMessage(v: unknown): v is ChannelMessage {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
   const validKinds: readonly ChannelKind[] = [

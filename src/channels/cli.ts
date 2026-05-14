@@ -70,6 +70,11 @@ import {
   type ChannelMessage,
   type ChannelRole,
 } from "./index.ts";
+import {
+  clearPeerMessageCursor,
+  readPeerMessageCursor,
+  readPendingPeerMessageCursor,
+} from "./peer-message-cursors.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   claimIdentity,
@@ -134,9 +139,13 @@ const VERB_HELP: Record<string, string> = {
   "close-peer":
     "close-peer <channel-id> --peer <Identity> [--force]\n  Release a peer's NATO identity if its heartbeat is > 60 s stale.\n  --force overrides the staleness gate (operator escape hatch).",
   "forget-cursor":
-    'forget-cursor <channel-id>\n  Reset this session\'s last-seen cursor on the channel.\n  Subsequent --since-cursor reads will return full history (then bootstrap a fresh cursor).\n  Idempotent: kind="cleared" if cursor existed, "absent" otherwise,\n              "archived" if channel is archived, "error" on EACCES/EBUSY.\n  Use \'show-cursor <channel-id>\' to inspect first.',
+    'forget-cursor <channel-id>\n  Reset this session\'s last-seen cursor on the channel.\n  Subsequent --since-cursor reads will return full history (then bootstrap a fresh cursor).\n  Idempotent: kind="cleared" if cursor existed, "absent" otherwise,\n              "archived" if channel is archived, "error" on EACCES/EBUSY.\n  Use \'show-cursor <channel-id>\' to inspect first.\n  Note: this clears the `read --since-cursor` cursor only. For the\n  peer-message-deliverer hook cursor, use \'forget-message-cursor\'.',
   "show-cursor":
     'show-cursor <channel-id>\n  Print this session\'s last-seen cursor as JSON.\n  kind="present" with {mtime, ts} if cursor exists; "absent" if not; "archived" if channel archived.\n  Use \'forget-cursor <channel-id>\' to reset.',
+  "forget-message-cursor":
+    'forget-message-cursor <channel-id>\n  Reset this session\'s peer-message-deliverer cursor on the channel.\n  Clears BOTH the committed cursor (`<channel>/peer-message-emit-cursors/<sid>.json`)\n  AND the pending cursor (`<sid>.json.pending`). Next UserPromptSubmit fire will\n  bootstrap-without-emit per Phase 4 Step A Layer 1 design.\n  Idempotent: kind="cleared" if either existed, "absent" if neither,\n              "archived" if channel is archived, "error" on EACCES/EBUSY\n              (with `code` ∈ {EACCES, EBUSY, OTHER} + `detail` fields).\n  Use \'show-message-cursor <channel-id>\' to inspect first.\n  Note: this clears the peer-message-deliverer hook cursor only.\n  For `read --since-cursor` stuckness, use \'forget-cursor\'.',
+  "show-message-cursor":
+    'show-message-cursor <channel-id>\n  Print this session\'s peer-message-deliverer cursor state as JSON.\n  Emits {kind, channelId, sessionId, committed, pending, phase} (kind:\n  "present"|"absent"|"archived"). On "present", `phase` discriminates the\n  lifecycle stage so operators read one field instead of synthesizing\n  state from committed+pending:\n    "bootstrap-pending" — first-scan bootstrap wrote pending; not yet\n                          promoted. committed=null, pending=set.\n    "stable"           — committed set, no in-flight emission. pending=null.\n    "emission-pending" — emit-turn wrote pending; next prompt promotes.\n                         committed=set, pending=set.\n  Use \'forget-message-cursor <channel-id>\' to reset.',
 };
 
 const TOP_LEVEL_HELP =
@@ -144,7 +153,7 @@ const TOP_LEVEL_HELP =
   "\n" +
   "Subcommands: from-handoff | create | join | close | send | read | list |\n" +
   "             meta | heartbeat | peers | body | whoami | set-role | close-peer |\n" +
-  "             forget-cursor | show-cursor\n" +
+  "             forget-cursor | show-cursor | forget-message-cursor | show-message-cursor\n" +
   "\n" +
   "Run '<subcommand> --help' for verb-specific usage.";
 
@@ -938,6 +947,58 @@ export async function runChannelsCli(
           return;
         }
         printJson({ kind: "present", channelId, sessionId, cursor });
+        return;
+      }
+      case "forget-message-cursor": {
+        // Phase 4 Step A Layer 1 — sibling-pattern to forget-cursor.
+        // Clears BOTH committed + pending peer-message-deliverer cursors.
+        const channelId = requireChannelId(ctx, rest, 0);
+        const sessionId = sid();
+        if (isChannelArchived(channelId)) {
+          printJson({ kind: "archived", channelId, sessionId });
+          return;
+        }
+        const result = clearPeerMessageCursor(channelId, sessionId);
+        printJson({ ...result, channelId, sessionId });
+        return;
+      }
+      case "show-message-cursor": {
+        // Phase 4 Step A Layer 1 — sibling-pattern to show-cursor. Reports
+        // BOTH committed + pending so operators can debug stuck pending
+        // state (e.g., a session that crashed between emit + promote).
+        //
+        // CLI-1 fold: emits a derived `phase` discriminator alongside the
+        // raw cursors so operators read one field instead of mentally
+        // synthesizing the lifecycle stage from (committed, pending) tuple
+        // presence/absence. "bootstrap-pending" → first-scan bootstrap;
+        // "stable" → committed set, no in-flight emission; "emission-pending"
+        // → emit-turn wrote pending awaiting next-prompt promote.
+        const channelId = requireChannelId(ctx, rest, 0);
+        const sessionId = sid();
+        if (isChannelArchived(channelId)) {
+          printJson({ kind: "archived", channelId, sessionId });
+          return;
+        }
+        const committed = readPeerMessageCursor(channelId, sessionId);
+        const pending = readPendingPeerMessageCursor(channelId, sessionId);
+        if (committed === null && pending === null) {
+          printJson({ kind: "absent", channelId, sessionId });
+          return;
+        }
+        const phase: "bootstrap-pending" | "stable" | "emission-pending" =
+          committed === null && pending !== null
+            ? "bootstrap-pending"
+            : pending === null
+              ? "stable"
+              : "emission-pending";
+        printJson({
+          kind: "present",
+          channelId,
+          sessionId,
+          committed,
+          pending,
+          phase,
+        });
         return;
       }
       case "list": {

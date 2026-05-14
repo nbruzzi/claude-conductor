@@ -32,6 +32,7 @@ import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
 import { check as checkSessionPresenceRegister } from "./session-presence-register.ts";
 import { check as checkIdentityInjector } from "./identity-injector.ts";
 import { check as checkTaskCoordinator } from "./task-coordinator.ts";
+import { check as checkPeerMessageDeliverer } from "./peer-message-deliverer.ts";
 import { check as checkTeammateIdleReminder } from "./teammate-idle-reminder.ts";
 import { check as checkDotfilesWorktreeProvisioner } from "./dotfiles-worktree-provisioner.ts";
 import { check as checkDotfilesWorktreeGc } from "./dotfiles-worktree-gc.ts";
@@ -136,6 +137,14 @@ export function registerBundled(
   });
 
   // user-prompt-submit
+  builder.register("user-prompt-submit", {
+    name: "peer-message-deliverer",
+    fn: checkPeerMessageDeliverer,
+    description:
+      "Phase 4 Step A Layer 1 — surface new peer messages on UserPromptSubmit across all channels where this session has a NATO identity claim. Two-phase cursor commit (pending → committed) prevents silent message loss across session crashes; body fencing + sanitization defends against prompt-injection from peer content; 50-message emission cap with per-channel summary mode on overflow. Fail-open + breadcrumb on read failures.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
   builder.register("user-prompt-submit", {
     name: "teammate-idle-reminder",
     fn: checkTeammateIdleReminder,

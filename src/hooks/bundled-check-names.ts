@@ -68,7 +68,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "dotfiles-worktree-provisioner",
     "dotfiles-worktree-gc",
   ],
-  "user-prompt-submit": ["teammate-idle-reminder"],
+  "user-prompt-submit": ["peer-message-deliverer", "teammate-idle-reminder"],
 } as const satisfies Record<HookEvent, readonly string[]>;
 
 export type BundledCheckName =

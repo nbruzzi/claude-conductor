@@ -40,7 +40,8 @@ Order rationale: the reaper fires before `active-channels-load` so any stale orp
 
 ### `user-prompt-submit`
 
-1. **`teammate-idle-reminder`** — Phase 2 idle-peer reminder with clock-skew sanity check.
+1. **`peer-message-deliverer`** — Phase 4 Step A Layer 1 — surface new peer messages with two-phase cursor commit + defense-in-depth body fencing. Position 1 (fires BEFORE `teammate-idle-reminder`) so peer-content surfaces before idle-detection nudges in operator-facing output order.
+2. **`teammate-idle-reminder`** — Phase 2 idle-peer reminder with clock-skew sanity check.
 
 ### `pre-tool-use`
 
@@ -121,6 +122,28 @@ Each hook lists event, can-block, failure-mode class, breadcrumb kinds, and sour
 - **Breadcrumb kinds:** `clock-skew` (peer body-vs-mtime skew > 5 min — reminder suppressed), `write-failed` (rate-limit-cursor write failure). Under `source: "channels-identity"`. The hook does NOT emit an `unhandled` breadcrumb — outer try/catch returns pass without log.
 - **Source:** [src/hooks/checks/teammate-idle-reminder.ts](../../src/hooks/checks/teammate-idle-reminder.ts)
 - **Tests:** [test/hooks/checks/teammate-idle-reminder.test.ts](../../test/hooks/checks/teammate-idle-reminder.test.ts)
+
+### `peer-message-deliverer` (Phase 4 Step A Layer 1)
+
+- **Event:** `user-prompt-submit`
+- **Can block:** No
+- **Failure mode:** **fail-open + breadcrumb**. Outer try/catch returns `pass()` on any unexpected throw — never breaks the UserPromptSubmit chain. Cursor / JSONL / write failures each breadcrumb individually + continue (don't suppress the broader chain).
+- **Purpose:** for each channel where this session has a NATO identity claim, surfaces new peer messages (`msg.from !== sessionId` AND `Date.parse(msg.ts) > committed-cursor.mtime`) in a sanitized + fence-wrapped system-reminder block. Closes backlog L133 (parallel coordination — no cross-window delivery).
+- **Two-phase cursor commit:** per-(channel, session) cursor at `<channel-dir>/peer-message-emit-cursors/<sid>.json` with `{mtime, ts}` shape (sibling-shape to `LastSeenCursor`). Emit-turn writes `<sid>.json.pending`; next `user-prompt-submit` fire promotes pending → committed via atomic rename. Silent message-loss is impossible because cursor advance gates on operator-reaches-next-prompt (the prompt-fire IS the consumption evidence). Bootstrap-without-emit on first-ever fire (no committed, no pending) writes pending to newest mtime silently — matches CLI `--since-cursor` bootstrap.
+- **Body fencing + sanitization (MAJOR-1 + MINOR-3 folds — defense-in-depth):**
+  - Pass (a) — targeted-pattern strip: `<system-reminder>` open/close, `<function_calls>` open/close, `<*>` namespace tags, fence marker `[peer-body-<hex>]`, bare `</` close-tag sequence — each replaced with `[redacted-platform-marker]`.
+  - Pass (b) — bare-`<` escape: any remaining `<` after (a) becomes `&lt;` (markdown surface — bare `<` is structurally meaningful).
+  - **NO high-byte strip** — multibyte UTF-8 (em-dashes, smart quotes, emoji, ellipsis) preserved verbatim. Stripping defends nothing additional and breaks legitimate prose.
+  - Per-emission UUID-nonce fence wrap: `[peer-body-<8hex>]\n<sanitized>\n[/peer-body-<8hex>]`. Nonce uniqueness defends against attacker-synthesized fence-marker collision (which pass (a) already strips).
+  - 200-char inline truncate (`MAX_INLINE_BODY_CHARS`). Longer bodies → body_ref note pointing at `channels read <id> --since-cursor`.
+- **Emission cap:** 50-message-per-prompt aggregate across all channels. If a single channel has more new messages than `remaining`, switches to summary mode for that channel (one block: "N new messages — M suppressed by 50-message cap; read full via 'channels read <id> --since-cursor'"). Cursor still advances to newest-suppressed mtime → full batch readable. No data loss.
+- **Skip rules:** `msg.from === sessionId` → skip (own messages); `!Number.isFinite(Date.parse(msg.ts))` → skip (unparseable ts); legacy messages with no identity → render as `<unknown> (no-role)`.
+- **Recovery verbs:** `channels show-message-cursor <id>` (prints `{committed, pending}` state) + `channels forget-message-cursor <id>` (clears both — next fire bootstraps silently).
+- **Breadcrumb kinds:** `write-failed` (cursor write / promote / bootstrap-write failures). Under `source: "channels-identity"`. The hook does NOT emit `unhandled` — outer try/catch returns pass silently for any unexpected throw.
+- **Source:** [src/hooks/checks/peer-message-deliverer.ts](../../src/hooks/checks/peer-message-deliverer.ts)
+- **Substrate:** [src/channels/peer-message-cursors.ts](../../src/channels/peer-message-cursors.ts) (shipped at `d44fa14` ahead of the hook per substrate-first sequencing).
+- **Tests:** [test/hooks/checks/peer-message-deliverer.test.ts](../../test/hooks/checks/peer-message-deliverer.test.ts)
+- **Architecture doc:** [docs/architecture/inter-sibling-communication-layers.md](../architecture/inter-sibling-communication-layers.md)
 
 ---
 
@@ -436,6 +459,106 @@ Forces a fresh emission cycle; next prompt-submit will re-evaluate without the s
 **Verify:**
 
 Submit a new prompt. If the peer is still genuinely idle and the cursor is gone, the `[teammate-idle]` reminder should fire.
+
+### `peer-message-deliverer` (Phase 4 Step A Layer 1)
+
+**JSON shape — `show-message-cursor <channel-id>`:**
+
+```json
+{
+  "kind": "present" | "absent" | "archived",
+  "channelId": "<id>",
+  "sessionId": "<sid>",
+  "committed": { "mtime": <ms>, "ts": "<iso>" } | null,
+  "pending":   { "mtime": <ms>, "ts": "<iso>" } | null,
+  "phase":     "bootstrap-pending" | "stable" | "emission-pending"
+}
+```
+
+- `phase` is the derived lifecycle-stage discriminator. Operators read one field instead of synthesizing state from the `committed`/`pending` tuple:
+  - `bootstrap-pending` — first-scan bootstrap wrote pending; next prompt promotes. `committed=null`, `pending=set`.
+  - `stable` — committed set, no in-flight emission. `pending=null`.
+  - `emission-pending` — emit-turn wrote pending; next prompt promotes. `committed=set`, `pending=set`.
+- `committed` and `pending` are ALWAYS present in the JSON (with `null` value when absent). For `jq` filtering: use `select(.pending != null)`, NOT `select(has("pending"))` (the latter always matches).
+
+**JSON shape — `forget-message-cursor <channel-id>`:**
+
+```json
+{
+  "kind":      "cleared" | "absent" | "archived" | "error",
+  "channelId": "<id>",
+  "sessionId": "<sid>",
+  "code":      "EACCES" | "EBUSY" | "OTHER",      // only on kind="error"
+  "detail":    "<human-readable error message>"   // only on kind="error"
+}
+```
+
+- `kind=cleared` — at least one of committed or pending was unlinked.
+- `kind=absent` — both committed and pending were already missing (idempotent).
+- `kind=archived` — channel is archived; live cursors don't exist (safe no-op).
+- `kind=error` — EACCES / EBUSY / other non-ENOENT error on the unlink path. `code` + `detail` populated for triage.
+
+**Symptom:** Operator sees a stuck pending cursor that never promotes to committed, OR peer messages aren't surfacing on UserPromptSubmit despite known-new entries in the channel JSONL, OR a body block renders with `[redacted-platform-marker]` markers in unexpected places.
+
+**Diagnose:**
+
+```bash
+# Inspect cursor state — both committed AND pending:
+claude-conductor channels show-message-cursor <channel-id>
+# → kind=present {committed, pending}, kind=absent (no cursor), or kind=archived
+
+# Compare against newest message ts:
+claude-conductor channels read <channel-id> | jq -r '.[-1].ts'
+
+# Verify the channel has this session's NATO claim (hook only runs for claimed channels):
+claude-conductor channels whoami <channel-id>
+
+# Check breadcrumb log for this hook's failures. The breadcrumb `source` field
+# is the broad category `channels-identity` (shared with identity-injector +
+# teammate-idle-reminder); the per-hook discriminator is in the `detail` field
+# prefixed with `peer-message-deliverer:`. Filter accordingly:
+jq 'select(.detail | startswith("peer-message-deliverer:"))' ~/.claude/logs/.presence-gate-failures.log | tail
+# Or for a plain-text grep:
+grep '"detail":"peer-message-deliverer:' ~/.claude/logs/.presence-gate-failures.log | tail
+```
+
+If `show-message-cursor` reports `kind=present` with a `pending` value but `committed.mtime` never advances across multiple prompts, the promote step is failing — check breadcrumb log for `write-failed` entries.
+
+If body blocks contain unexpected `[redacted-platform-marker]` — the body genuinely contained platform-control markup that the sanitizer caught. This is the prompt-injection defense working as designed (MAJOR-1 fold).
+
+**Recover:**
+
+For a stuck cursor (pending never promotes, or committed lags):
+
+```bash
+claude-conductor channels forget-message-cursor <channel-id>
+```
+
+Clears BOTH committed + pending. Next UserPromptSubmit fire bootstraps silently (sets cursor to newest message mtime without emit). Subsequent fires emit normally.
+
+For sanitization false-positives (your legitimate body contains `<system-reminder>`-shaped text for a non-malicious reason): the redaction is intentional and not configurable — restructure the body to avoid the pattern, or send via `body_ref` (large-body sidecar) which bypasses inline rendering for the body content.
+
+For broken pending-promote chain (write permissions, full disk):
+
+```bash
+# Inspect the cursor directory for stale tmp files / perm issues:
+ls -la ~/.claude/channels/<channel-id>/peer-message-emit-cursors/
+```
+
+If the dir contains `.tmp.<pid>.<ts>.<rand>` leftover files (failed rename), it's safe to remove them — they're failed-write artifacts the substrate is supposed to clean up but didn't on the failure path.
+
+**Verify:**
+
+```bash
+claude-conductor channels show-message-cursor <channel-id>
+# After forget-message-cursor: kind=absent
+# After next prompt-submit (bootstrap): kind=present with pending set, committed=null
+# After second prompt-submit (promote): kind=present with committed set, pending=null
+```
+
+If a peer posts a fresh message between bootstrap + your next prompt, the second prompt-submit fire should surface it in a `── Peer messages ──` block with `[peer-body-<8hex>] ... [/peer-body-<8hex>]` fence wrap.
+
+---
 
 ### `read --since-cursor` (substrate, not a hook — included here because operators hit it together)
 

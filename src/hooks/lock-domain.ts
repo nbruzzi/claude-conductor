@@ -27,6 +27,11 @@
  *   stays in sync automatically (matches `BUNDLED_CHECK_NAMES` derivation
  *   pattern at `bundled-check-names.ts:77-79`).
  *
+ * Phase 4 Step A Layer 1 (2026-05-14) — bundled-check count rises 11 → 12
+ * via `peer-message-deliverer` addition on `user-prompt-submit`; row 12
+ * mirrors that shape (Decision K). The 12-row matrix is pinned by
+ * `test/hooks/bundled-registrations.test.ts:81` `EXPECTED_COUNT = 12`.
+ *
  * Scope-decision (v2.11, ratified by Delta gate-2 sibling): ALL 11
  * plugin-bundled checks, event-tagged, NOT scoped to session-start only.
  * Reasoning: (a) registry-of-shape that gates session-start would leak
@@ -38,7 +43,7 @@
  * `feedback-framework-vs-library-inversion.md` — plugin publishes complete
  * shape; framework (dotfiles) consumes a filter.
  *
- * Empirical derivation: 10-domain taxonomy + `none` sentinel + 11-row matrix
+ * Empirical derivation: 10-domain taxonomy + `none` sentinel + 12-row matrix
  * derived via per-phase write-graph trace through `channels/index.ts` +
  * `channels/identity.ts` + `active-sessions/index.ts` + `worktrees/index.ts`
  * + `shared/presence-failure-log.ts`. Sweep-ordering is NOT encoded here —
@@ -68,8 +73,8 @@
  * 8. **Domains-non-empty** — every row has ≥1 domain (use `["none"]` for
  *    read-only baseline; currently no rows qualify).
  *
- * Pinned at `BUNDLED_CHECK_NAMES.length === 11` via
- * `test/hooks/bundled-registrations.test.ts:77` `EXPECTED_COUNT = 11`. When
+ * Pinned at `BUNDLED_CHECK_NAMES.length === 12` via
+ * `test/hooks/bundled-registrations.test.ts:81` `EXPECTED_COUNT = 12`. When
  * `BUNDLED_CHECK_NAMES.length` changes upstream, `BUNDLED_LOCK_DOMAINS` row
  * count must change in lockstep — invariant #1 fires loudly on miss.
  *
@@ -259,6 +264,13 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
   ],
 
   "user-prompt-submit": [
+    {
+      phase: "peer-message-deliverer",
+      event: "user-prompt-submit",
+      domains: ["per-channel-cursor", "presence-failure-log"],
+      comment:
+        "Phase 4 Step A Layer 1 — per-(channel, session) peer-message emit cursor at `<channelsDir>/<id>/peer-message-emit-cursors/<sid>.json` with two-phase commit (writes `<path>.pending` on emit; promotes pending → committed via atomic rename on next UserPromptSubmit fire). Sibling-shape to `idle-emit-cursors` / `identity-emit-cursors` (noun-form per Step G convention; no LEGACY dual-read here — fresh substrate). writePendingPeerMessageCursor uses pid+timestamp+random tmp suffix + linkSync-equivalent O_CREAT|O_EXCL flag (RE-NEW-1 sibling pattern). Error-path `appendPresenceFailure` on cursor write failures + bootstrap-without-emit cursor writes + promote failures.",
+    },
     {
       phase: "teammate-idle-reminder",
       event: "user-prompt-submit",

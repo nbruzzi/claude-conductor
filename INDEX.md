@@ -28,6 +28,14 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 
 - [ADR-001 — Extraction strategy](docs/architecture/ADR-001-extraction-strategy.md) — coordinated branches, dotfiles-side vendoring, atomic flip on Phase 5 pass.
 - [hooks-layer.md](docs/architecture/hooks-layer.md) — Phase 2 Slice 4.5 operator mental-model doc for the hook layer. Firing order per BUNDLED_CHECKS_BY_EVENT, system-reminder composition, 3-tier failure-mode classification (fail-open silent / fail-open + breadcrumb / fail-loud), per-hook recovery procedures (forget-cursor / set-role / close-peer --force / rejoin), Phase 1 ↔ Phase 2 hook composition rules, hook catalog (Phase 1 SHIPPED + Phase 2 PENDING-by-slice).
+- [inter-sibling-communication-layers.md](docs/architecture/inter-sibling-communication-layers.md) — Phase 4 Step A 4-layer model permanent home (Layer 1 transport / Layer 2 identity / Layer 3 bandwidth-choice walkie-talkie kinds / Layer 4 mental-model-sync digest + verification-budget convention). Layer-by-layer state-of-the-art + cross-references to plan v5 + Decisions I/J/K.
+
+## Phase 4 Step A — Inter-sibling communication arc (in progress)
+
+- [src/channels/peer-message-cursors.ts](src/channels/peer-message-cursors.ts) — Layer 1 substrate (shipped `d44fa14`). Per-(channel, session) two-phase cursor commit + body sanitization + fence-wrap helpers. Sibling-shape to `LastSeenCursor` cursor pattern; distinct dir (`peer-message-emit-cursors/`) avoids racing the CLI `read --since-cursor` reader.
+- [src/hooks/checks/peer-message-deliverer.ts](src/hooks/checks/peer-message-deliverer.ts) — Layer 1 hook (Decision K). `user-prompt-submit` event, position 1; surfaces new peer messages with two-phase cursor commit + defense-in-depth body fencing + 50-message-per-prompt aggregate cap with per-channel summary mode. Fail-open + breadcrumb.
+- [test/channels/peer-message-cursors.test.ts](test/channels/peer-message-cursors.test.ts) — substrate tests (47 tests covering path resolvers, cursor read/write/promote/clear, body sanitization + bare-`<` escape + multibyte UTF-8 preservation + fence marker collision defense).
+- [test/hooks/checks/peer-message-deliverer.test.ts](test/hooks/checks/peer-message-deliverer.test.ts) — hook tests (25 tests covering happy paths × 5, cursor 2PC × 6, message discovery × 4, body fencing × 3, input validation × 3, failure handling × 4 per plan v5 §Phase 1 §Tests).
 
 ## Conventions (`docs/conventions/`)
 
@@ -38,7 +46,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 Operator-facing recovery + observability runbooks (commands to run, errors to triage, breadcrumbs to inspect) — distinct from `docs/architecture/` (component contracts, design rationale).
 
 - [docs/operations/\_index.md](docs/operations/_index.md) — tier scope statement + runbook catalog + topic-keyword cross-reference table.
-- [docs/operations/phase-2-hooks.md](docs/operations/phase-2-hooks.md) — Phase 2 hooks runbook: 4 hooks (channels-gc-reaper / identity-injector / task-coordinator / teammate-idle-reminder) + 2 CLI verbs (forget-cursor / show-cursor) + 2 read flags (--since-mtime / --since-cursor) + breadcrumb taxonomy + per-hook recovery (depth-3 symptom/diagnose/recover/verify).
+- [docs/operations/phase-2-hooks.md](docs/operations/phase-2-hooks.md) — Phase 2 + Phase 4 Step A Layer 1 hooks runbook: 5 hooks (channels-gc-reaper / identity-injector / task-coordinator / teammate-idle-reminder / peer-message-deliverer) + 4 CLI verbs (forget-cursor / show-cursor / forget-message-cursor / show-message-cursor) + 2 read flags (--since-mtime / --since-cursor) + breadcrumb taxonomy + per-hook recovery (depth-3 symptom/diagnose/recover/verify).
 - [docs/operations/phase-3-kill-switch.md](docs/operations/phase-3-kill-switch.md) — Phase 3 Slice 1 dispatcher kill-switch runbook: `CLAUDE_CONDUCTOR_DISABLE_HOOKS` env var (parser semantics + composition rule + blocking-hook policy + cross-event hint + breadcrumb taxonomy + 4 recovery scenarios + visibility section "How to spot a malformed env var").
 - [docs/operations/phase-3-worktrees.md](docs/operations/phase-3-worktrees.md) — Phase 3 Slice 2 per-session dotfiles worktrees runbook: 3 hooks (provisioner / gc / cleanup) + 4-tier resolver precedence + heartbeat-body sentinel anchored at canonical-claude-home + 8 verbatim error drafts (E-1…E-8) + 10 depth-3 operator scenarios (1-disable / 2-wedged / 3-missed-cleanup / 4-migrate-uncommitted / 5-sid-collision / 6-provision-failure / 7-gc-reaped-while-active / 8-flip-revert / 9-second-terminal / 10-fresh-install) + Operational notes (Time Machine exclusion + path-walk discipline + soft-ceiling rationale + mixed-flag-state).
 

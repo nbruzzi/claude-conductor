@@ -74,7 +74,19 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // config-protection moved plugin → substrate (with config-protection-cli +
 // config-protection-store utility modules); count drops 13 → 12. Plan
 // ~/.claude/plans/cluster-5-config-protection.md.
-const EXPECTED_COUNT = 11;
+//
+// Phase 4 Step A Layer 1 (2026-05-14) — peer-message-deliverer hook added to
+// user-prompt-submit event; count rises 11 → 12. Plan
+// ~/.claude/plans/eventual-marinating-wall.md v5 §Phase 1.
+const EXPECTED_COUNT = 12;
+
+/** TA-9 fold (Phase 4 Step A Layer 1 audit): explicit-presence pin for
+ *  `peer-message-deliverer` on `user-prompt-submit` event. Sibling-shape
+ *  to the worktree-trio + identity-injector / channels-gc-reaper presence
+ *  assertions below. A future regression that removes peer-message-deliverer
+ *  from BUNDLED_CHECKS_BY_EVENT (or swaps it for a different name while
+ *  preserving the count) must touch this assertion too. */
+const PHASE_4_STEP_A_L1_USER_PROMPT_SUBMIT_CHECK = "peer-message-deliverer";
 
 describe("bundled-registrations meta-test", () => {
   it("BUNDLED_CHECK_NAMES has exactly EXPECTED_COUNT entries", () => {
@@ -150,6 +162,11 @@ describe("bundled-registrations meta-test", () => {
   it("Phase 3 Slice 2 — gc reaper registered on session-start", () => {
     const names = BUNDLED_CHECKS_BY_EVENT["session-start"];
     expect(names).toContain("dotfiles-worktree-gc");
+  });
+
+  it("Phase 4 Step A Layer 1 — peer-message-deliverer registered on user-prompt-submit", () => {
+    const names = BUNDLED_CHECKS_BY_EVENT["user-prompt-submit"];
+    expect(names).toContain(PHASE_4_STEP_A_L1_USER_PROMPT_SUBMIT_CHECK);
   });
 
   // dotfiles-worktree-cleanup test removed in cycle-3 fix (channel
