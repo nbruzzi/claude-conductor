@@ -945,6 +945,31 @@ export async function setIdentityRole(args: {
 }
 
 /**
+ * Thrown by `appendMessage` when the target channel's `metadata.closed_at`
+ * is set. Lets callers discriminate closed-channel rejection via
+ * `instanceof` rather than substring-matching on `Error.message` —
+ * future channel-substrate refactors that change the message text will
+ * not silently break discrimination at consumer sites.
+ *
+ * Sibling pattern to identity-error classes in `./identity.ts`
+ * (`NatoExhaustedError`, `IdentityNotHeldError`, etc.) — same `extends
+ * Error` shape, same name-via-super convention, same `this.name`
+ * assignment so structured logs surface the discriminator.
+ *
+ * Plan: `~/.claude/plans/eventual-marinating-wall.md` v3 MAJOR-3 fold (b);
+ * backlog item under `wiki/backlog.md` "Plugin (`claude-conductor`) —
+ * `ChannelClosedError` typed exception class" (filed 2026-05-13).
+ */
+export class ChannelClosedError extends Error {
+  constructor(channelId: string, closedAt: string) {
+    super(
+      `[channels] channel '${channelId}' is closed (at ${closedAt}); cannot append`,
+    );
+    this.name = "ChannelClosedError";
+  }
+}
+
+/**
  * Append a message. Large bodies are redirected to a sidecar file.
  *
  * Phase 2 Slice 1+2 (RE-W2-1 closure): the metadata-read + auto-attach +
@@ -966,6 +991,12 @@ export async function setIdentityRole(args: {
  * post-merge, the follow-up is an RW-lock split (read for the auto-attach
  * scan, exclusive only for metadata mutations) — not promised in this
  * slice, just reserved as a Phase 3 follow-up slot.
+ *
+ * **Closed-channel rejection** (plan v3 MAJOR-3 fold (b)): throws
+ * `ChannelClosedError` (defined just above) when `metadata.closed_at` is
+ * set. Callers wanting to discriminate closed-channel rejection from
+ * other failure modes should `catch (err) { if (err instanceof
+ * ChannelClosedError) ... }` rather than substring-matching the message.
  */
 export async function appendMessage(args: {
   channelId: string;
@@ -978,9 +1009,7 @@ export async function appendMessage(args: {
   return withMetadataLock(channelId, () => {
     const meta = readMetadata(channelId);
     if (meta.closed_at) {
-      throw new Error(
-        `[channels] channel ${channelId} is closed; cannot append`,
-      );
+      throw new ChannelClosedError(channelId, meta.closed_at);
     }
 
     let message = args.message;

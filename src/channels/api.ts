@@ -64,6 +64,7 @@ export type { NatoIdentity } from "./identity.ts";
 export {
   appendMessage,
   archiveChannel,
+  ChannelClosedError,
   channelIdFromHandoff,
   closeChannel,
   createChannel,
