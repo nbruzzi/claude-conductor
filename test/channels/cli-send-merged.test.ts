@@ -41,12 +41,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { claimIdentity, setRole } from "../../src/channels/identity.ts";
-import { createChannel } from "../../src/channels/index.ts";
+import { CHANNEL_KINDS, createChannel } from "../../src/channels/index.ts";
 
 const PACKAGE_ROOT = dirname(dirname(import.meta.dir));
 const CLI_PATH = join(PACKAGE_ROOT, "src", "channels", "cli.ts");
@@ -191,5 +191,199 @@ describe("cli send-case merged invariants (TA-8 gate)", () => {
     const parsed = JSON.parse(firstLine) as Record<string, unknown>;
     expect(parsed["category"]).toBe("ROLE_OUT_BLOCKED");
     expect(parsed["code"]).toBe(4);
+  });
+
+  it("(d) stdin body + role=out + kind=out → succeeds (Layer 3 carve-out per plan v5)", async () => {
+    // Phase 4 Step A Layer 3 carve-out: an out-role peer can still
+    // announce departure via kind=out. The role-gate at cli.ts blocks
+    // ALL other kinds. This is the one allowed send from an out-role
+    // peer — and per plan v5 it is the SOLE writer of `out_posted_at`
+    // this arc (auto-out Stop-hook extension dropped; SessionStart-
+    // reaper deferred to Phase 4 Step B; see
+    // `src/hooks/checks/session-presence-unregister.ts` header note
+    // for the per-turn-Stop rationale).
+    await createChannel({
+      channelId: "c-merged-d",
+      handoffId: "c-merged-d",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-d",
+      sessionId: TEST_SESSION_ID,
+    });
+    await setRole("c-merged-d", "Alpha", "out");
+
+    const result = runSend(
+      ["send", "c-merged-d", "out"],
+      "session ended; out-role peer announcing departure",
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { kind?: string };
+    expect(parsed.kind).toBe("out");
+
+    const messagesPath = join(tempChannelsDir, "c-merged-d", "messages.jsonl");
+    expect(existsSync(messagesPath)).toBe(true);
+  });
+
+  it("(f) send out + role=queue → succeeds + role + out_posted_at land atomically (Phase 4 Step A v5 RE-3 fold)", async () => {
+    // Manual `channels send <id> out` is the sole writer of
+    // `out_posted_at` this arc (plan v5 dropped the Stop-hook auto-out
+    // extension; SessionStart-reaper deferred). The send is a true
+    // terminal transition: role + out_posted_at + JSONL line all land
+    // atomically under a single `withMetadataLock`.
+    await createChannel({
+      channelId: "c-merged-f",
+      handoffId: "c-merged-f",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-f",
+      sessionId: TEST_SESSION_ID,
+    });
+    // Default role on claim is "queue" — explicit set-role would be a
+    // no-op here; verify auto-attached pre-state in the assertion.
+    const beforeMeta = JSON.parse(
+      readFileSync(
+        join(tempChannelsDir, "c-merged-f", "metadata.json"),
+        "utf-8",
+      ),
+    ) as {
+      identities: Record<string, { role: string; out_posted_at?: string }>;
+    };
+    const preLetter = Object.keys(beforeMeta.identities)[0] ?? "";
+    expect(beforeMeta.identities[preLetter]?.role).toBe("queue");
+    expect(beforeMeta.identities[preLetter]?.out_posted_at).toBeUndefined();
+
+    const result = runSend(
+      ["send", "c-merged-f", "out"],
+      "leaving channel; session winding down",
+    );
+    expect(result.exitCode).toBe(0);
+
+    // JSONL line landed.
+    const messagesPath = join(tempChannelsDir, "c-merged-f", "messages.jsonl");
+    expect(existsSync(messagesPath)).toBe(true);
+    const jsonl = readFileSync(messagesPath, "utf-8")
+      .split("\n")
+      .filter((l: string) => l.length > 0);
+    expect(jsonl.length).toBe(1);
+    const parsedMsg = JSON.parse(jsonl[0] ?? "{}") as {
+      kind: string;
+      role?: string;
+    };
+    expect(parsedMsg.kind).toBe("out");
+    // Auto-attach runs BEFORE the mutator → message records the sender's
+    // PRIOR role ("queue"). The metadata's new role ("out") and the
+    // message's prior role ("queue") together encode the transition:
+    // "this peer was queue at write-start and committed to out
+    // atomically with this line".
+    expect(parsedMsg.role).toBe("queue");
+
+    // Metadata transitioned to role=out + out_posted_at set.
+    const afterMeta = JSON.parse(
+      readFileSync(
+        join(tempChannelsDir, "c-merged-f", "metadata.json"),
+        "utf-8",
+      ),
+    ) as {
+      identities: Record<string, { role: string; out_posted_at?: string }>;
+    };
+    expect(afterMeta.identities[preLetter]?.role).toBe("out");
+    expect(afterMeta.identities[preLetter]?.out_posted_at).toBeDefined();
+    const postedAt = afterMeta.identities[preLetter]?.out_posted_at ?? "";
+    expect(Date.parse(postedAt)).not.toBeNaN();
+  });
+
+  it("(e) role=out + every non-out CHANNEL_KINDS member → role-die exit 4 (SSOT-iteration coverage per audit RE-MINOR-1 + ARCH-2 folds)", async () => {
+    // Drift-catch: when CHANNEL_KINDS gains Layer 4 `digest` (or any
+    // future kind), this loop auto-covers the carve-out's truth-table
+    // for the new kind. Sibling-shape to message-roundtrip's
+    // CHANNEL_KINDS iteration (Phase 0 ARCH-2 fold). If a future
+    // refactor accidentally narrowed the carve-out (e.g. allowed
+    // kind=ack through), this test fails for that specific kind by
+    // name — easier-to-diagnose failure than a single status-only
+    // assertion.
+    await createChannel({
+      channelId: "c-merged-e",
+      handoffId: "c-merged-e",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-merged-e",
+      sessionId: TEST_SESSION_ID,
+    });
+    await setRole("c-merged-e", "Alpha", "out");
+
+    for (const kind of CHANNEL_KINDS.filter((k) => k !== "out")) {
+      const result = runSend(
+        ["send", "c-merged-e", kind, "--json"],
+        `body for ${kind} should not land`,
+      );
+      expect(result.exitCode).toBe(4);
+      const firstLine = result.stderr.trim().split("\n")[0] ?? "";
+      const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+      expect(parsed["category"]).toBe("ROLE_OUT_BLOCKED");
+      expect(parsed["code"]).toBe(4);
+      // Error message embeds the rejected kind name (CLI-4 fold).
+      const msg =
+        typeof parsed["message"] === "string" ? parsed["message"] : "";
+      expect(msg).toContain(`'${kind}'`);
+    }
+  });
+});
+
+describe("cli kinds verb (Layer 3 per-kind help)", () => {
+  function runKinds() {
+    return Bun.spawnSync({
+      cmd: ["bun", CLI_PATH, "kinds"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        CLAUDE_CONDUCTOR_CHANNELS_DIR: tempChannelsDir,
+        CLAUDE_SESSION_ID: TEST_SESSION_ID,
+      },
+    });
+  }
+
+  it("prints per-kind reference + recommended body conventions + verification-budget pointer", () => {
+    const proc = runKinds();
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+
+    // Recommended body content (MINOR-1 fold) + worked examples
+    // (audit ARCH-1 fold — plan v4 §256-267 verbatim).
+    expect(stdout).toContain("`received` or `ack`");
+    expect(stdout).toContain("`will fold MAJOR-1 by next prompt`");
+    expect(stdout).toContain("`your turn on L3`");
+    expect(stdout).toContain("`running tests; ~5 min`");
+    expect(stdout).toContain("`session ended`");
+
+    // Verification-budget pointer + Layer-4 deferred-doc breadcrumb.
+    expect(stdout).toContain("verification-budget");
+    expect(stdout).toContain(
+      "docs/conventions/message-kinds-and-verification.md",
+    );
+
+    // Carve-out semantic explained — CLI-flag style (MINOR-2 fold).
+    expect(stdout).toContain("role is 'out'");
+    expect(stdout).toContain("kind=out");
+  });
+
+  it("KINDS_HELP enumerates every CHANNEL_KINDS member (SSOT-iteration drift catch per audit ARCH-2 fold)", () => {
+    // Paired structural test: any future CHANNEL_KINDS extension that
+    // forgets to extend KINDS_HELP fails here by the specific missing
+    // kind name. Sibling-shape to channel-kinds-ssot.test.ts's
+    // renderKindPrefix exhaustive test. Future Layer 4 `digest`
+    // addition is the immediate forcing function.
+    const proc = runKinds();
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(proc.exitCode).toBe(0);
+    for (const k of CHANNEL_KINDS) {
+      // KINDS_HELP format is `  <kind-padded-10> — <gloss>`. Match
+      // start-of-line + padded-kind so substrings like "out" don't
+      // false-match against the carve-out prose ("kind=out").
+      expect(stdout).toContain(`  ${k.padEnd(10, " ")}—`);
+    }
   });
 });

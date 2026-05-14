@@ -65,7 +65,40 @@ const LOCK_BASE_DELAY_MS = 50;
 
 export type ChannelLifecycle = "parallel";
 
-export type ChannelKind = "note" | "question" | "handoff" | "status";
+/**
+ * Single source of truth for the set of channel message kinds. The
+ * `ChannelKind` union derives from this tuple via
+ * `(typeof CHANNEL_KINDS)[number]`, and runtime validators import
+ * `CHANNEL_KINDS` so the type-level and runtime acceptance stay in
+ * lockstep (no 3-sync-point drift bait when extending the set).
+ *
+ * Sibling pattern: `BUNDLED_CHECKS_BY_EVENT` `as const` at
+ * `src/hooks/bundled-check-names.ts:58-72`. Extension order is the
+ * declaration order shown here — Phase 1 kinds first; future kinds
+ * (e.g., Phase 4 Step A Layer 3 walkie-talkie primitives, Layer 4
+ * `digest`) append after.
+ */
+export const CHANNEL_KINDS = [
+  // Phase 1 kinds (informational + protocol carriers)
+  "note",
+  "question",
+  "handoff",
+  "status",
+  // Phase 4 Step A Layer 3 — walkie-talkie protocol primitives
+  // (see `docs/conventions/message-kinds-and-verification.md`):
+  //   - `ack`      — receipt confirmation; presence-of-message is the signal
+  //   - `roger`    — receipt + commitment; sender will act on what was read
+  //   - `over`     — sender hint: "I posted, expecting reply"
+  //   - `standby`  — sender hint: "heard you, working, hold the channel"
+  //   - `out`      — peer terminates this channel (additive; `claim --force` resets)
+  "ack",
+  "roger",
+  "over",
+  "standby",
+  "out",
+] as const;
+
+export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 
 /** Role posture per parent plan §266-271. `pen` = actively writing;
  *  `queue` = ready to take pen; `out` = observing only (sends blocked). */
@@ -93,6 +126,31 @@ export type IdentityClaim = {
   session_id: string;
   role: ChannelRole;
   joined_at: string;
+  /**
+   * ISO timestamp set when this identity posted `kind="out"` on the
+   * channel.
+   *
+   * **Sole writer this arc (plan v5):** the CLI send-verb in
+   * `src/channels/cli.ts` when `kind === "out"`. The send-role-gate
+   * carve-out from the Layer 3 commit lets the `out` kind through,
+   * and `makeSendOutMutator(sessionId)` (this module) is passed as the
+   * `appendMessage` `extraMetadataMutator` to atomically set BOTH
+   * `role = "out"` AND `out_posted_at = ts` on the sender's claim
+   * under a single `withMetadataLock`.
+   *
+   * **No Stop-hook auto-writer.** A v4 draft extended
+   * `session-presence-unregister` to auto-post `out` at session-end,
+   * but Stop fires per-turn (not session-end) — see
+   * `src/hooks/checks/bundled-registrations.ts:71-78` for the
+   * dotfiles-worktree-cleanup precedent removed for the same bug
+   * shape. SessionStart-driven reaper deferred to Phase 4 Step B.
+   *
+   * Read by `explicitlyOutPeers` (`src/channels/explicitly-out-peers.ts`)
+   * for the "terminal until takeover" predicate per RE-7 fold. Reset
+   * via the existing identity-takeover path (`claim --force` clears the
+   * claim entirely, which drops `out_posted_at`).
+   */
+  out_posted_at?: string;
 };
 
 export type ChannelMetadata = {
@@ -454,7 +512,20 @@ export function validateChannelMetadata(
           `[channels] metadata for ${sourceLabel} has invalid 'identities[${letter}]' fields`,
         );
       }
-      validated[letter] = { session_id, role, joined_at };
+      // Phase 4 Step A Layer 3 — additive optional `out_posted_at`
+      // (ISO timestamp; sole writer this arc is the CLI send-verb
+      // when `kind === "out"` via `makeSendOutMutator`). Validate
+      // shape if present; ignore absence.
+      const out_posted_at = c["out_posted_at"];
+      if (out_posted_at !== undefined && typeof out_posted_at !== "string") {
+        throw new Error(
+          `[channels] metadata for ${sourceLabel} has invalid 'identities[${letter}].out_posted_at' (expected string or absent)`,
+        );
+      }
+      const claimRecord: IdentityClaim = { session_id, role, joined_at };
+      if (out_posted_at !== undefined)
+        claimRecord.out_posted_at = out_posted_at;
+      validated[letter] = claimRecord;
     }
     meta.identities = validated;
   }
@@ -1001,6 +1072,58 @@ export class ChannelClosedError extends Error {
 export async function appendMessage(args: {
   channelId: string;
   message: ChannelMessage;
+  /**
+   * Optional metadata mutator run under the same `withMetadataLock` as
+   * the message append. If provided, the mutator is called with the
+   * current metadata (post-read, post-close-check); when it returns an
+   * object that differs from the input by reference, the new metadata
+   * is written back via `writeMetadataRaw` **AFTER** the JSONL line
+   * lands (audit-trail-as-anchor per plan v5 RE-2 fold; see the inline
+   * ordering note at the bottom of this function's lock callback for
+   * the rationale).
+   *
+   * **Use case (Phase 4 Step A Layer 3):** atomic
+   * "post-out-and-mark-self" for the CLI `kind=out` send path — the
+   * caller (`makeSendOutMutator`) returns a mutator that sets BOTH
+   * `role = "out"` AND `out_posted_at = ts` on the sender's claim.
+   * Both the JSONL audit line and the metadata cache land under one
+   * lock acquisition; readers (whoami / explicitlyOutPeers /
+   * message-record) converge post-mutation.
+   *
+   * **Semantics:**
+   *   - Mutator is sync; throwing from it aborts the entire transaction
+   *     (no message lands, no metadata change). Validation also runs
+   *     up-front; a mutator that returns a mis-shaped object throws
+   *     before the JSONL append.
+   *   - Reference-equality is the write-back signal — return the input
+   *     `meta` unchanged to skip the write; return any other object
+   *     (including a structural copy) to trigger `writeMetadataRaw`.
+   *     **Do NOT mutate `meta` in place** — that returns reference-
+   *     equal and silently skips disk-write while the in-memory object
+   *     diverges.
+   *   - Mutator runs AFTER auto-attach + closed-channel check. The
+   *     auto-attach scan reads `meta.identities`; if the mutator
+   *     depends on the post-write `identities` value, structure it to
+   *     merge against the `meta` it receives.
+   *   - Validates the returned metadata via `validateChannelMetadata`
+   *     before the JSONL append, so a mis-shaped mutator output dies
+   *     before either disk write.
+   *   - **Single mutator per call.** If a future caller needs to
+   *     compose multiple field mutations (e.g., Layer 4 digest +
+   *     out-transition), wrap them in a single mutator function or
+   *     add a `composeMutators(...mutators)` helper at that time.
+   *
+   * **Failure-mode tolerance (per plan v5 RE-2):** if the JSONL
+   * append succeeds and the subsequent `writeMetadataRaw` fails
+   * (ENOSPC, EACCES, EBUSY), the durable audit trail (JSONL line)
+   * still lands but the metadata cache stays stale. There is NO
+   * automatic JSONL → metadata reconciliation reader; recovery is
+   * external (operator `claim --force` displaces the entire claim,
+   * or hand-edit the metadata.json). The opposite ordering would
+   * leave a permanently lying cache when the JSONL append fails,
+   * which is the worse posture; JSONL-first preserves audit trail.
+   */
+  extraMetadataMutator?: (meta: ChannelMetadata) => ChannelMetadata;
 }): Promise<ChannelMessage> {
   const { channelId } = args;
   if (!existsSync(metadataPath(channelId))) {
@@ -1043,6 +1166,27 @@ export async function appendMessage(args: {
       }
     }
 
+    // Phase 4 Step A Layer 3 — compute the post-mutation metadata
+    // candidate UP FRONT (under the lock), but DO NOT write it yet.
+    // The write follows after the JSONL append per the audit-trail-as-
+    // anchor ordering (RE-2 fold). Validation runs here so a mis-shaped
+    // mutator output throws BEFORE the JSONL line lands (no half-write
+    // where the log gets the message but the cache write is rejected).
+    let mutatedMetadata: ChannelMetadata | null = null;
+    if (args.extraMetadataMutator !== undefined) {
+      const nextMeta = args.extraMetadataMutator(meta);
+      if (nextMeta !== meta) {
+        // validateChannelMetadata throws on mis-shape — the throw
+        // unwinds withMetadataLock and rejects appendMessage's promise,
+        // so the caller sees a typed error (no message lands, no
+        // metadata change).
+        mutatedMetadata = validateChannelMetadata(
+          nextMeta,
+          `${channelId} (extraMetadataMutator)`,
+        );
+      }
+    }
+
     const initialLine = serializeLine(message);
     if (
       Buffer.byteLength(initialLine, "utf-8") > SMALL_MESSAGE_MAX_BYTES &&
@@ -1064,11 +1208,82 @@ export async function appendMessage(args: {
       if (message.version !== undefined) shunted.version = message.version;
       message = shunted;
     }
+
+    // RE-2 fold (audit-trail-as-anchor): JSONL append runs BEFORE the
+    // metadata write. On JSONL-append failure (ENOSPC, EACCES, EBUSY),
+    // the metadata stays unchanged — clean transaction failure. On
+    // metadata-write failure AFTER a successful JSONL append, the
+    // durable audit trail still lands but the cache stays stale; there
+    // is NO automatic JSONL → metadata reconciliation reader, so
+    // recovery is external (operator `claim --force` replaces the
+    // entire claim record, OR hand-edit metadata.json). The opposite
+    // ordering (metadata-first) is worse: a JSONL-append failure
+    // post-metadata-write leaves a permanently lying cache with no
+    // durable audit line to recover from. Sibling pattern: Layer 1
+    // two-phase cursor commit (pending → committed) treats the durable
+    // event as the anchor.
     const line = serializeLine(message);
     appendLineAtomically(messagesPath(channelId), line);
+    if (mutatedMetadata !== null) {
+      writeMetadataRaw(channelId, mutatedMetadata, message.from);
+    }
     touchHeartbeat(channelId, message.from);
     return message;
   });
+}
+
+/**
+ * Build an `extraMetadataMutator` for the manual-`out` send path. The
+ * returned mutator finds the identity claim belonging to `sessionId`
+ * and atomically updates it with `role = "out"` AND
+ * `out_posted_at = ts` (defaults to "now" if omitted).
+ *
+ * **Three predicates converge post-mutation:**
+ *   - `whoami` reads `metadata.identities[<L>].role` → `"out"`
+ *   - `explicitlyOutPeers` reads `metadata.identities[<L>].out_posted_at` → present
+ *   - JSONL `kind=out` line carries `role: "out"` via the auto-attach
+ *     scan (auto-attach happens before the mutator in the lock callback;
+ *     attach uses the PRE-mutation role, so the message's `role` field
+ *     reflects "what the sender was at write-start". For first-time
+ *     departure, this is the sender's prior role — consumers reading
+ *     the `out` line know the prior posture from the message field and
+ *     the new posture from the metadata).
+ *
+ * **Caller-wins / no-op:** if the session has no identity claim on the
+ * channel (legacy / pre-join send), returns the input metadata by
+ * reference → no metadata write-back, message still lands. The CLI
+ * role-gate carve-out already permits `kind=out` from claimless
+ * senders; the mutator gracefully no-ops in that case.
+ *
+ * Used by `src/channels/cli.ts` send-verb when `kind === "out"` to
+ * make the manual `channels send <id> out` a true terminal transition
+ * — sole writer of `out_posted_at` this arc per plan v5 (auto-out
+ * extension dropped; SessionStart-reaper deferred to Phase 4 Step B).
+ */
+export function makeSendOutMutator(
+  sessionId: string,
+  postedAt: string = new Date().toISOString(),
+): (meta: ChannelMetadata) => ChannelMetadata {
+  return (meta) => {
+    const identities = meta.identities;
+    if (identities === undefined) return meta;
+    for (const [letter, claim] of Object.entries(identities)) {
+      if (claim.session_id === sessionId) {
+        return {
+          ...meta,
+          identities: {
+            ...identities,
+            [letter]: {
+              ...claim,
+              role: "out",
+              out_posted_at: postedAt,
+            },
+          },
+        };
+      }
+    }
+    return meta;
+  };
 }
 
 /** Read all messages in order. Skips corrupt lines with a single warning. */
@@ -1109,15 +1324,12 @@ export function readMessages(channelId: string): ChannelMessage[] {
 export function isChannelMessage(v: unknown): v is ChannelMessage {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
-  const validKinds: readonly ChannelKind[] = [
-    "note",
-    "question",
-    "handoff",
-    "status",
-  ];
+  // Validator pulls directly from the SSOT tuple — adding a new kind to
+  // `CHANNEL_KINDS` automatically widens this acceptance set (no separate
+  // edit required here).
   if (typeof o["ts"] !== "string") return false;
   if (typeof o["from"] !== "string") return false;
-  if (!validKinds.includes(o["kind"] as ChannelKind)) return false;
+  if (!CHANNEL_KINDS.includes(o["kind"] as ChannelKind)) return false;
   if (o["body"] !== undefined && typeof o["body"] !== "string") return false;
   if (o["body_ref"] !== undefined && typeof o["body_ref"] !== "string")
     return false;

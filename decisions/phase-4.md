@@ -348,3 +348,56 @@ affects: [hook-substrate, channels-substrate, package-exports]
 - Post-arc memory candidates (Bravo lane): `feedback-peer-content-prompt-injection-defense.md` (plugin-bundled; born from MAJOR-1) — Bravo authors per lane-split.
 
 **Letter note:** plan v5 §Phase 1 names this "Decision E (umbrella) §Layer 1", but Decision E is already taken in this file by the 2026-05-01 Slice 2 soak-time entry (line 147). Following Bravo's precedent on Decision I — narrowly-scoped per layer with the next-available letter. B1 = I (Layer 3), B2 = J (Layer 4); A1 = K (Layer 1, this entry). Final on-main order after all three merge: A–H, I (Layer 3 — B1), J (Layer 4 — B2), K (Layer 1 — A1, this entry).
+
+---
+
+## 2026-05-13 — Decision I: Phase 4 Step A Layer 3 — out-kind atomicity via `extraMetadataMutator` + manual-`send out` as sole `out_posted_at` writer
+
+```yaml
+status: chosen
+severity: load-bearing
+phase: 4
+affects: [channels-substrate, hook-substrate-deferred-to-step-b]
+```
+
+**Context:** Layer 3 of Phase 4 Step A (inter-sibling communication arc) introduces `kind=out` as one of five walkie-talkie protocol primitives, AND a metadata cache (`metadata.identities[<L>].out_posted_at`) so peers can filter departed sessions via `explicitlyOutPeers` without scanning the message log. Two design questions emerged during the arc:
+
+1. **How to land the JSONL audit line AND the metadata cache update atomically** — separate writes risk a race window where `explicitlyOutPeers` reads stale-no, and a partial-write window where the cache lies indefinitely after one write fails.
+2. **Who writes `out_posted_at` — manual `channels send <id> out` only, OR a Stop-hook auto-poster on every channel a session claims?**
+
+**Options considered for atomicity (Q1):**
+
+1. **Separate writes with explicitlyOutPeers fallback** — predicate cross-checks the message log if the cache doesn't show `out`. Eliminates the race but destroys the O(1) lookup the cache exists for; adds latency to every predicate call.
+2. **Two-phase commit with a `.pending` sidecar** — sibling to Layer 1's cursor pattern. Heavier; multiple file writes per send.
+3. **Atomic mutation under one lock via `appendMessage` extension** (chosen) — add an optional `extraMetadataMutator?: (meta) => ChannelMetadata` parameter that runs inside the existing `withMetadataLock` callback. Caller-supplied mutator returns the post-state metadata; the lock callback validates the output then writes both the JSONL line AND the metadata under one lock acquisition. Reference-equality return signals "no metadata change"; mis-shaped output throws before either write lands.
+
+**Options considered for the writer (Q2):**
+
+1. **Stop-hook auto-poster** (v4 design) — extend `session-presence-unregister` to iterate every channel the session has a claim on and post `kind=out` + set `out_posted_at`. Fires on Stop event.
+2. **Manual send-out only** (chosen, v5 rework) — the operator (or operator-controlled session) runs `channels send <id> out` to announce departure; the CLI send-role-gate carve-out from the Layer 3 commit lets `kind=out` through; `makeSendOutMutator(sessionId)` is passed as the `extraMetadataMutator`. No automatic posting.
+3. **SessionStart-driven reaper** — deferred to Phase 4 Step B. On the next session-start after the prior session ends, scan channels for stale heartbeats and auto-post `out` for departed peers. Mirrors the `dotfiles-worktree-gc` SessionStart-reaper pattern (cycle-3 fix on `bundled-registrations.ts:71-78`).
+
+**Chosen for Q1:** Option 3 (atomic mutator under one lock).
+**Chosen for Q2:** Option 2 (manual send-out only); Option 3 deferred to Phase 4 Step B as a new backlog candidate.
+
+**Reason — atomicity (Q1):** the mutator pattern is the lowest-cost-and-highest-correctness shape. One lock acquisition; readers see either the pre-state (transaction not started or rolled back) or the post-state (transaction completed). The `appendMessage` API is now permissively composable — Layer 4 digest-related metadata work can land via the same parameter without further substrate change. Pre-fold ordering was metadata-first; the v5 fold (RE-2) reordered to JSONL-first because the durable audit trail is the right anchor: on metadata-write failure post-JSONL, the log preserves the evidence and recovery is external (operator `claim --force`) — whereas the opposite ordering would leave a permanently lying cache if the JSONL append failed.
+
+**Reason — writer (Q2):** Stop fires per-turn, not session-end. The codebase already has a removed example of this exact bug shape — `dotfiles-worktree-cleanup` was deleted on 2026-05-08 because the Stop-hook had no session-end discrimination and destroyed the worktree after the first turn-end. The v4 auto-out design replayed this defect: on every turn-end, the session would have marked itself as departed on every channel it had a claim on. The staged-diff Reliability audit caught this pre-push by citing the codebase comment at `bundled-registrations.ts:71-78` — **substrate-precedent caught a plan-level defect that two prior audit cycles missed** (the 4-persona pre-fold + the Bravo plan v3 cross-audit). The fold: drop auto-out entirely, keep substrate primitives, defer the structurally-correct reaper to Phase 4 Step B where SessionStart is the right firing point.
+
+**Operationalized as:**
+
+- `src/channels/index.ts` — `IdentityClaim.out_posted_at?: string` (additive optional); `appendMessage` `extraMetadataMutator?: (meta) => ChannelMetadata` parameter (JSONL-first ordering per RE-2); `makeSendOutMutator(sessionId, postedAt?)` helper.
+- `src/channels/explicitly-out-peers.ts` — new predicate; re-exported via `api.ts`.
+- `src/channels/cli.ts` — send-verb wires `makeSendOutMutator` when `kind === "out"`.
+- `src/channels/api.ts` — `CHANNEL_KINDS`, `renderKindPrefix`, `explicitlyOutPeers`, `makeSendOutMutator` on curated surface (24 value names).
+- `memories/feedback-walkie-talkie-out-semantics.md` — plugin-bundled; documents sole-writer + per-turn-Stop rationale + terminal-until-takeover.
+- `src/hooks/checks/session-presence-unregister.ts` — header comment cites the auto-out drop + the precedent + the Phase 4 Step B deferral.
+
+**Cross-references:**
+
+- Memory `feedback-cross-artifact-fold-propagation.md` — applied on the v5 ARCH-2/3 docstring sweeps + plan-body sweeps.
+- Memory `feedback-distinct-lenses-over-repeat-verifications.md` — the v0 → v5 audit lineage paid five rent payments (1 plan-level catch via Bravo cross-audit on plan v2 → v3; 1 plan-level catch via staged-diff Reliability on v4 → v5; 3 cross-audit MAJORs on each commit).
+- Memory candidate (post-arc): `substrate-precedent-as-design-rescue` — RE-1 catch citing `bundled-registrations.ts:71-78` is the canonical example.
+- Phase 4 Step B backlog: SessionStart-driven reaper for departed-peer auto-out (deferred from this arc).
+
+**Letter note:** plan v5 §B1 names this "Decision E §Layer 3", but Decision E is already taken in this file by the 2026-05-01 Slice 2 soak-time entry (line 147). Using next-available letter I.

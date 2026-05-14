@@ -18,6 +18,17 @@
  * shared presence-failure log so SessionStart briefings can surface silent
  * un-register events (otherwise stale heartbeats would only clear 2× TTL
  * later — and the briefing would lack context for why).
+ *
+ * **Phase 4 Step A Layer 3 note (plan v5):** an earlier draft of this hook
+ * added an auto-`out` extension that posted `kind=out` + set
+ * `metadata.identities[<L>].out_posted_at` on every channel the session
+ * had a claim on. That extension was DROPPED before merge because Stop
+ * fires per-turn (not session-end) — see
+ * `src/hooks/checks/bundled-registrations.ts:71-78` for the
+ * dotfiles-worktree-cleanup precedent removed for the same bug shape.
+ * Manual `channels send <id> out` is the sole writer of `out_posted_at`
+ * this arc; a SessionStart-driven reaper for stale-peer auto-out is
+ * deferred to Phase 4 Step B.
  */
 
 import { existsSync, readFileSync } from "node:fs";
