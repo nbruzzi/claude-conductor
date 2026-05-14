@@ -155,8 +155,31 @@ describe("ChannelClosedError", () => {
     // continues to contain "closed" so pre-typed-error consumers
     // discover no behavior change.
     await setupClosedChannel("c-cce-legacy");
-    await expect(
+    expect(
       appendMessage({ channelId: "c-cce-legacy", message: msg() }),
     ).rejects.toThrow(/closed/u);
+  });
+
+  it("error message includes operator-actionable recovery hint (axis f, ALPHA-MINOR-1 fold)", async () => {
+    // Sibling-pattern with `NatoExhaustedError` which includes a "Recovery:"
+    // hint citing the operator-facing CLI verb. ChannelClosedError gains the
+    // same shape so operators hitting the throw know the next-step recovery
+    // path without consulting the runbook. Verify both verb hints land in
+    // the message text.
+    await setupClosedChannel("c-cce-f");
+    let thrown: unknown;
+    try {
+      await appendMessage({ channelId: "c-cce-f", message: msg() });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ChannelClosedError);
+    const errMessage = (thrown as ChannelClosedError).message;
+    expect(errMessage).toContain("Recovery:");
+    expect(errMessage).toContain("channels create");
+    expect(errMessage).toContain("channels list");
+    // Axis-e backwards-compat preserved by the recovery-hint addition —
+    // "closed" substring still present (validates the additive composition).
+    expect(errMessage).toContain("closed");
   });
 });
