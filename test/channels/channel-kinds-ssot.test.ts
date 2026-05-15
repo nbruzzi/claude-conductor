@@ -30,7 +30,7 @@ import { CHANNEL_KINDS, type ChannelKind } from "../../src/channels/index.ts";
 import { renderKindPrefix } from "../../src/channels/render.ts";
 
 describe("CHANNEL_KINDS (SSOT)", () => {
-  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest last)", () => {
+  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-delta last)", () => {
     expect(CHANNEL_KINDS).toEqual([
       // Phase 1 informational + protocol carriers
       "note",
@@ -45,14 +45,17 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       "out",
       // Phase 4 Step A Layer 4 mental-model-sync
       "digest",
+      // L152 sibling-onboarding live-delta primitive
+      "live-delta",
     ]);
   });
 
   it("preserves tuple length under `as const` declaration", () => {
     // Catches accidental drop (tuple shrinks) or accidental addition
     // (tuple grows) at the SSOT site. Bumped from 4 → 9 with Layer 3
-    // walkie-talkie additions; 9 → 10 with Layer 4 `digest`.
-    expect(CHANNEL_KINDS.length).toBe(10);
+    // walkie-talkie additions; 9 → 10 with Layer 4 `digest`; 10 → 11
+    // with L152 `live-delta`.
+    expect(CHANNEL_KINDS.length).toBe(11);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {
