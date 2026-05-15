@@ -14,13 +14,18 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { statSync } from "node:fs";
+
 import {
   archiveChannel,
   createChannel,
   touchHeartbeat,
 } from "../../src/channels/index.ts";
 import { claimIdentity } from "../../src/channels/identity.ts";
-import { getIdentityContextForSession } from "../../src/channels/identity-context.ts";
+import {
+  getIdentityContextForSession,
+  isPeerCoordinatedWithSelf,
+} from "../../src/channels/identity-context.ts";
 
 const SANDBOX = `/tmp/test-identity-context-${process.pid}`;
 const SESSION_A = "sess-ctx-a";
@@ -215,3 +220,143 @@ describe("getIdentityContextForSession", () => {
     expect(bResult[0]?.peers[0]?.identity).toBe("Alpha");
   });
 });
+
+describe("isPeerCoordinatedWithSelf", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  it("returns coordinated=true when both sessions are participants in same channel", async () => {
+    await createChannel({
+      channelId: "c-coord",
+      handoffId: "c-coord",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "c-coord", sessionId: SESSION_A });
+    await claimIdentity({ channelId: "c-coord", sessionId: SESSION_B });
+
+    const result = isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+    expect(result.coordinated).toBe(true);
+    expect(result.channelIds).toEqual(["c-coord"]);
+  });
+
+  it("returns coordinated=false when peer not in any of self's claimed channels", async () => {
+    await createChannel({
+      channelId: "c-solo",
+      handoffId: "c-solo",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "c-solo", sessionId: SESSION_A });
+
+    const result = isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+    expect(result.coordinated).toBe(false);
+    expect(result.channelIds).toEqual([]);
+  });
+
+  it("returns coordinated=false when self has no claimed channels", () => {
+    const result = isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+    expect(result.coordinated).toBe(false);
+    expect(result.channelIds).toEqual([]);
+  });
+
+  it("returns coordinated=true via ANY shared channel (multi-channel case)", async () => {
+    // Alpha + Bravo on channel-a (shared coordination)
+    await createChannel({
+      channelId: "c-multi-a",
+      handoffId: "c-multi-a",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "c-multi-a", sessionId: SESSION_A });
+    await claimIdentity({ channelId: "c-multi-a", sessionId: SESSION_B });
+
+    // Alpha + Charlie on channel-b (Bravo NOT on this channel)
+    await createChannel({
+      channelId: "c-multi-b",
+      handoffId: "c-multi-b",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "c-multi-b", sessionId: SESSION_A });
+    await claimIdentity({ channelId: "c-multi-b", sessionId: SESSION_C });
+
+    const ab = isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+    expect(ab.coordinated).toBe(true);
+    expect(ab.channelIds).toEqual(["c-multi-a"]);
+
+    const ac = isPeerCoordinatedWithSelf(SESSION_A, SESSION_C);
+    expect(ac.coordinated).toBe(true);
+    expect(ac.channelIds).toEqual(["c-multi-b"]);
+  });
+
+  it("returns coordinated=true with multiple channelIds when peer is on multiple shared channels", async () => {
+    for (const id of ["c-shared-1", "c-shared-2"]) {
+      await createChannel({
+        channelId: id,
+        handoffId: id,
+        sessionId: SESSION_A,
+      });
+      await claimIdentity({ channelId: id, sessionId: SESSION_A });
+      await claimIdentity({ channelId: id, sessionId: SESSION_B });
+    }
+
+    const result = isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+    expect(result.coordinated).toBe(true);
+    expect(result.channelIds.length).toBe(2);
+    expect([...result.channelIds].sort()).toEqual(["c-shared-1", "c-shared-2"]);
+  });
+
+  it("returns coordinated=false for empty session ids (defensive)", () => {
+    expect(isPeerCoordinatedWithSelf("", SESSION_B)).toEqual({
+      coordinated: false,
+      channelIds: [],
+    });
+    expect(isPeerCoordinatedWithSelf(SESSION_A, "")).toEqual({
+      coordinated: false,
+      channelIds: [],
+    });
+  });
+
+  it("regression: zero fs writes during call (read-only invariant)", async () => {
+    await createChannel({
+      channelId: "c-ro",
+      handoffId: "c-ro",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "c-ro", sessionId: SESSION_A });
+    await claimIdentity({ channelId: "c-ro", sessionId: SESSION_B });
+
+    // Snapshot mtimes of all files in sandbox before call.
+    const before = collectMtimes(SANDBOX);
+
+    // Call twice to be thorough.
+    isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+    isPeerCoordinatedWithSelf(SESSION_A, SESSION_B);
+
+    const after = collectMtimes(SANDBOX);
+    expect(after).toEqual(before);
+  });
+});
+
+/**
+ * Collect mtime-ms for every file under `root`, keyed by relative path. Used
+ * by the read-only invariant test to detect any fs-write side effect.
+ */
+function collectMtimes(root: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  walk(root, root, out);
+  return out;
+}
+
+function walk(root: string, dir: string, out: Record<string, number>): void {
+  // Lazy walker; safe for the tiny sandbox dirs used in this test suite.
+  const fs = require("node:fs") as typeof import("node:fs");
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, ent.name);
+    if (ent.isDirectory()) {
+      walk(root, full, out);
+      continue;
+    }
+    if (ent.isFile()) {
+      const rel = full.slice(root.length + 1);
+      out[rel] = statSync(full).mtimeMs;
+    }
+  }
+}

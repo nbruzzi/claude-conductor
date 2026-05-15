@@ -160,3 +160,73 @@ function buildContextForChannel(
     peers,
   };
 }
+
+/**
+ * Check whether a peer session is channel-coordinated with self.
+ *
+ * "Coordinated" = both `selfSessionId` and `peerSessionId` are participants
+ * (via `metadata.identities[*].session_id`) in at least one non-archived
+ * channel where self has a claim. Used by hooks (e.g., `session-collision-gate`)
+ * to distinguish deliberate channel-coordinated peers from unexpected
+ * concurrent sessions before deciding to BLOCK vs WARN.
+ *
+ * READ-ONLY: zero fs writes, zero lock acquisitions. Safe to call from any
+ * hook lock context. Inherits the skip-on-error contract of
+ * `getIdentityContextForSession`: corrupt channel metadata produces a
+ * breadcrumb (kind: "registry-contention") and is treated as "not coordinated."
+ *
+ * **Race tolerance — symmetric (channel-JOIN / channel-LEAVE):** if the peer
+ * joins a channel between two fires of the caller, the first fire sees
+ * `coordinated=false` and the second sees `coordinated=true`. Symmetric on
+ * leave. Worst-case is one extra BLOCK/WARN cycle before the second hook
+ * fire sees the updated state — acceptable per `feedback-bounded-reaudit-on-critical-fix-delta.md`
+ * "skip-on-error + next-fire-converges" pattern.
+ *
+ * **Pairwise scope:** returns `coordinated=true` if ANY shared channel exists
+ * between self + peer. Coordination is NOT scoped to a specific work-thread.
+ * If work-thread isolation matters (Alpha+Bravo on channel A AND Alpha+Charlie
+ * on channel B; Charlie editing a shared artifact would coordinate via Alpha's
+ * identity-context), pass an explicit `channelIds` filter param in a future
+ * extension. The current shape covers today's lived evidence — defer scoping
+ * until a real cross-channel ambiguity surfaces.
+ *
+ * Returns `{ coordinated, channelIds }`. `channelIds` is the set of channels
+ * where the coordination relationship was found — surfacable by callers
+ * (e.g., session-collision-gate annotates per-peer with channel id).
+ */
+export function isPeerCoordinatedWithSelf(
+  selfSessionId: string,
+  peerSessionId: string,
+): { readonly coordinated: boolean; readonly channelIds: readonly string[] } {
+  if (!selfSessionId || !peerSessionId) {
+    return { coordinated: false, channelIds: [] };
+  }
+  // Defense-in-depth: getIdentityContextForSession is documented as
+  // skip-on-error, but a future refactor could break that contract. Wrap to
+  // guarantee callers never see an exception.
+  let contexts: readonly IdentityContext[];
+  try {
+    contexts = getIdentityContextForSession(selfSessionId);
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: SOURCE,
+      kind: "registry-contention",
+      sessionId: selfSessionId,
+      artifactPath: null,
+      detail: `isPeerCoordinatedWithSelf: getIdentityContextForSession threw: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return { coordinated: false, channelIds: [] };
+  }
+
+  const channelIds: string[] = [];
+  for (const ctx of contexts) {
+    for (const peer of ctx.peers) {
+      if (peer.session_id === peerSessionId) {
+        channelIds.push(ctx.channelId);
+        break; // one match per channel suffices; move to next channel
+      }
+    }
+  }
+  return { coordinated: channelIds.length > 0, channelIds };
+}
