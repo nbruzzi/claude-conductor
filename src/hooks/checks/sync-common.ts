@@ -17,6 +17,7 @@
 import {
   appendFileSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   renameSync,
   statSync,
@@ -170,6 +171,41 @@ export function diagnosePushFailure(
     return `push timeout after ${Math.round(timeoutMs / 1000)}s — network or remote hung`;
   }
   return `git push exited with code ${exitCode}`;
+}
+
+/**
+ * Indicators that a manual git operation is in-flight in a repo.
+ *
+ * `.git/index.lock` is the authoritative signal — git creates it during the
+ * critical section of any staging/commit operation and removes it on exit.
+ * The other files flag multi-step operations (merge, rebase, cherry-pick,
+ * revert) that leave the index in an intermediate state. The last two
+ * (`gc.pid`, `shallow.lock`) cover Obsidian Git background GC and
+ * interrupted shallow fetches respectively — not fatal to `git add`, but
+ * lock-contention-prone if our hook fires during the window.
+ *
+ * Trio-agnostic: caller passes the repo root explicitly. Vault, dotfiles,
+ * and any future sibling trio (wiki-sync, plans-sync) consume the same
+ * primitive. L328 closure (backlog 2026-04-22): prior location was
+ * `dotfiles-common.ts` with a `dotfilesRoot()` default — a name/dependency
+ * mismatch flagged as the only remaining cross-trio edge that should live
+ * in `sync-common`.
+ *
+ * Use this before the auto-sync writes to avoid pre-empting the user's
+ * in-progress commit.
+ */
+export function manualCommitInFlight(repoRoot: string): boolean {
+  const paths = [
+    ".git/index.lock",
+    ".git/MERGE_HEAD",
+    ".git/CHERRY_PICK_HEAD",
+    ".git/REVERT_HEAD",
+    ".git/rebase-merge",
+    ".git/rebase-apply",
+    ".git/gc.pid",
+    ".git/shallow.lock",
+  ];
+  return paths.some((p) => existsSync(`${repoRoot}/${p}`));
 }
 
 /**
