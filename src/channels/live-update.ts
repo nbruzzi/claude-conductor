@@ -2,7 +2,7 @@
 // Copyright 2026 nbruzzi
 
 /**
- * `live-delta` message kind — shared body parser + schema type (L152).
+ * `live-update` message kind — shared body parser + schema type (L152).
  *
  * Sibling-onboarding primitive. Posted by an active peer within seconds
  * of a sibling's `joined` post in parallel-mode handoff-resume. Carries
@@ -17,14 +17,14 @@
  * strings — the audit-trail value is in the structure (4 keyed
  * sections), not in policed enumerations.
  *
- * **Verification-budget contract for `live-delta`:** sibling to `digest`
+ * **Verification-budget contract for `live-update`:** sibling to `digest`
  * — readers trust the SHAPE returned by this parser (validator-enforced)
  * but must primary-source-verify any specific SHA, PR number, backlog
  * item, or file path cited in the fields. The scope assignment
  * (`your_scope` / `hands_off`) is the load-bearing contract; treat it
  * as authoritative from the active peer.
  *
- * **Why a new kind vs extending `status`:** live-delta has structured
+ * **Why a new kind vs extending `status`:** live-update has structured
  * body shape (4 keyed fields), whereas `status` is unstructured free-
  * form. Structured shape earns the new kind — same reasoning that
  * earned `digest` its own kind in Phase 4 Step A Layer 4. Per the
@@ -37,7 +37,7 @@
  */
 
 /**
- * Schema for the `live-delta` kind's body (JSON-serialized to the JSONL
+ * Schema for the `live-update` kind's body (JSON-serialized to the JSONL
  * line at write time; parsed on read).
  *
  * `kind_version: 1` matches the digest schema-version convention.
@@ -46,7 +46,7 @@
  * so callers can choose between "skip" and "best-effort partial decode"
  * semantics (currently all callers should skip).
  */
-export type LiveDeltaBody = {
+export type LiveUpdateBody = {
   /** Schema version. Bumped on incompatible schema revisions. */
   kind_version: 1;
   /**
@@ -65,7 +65,7 @@ export type LiveDeltaBody = {
   current_focus: string;
   /**
    * Required — what the joining sibling should pick up first. Authority
-   * for scope assignment lives in the live-delta (NOT in the handoff,
+   * for scope assignment lives in the live-update (NOT in the handoff,
    * since at handoff write-time the writer doesn't know which sibling
    * will pick up which slice). Verify by reading any cited
    * backlog/plan entry before starting.
@@ -81,7 +81,7 @@ export type LiveDeltaBody = {
 };
 
 /**
- * Parse a `live-delta` message body into a typed `LiveDeltaBody`.
+ * Parse a `live-update` message body into a typed `LiveUpdateBody`.
  * Returns `null` on:
  *
  *   - Body is not valid JSON.
@@ -93,7 +93,7 @@ export type LiveDeltaBody = {
  *
  * Caller-side error policy: `null` is intentional — callers MUST
  * choose between log-and-skip OR adding a NEW shared parser variant
- * (e.g., `parseLiveDeltaBodyBestEffort`) co-located in this module.
+ * (e.g., `parseLiveUpdateBodyBestEffort`) co-located in this module.
  * Ad-hoc re-implementation per call site is a known anti-pattern that
  * re-creates the exact drift the SSOT-at-the-convention-layer
  * discipline eliminates (sibling to `parseDigestBody`).
@@ -101,7 +101,7 @@ export type LiveDeltaBody = {
  * The parser is intentionally permissive on EXTRA fields (forward-
  * compatible).
  */
-export function parseLiveDeltaBody(body: string): LiveDeltaBody | null {
+export function parseLiveUpdateBody(body: string): LiveUpdateBody | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);

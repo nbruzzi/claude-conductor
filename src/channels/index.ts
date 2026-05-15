@@ -104,15 +104,15 @@ export const CHANNEL_KINDS = [
   //                trust the SHAPE but primary-source-verify any
   //                audit-class claim or SHA cited within.
   "digest",
-  // L152 closure 2026-05-15 — sibling-onboarding live-delta primitive
-  // (see `src/channels/live-delta.ts` for the shared parser + body
+  // L152 closure 2026-05-15 — sibling-onboarding live-update primitive
+  // (see `src/channels/live-update.ts` for the shared parser + body
   // schema). Posted by an active peer within seconds of a sibling's
   // `joined` post in parallel-mode handoff-resume; carries structured
   // YAML-shaped body with keys: since-handoff, current-focus,
   // your-scope, hands-off. Bridges the long-arc handoff (frozen at
   // write-time) and the live channel (volatile) at sibling-join time
   // — removes Nick from the sibling-onboarding critical path.
-  "live-delta",
+  "live-update",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

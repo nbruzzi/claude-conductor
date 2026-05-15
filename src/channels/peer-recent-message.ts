@@ -88,9 +88,9 @@ export function getMostRecentPeerKind(
  * Read the most-recent message from `peerSessionId` on `channelId` whose
  * `kind` matches `kindFilter`. Sibling to `getMostRecentPeerKind` —
  * differs only in that messages of OTHER kinds are skipped during the
- * scan. L152 closure: the `live-delta-reminder` UserPromptSubmit hook
+ * scan. L152 closure: the `live-update-reminder` UserPromptSubmit hook
  * (Bravo's dotfiles consumer lane) calls this with `kindFilter:
- * "live-delta"` to find the most-recent live-delta from the joining
+ * "live-update"` to find the most-recent live-update from the joining
  * sibling (NOT the most-recent message of any kind).
  *
  * Why a sibling and not an optional parameter on `getMostRecentPeerKind`:
@@ -109,7 +109,7 @@ export function getMostRecentPeerKind(
  * @param channelId - per-channel id.
  * @param peerSessionId - the session id whose post to look up.
  * @param kindFilter - the canonical CHANNEL_KIND literal to match (e.g.,
- *   `"live-delta"`, `"digest"`, `"standby"`). Empty string is treated
+ *   `"live-update"`, `"digest"`, `"standby"`). Empty string is treated
  *   as "no match possible" → returns null. Non-canonical kinds may
  *   appear in the tail (validator rejects them) but the filter compares
  *   against the message's stored kind regardless.

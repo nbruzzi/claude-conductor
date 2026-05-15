@@ -242,11 +242,11 @@ Render each peer as `<session-id-short> — <live|online|stale|unknown>
   handoff") before closing. Default behavior: channel auto-GCs after 72h
   silence. Full rule: `commands/session/handoff.md` Wind-down rules Rule 3.
 
-## Active-peer responsibility — `live-delta` on sibling join (L152)
+## Active-peer responsibility — `live-update` on sibling join (L152)
 
-When a sibling session posts `kind: status` with body containing `"joined channel in parallel context-load mode"` (the marker that `/handoff-resume parallel` Step 4a writes), the **active peer** (the session that authored the handoff and is still alive) is expected to post a `kind: live-delta` message within ~30s. That message carries the state-of-the-world the handoff cannot — what the active peer is doing right now, what scope the sibling should pick up, what's hands-off.
+When a sibling session posts `kind: status` with body containing `"joined channel in parallel context-load mode"` (the marker that `/handoff-resume parallel` Step 4a writes), the **active peer** (the session that authored the handoff and is still alive) is expected to post a `kind: live-update` message within ~30s. That message carries the state-of-the-world the handoff cannot — what the active peer is doing right now, what scope the sibling should pick up, what's hands-off.
 
-A `live-delta-reminder` UserPromptSubmit hook fires on the active peer's next prompt-submit when a sibling has joined without yet receiving a live-delta — it surfaces a system-reminder demanding the post. Operators can also write the post manually via:
+A `live-update-reminder` UserPromptSubmit hook fires on the active peer's next prompt-submit when a sibling has joined without yet receiving a live-update — it surfaces a system-reminder demanding the post. Operators can also write the post manually via:
 
 ```bash
 printf '%s' "$(cat <<'EOF'
@@ -254,13 +254,13 @@ printf '%s' "$(cat <<'EOF'
   "kind_version": 1,
   "since_handoff": "PRs #50 + #51 merged; backlog L328 marked [x].",
   "current_focus": "Wrapping up Bundle B dotfiles consumer half on branch X.",
-  "your_scope": "Pick up Bundle C TA-* (9 items, branch `live-delta-protocol`).",
+  "your_scope": "Pick up Bundle C TA-* (9 items, branch `live-update-protocol`).",
   "hands_off": "Plugin src/channels/index.ts — Alpha lane in flight."
 }
 EOF
-)" | bun run src/channels/cli.ts send "<channel-id>" live-delta
+)" | bun run src/channels/cli.ts send "<channel-id>" live-update
 ```
 
-The body schema (4 keys: `kind_version: 1` + `since_handoff` + `current_focus` + `your_scope` + `hands_off`) is parsed by `parseLiveDeltaBody` from `claude-conductor/channels/live-delta`. The sibling reads + parses it via `/handoff-resume parallel` Step 4b — see `commands/session/handoff-resume.md` Step 4b for the receive-side protocol.
+The body schema (4 keys: `kind_version: 1` + `since_handoff` + `current_focus` + `your_scope` + `hands_off`) is parsed by `parseLiveUpdateBody` from `claude-conductor/channels/live-update`. The sibling reads + parses it via `/handoff-resume parallel` Step 4b — see `commands/session/handoff-resume.md` Step 4b for the receive-side protocol.
 
-**Why this matters:** before L152, sibling-onboarding required Nick to relay active-peer state across windows via screenshot-shuttle. The `live-delta` kind + the reminder hook close that gap structurally so coordination scales without Nick on the critical path. See backlog L152 + `[[Parallel Session Coordination Convention]]` for the full design.
+**Why this matters:** before L152, sibling-onboarding required Nick to relay active-peer state across windows via screenshot-shuttle. The `live-update` kind + the reminder hook close that gap structurally so coordination scales without Nick on the critical path. See backlog L152 + `[[Parallel Session Coordination Convention]]` for the full design.
