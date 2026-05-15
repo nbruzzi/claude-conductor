@@ -139,6 +139,40 @@ const DEFAULT_BACKOFF_MS = 10;
 const DEFAULT_MAX_AGE_MS = 60_000;
 const DEFAULT_OWNER_TAG = "anonymous";
 
+/**
+ * Env-overridable retry budget for the lock-acquire ladder. Sibling-trio
+ * race tests (`vault-commit.test.ts` + `vault-chain.test.ts`) spawn Bun
+ * subprocesses whose startup time can briefly exceed the 60ms (3 × 10ms)
+ * default ladder on cold CI (noisy neighbor, cold Bun cache, GC pause).
+ * `LOCK_RETRIES` / `LOCK_BACKOFF_MS` env-vars let those tests raise the
+ * ceiling without changing production defaults. Plain digit-only parsing
+ * to reject scientific notation, decimals, NaN, and signed values; bad
+ * input degrades silently to the default (caller is operating either
+ * intent-shaped or not-at-all). Backlog L340 TA-6 closure.
+ */
+const ENV_VAR_RETRIES = "CLAUDE_CONDUCTOR_LOCK_RETRIES";
+const ENV_VAR_BACKOFF_MS = "CLAUDE_CONDUCTOR_LOCK_BACKOFF_MS";
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
+function effectiveRetries(opts: LockOpts): number {
+  return opts.retries ?? readPositiveIntEnv(ENV_VAR_RETRIES, DEFAULT_RETRIES);
+}
+
+function effectiveBackoffMs(opts: LockOpts): number {
+  return (
+    opts.backoffMs ?? readPositiveIntEnv(ENV_VAR_BACKOFF_MS, DEFAULT_BACKOFF_MS)
+  );
+}
+
 type AttemptOutcome =
   | { kind: "acquired" }
   | { kind: "reaped-retry" }
@@ -208,8 +242,8 @@ function tryAcquireOnce(opts: LockOpts): AttemptOutcome {
 }
 
 function acquireLock(opts: LockOpts): void {
-  const retries = opts.retries ?? DEFAULT_RETRIES;
-  const backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
+  const retries = effectiveRetries(opts);
+  const backoffMs = effectiveBackoffMs(opts);
 
   let lastHolder: OwnerInfo | null = null;
 
@@ -225,8 +259,8 @@ function acquireLock(opts: LockOpts): void {
 }
 
 async function acquireLockAsync(opts: LockOpts): Promise<void> {
-  const retries = opts.retries ?? DEFAULT_RETRIES;
-  const backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
+  const retries = effectiveRetries(opts);
+  const backoffMs = effectiveBackoffMs(opts);
 
   let lastHolder: OwnerInfo | null = null;
 
