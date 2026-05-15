@@ -29,7 +29,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { getMostRecentPeerKind } from "../../src/channels/peer-recent-message.ts";
+import {
+  getMostRecentPeerKind,
+  getMostRecentPeerMessageOfKind,
+} from "../../src/channels/peer-recent-message.ts";
 
 const SANDBOX = `/tmp/test-peer-recent-message-${process.pid}`;
 const CHANNEL = "c-recent";
@@ -172,6 +175,100 @@ describe("getMostRecentPeerKind", () => {
     getMostRecentPeerKind(CHANNEL, "missing");
     const after = collectMtimes(SANDBOX);
     expect(after).toEqual(before);
+  });
+});
+
+/**
+ * Sibling helper — kind-filtered tail scan. Same shape + same failure
+ * modes as `getMostRecentPeerKind` but skips messages whose kind does
+ * not equal the filter. Used by Bravo's `live-delta-reminder` hook to
+ * find the most-recent live-delta from the joining sibling (NOT the
+ * most-recent message of any kind).
+ */
+describe("getMostRecentPeerMessageOfKind", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  it("returns the latest message of the filtered kind", () => {
+    writeMessages([
+      msg(PEER_A, "note"),
+      msg(PEER_A, "live-delta"),
+      msg(PEER_A, "status"),
+    ]);
+    const result = getMostRecentPeerMessageOfKind(
+      CHANNEL,
+      PEER_A,
+      "live-delta",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.kind).toBe("live-delta");
+  });
+
+  it("returns null when the filter matches no messages from peer", () => {
+    writeMessages([msg(PEER_A, "note"), msg(PEER_A, "status")]);
+    const result = getMostRecentPeerMessageOfKind(
+      CHANNEL,
+      PEER_A,
+      "live-delta",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns null when peer never posted on channel (even if filter kind exists from others)", () => {
+    writeMessages([msg(PEER_B, "live-delta"), msg(PEER_B, "status")]);
+    const result = getMostRecentPeerMessageOfKind(
+      CHANNEL,
+      PEER_A,
+      "live-delta",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("walks past intervening non-matching messages to find the latest match", () => {
+    // Older live-delta + 3 newer non-matching → returns the OLDER live-delta
+    // (still the most-recent live-delta from peer, just not the most-recent
+    // message overall).
+    writeMessages([
+      msg(PEER_A, "live-delta"),
+      msg(PEER_A, "note"),
+      msg(PEER_A, "note"),
+      msg(PEER_A, "status"),
+    ]);
+    const result = getMostRecentPeerMessageOfKind(
+      CHANNEL,
+      PEER_A,
+      "live-delta",
+    );
+    expect(result?.kind).toBe("live-delta");
+  });
+
+  it("returns null on empty channel (ENOENT path)", () => {
+    const result = getMostRecentPeerMessageOfKind(
+      "c-nonexistent",
+      PEER_A,
+      "live-delta",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns null when kindFilter is empty (defensive)", () => {
+    writeMessages([msg(PEER_A, "note")]);
+    const result = getMostRecentPeerMessageOfKind(CHANNEL, PEER_A, "");
+    expect(result).toBeNull();
+  });
+
+  it("filters by canonical kind only (non-canonical bodies already rejected by validator)", () => {
+    // A line with a non-canonical kind ("custom") would be rejected by
+    // isChannelMessage in the shared scan, so even if the caller asked
+    // for kindFilter="custom" the scan returns null.
+    writeMessages([msg(PEER_A, "custom"), msg(PEER_A, "note")]);
+    expect(
+      getMostRecentPeerMessageOfKind(CHANNEL, PEER_A, "custom"),
+    ).toBeNull();
+    // Sanity: the canonical "note" IS findable from the same input.
+    expect(getMostRecentPeerMessageOfKind(CHANNEL, PEER_A, "note")?.kind).toBe(
+      "note",
+    );
   });
 });
 

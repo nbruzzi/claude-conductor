@@ -81,6 +81,63 @@ export function getMostRecentPeerKind(
   channelId: string,
   peerSessionId: string,
 ): { readonly kind: string; readonly ts: string } | null {
+  return tailScanForPeer(channelId, peerSessionId, null);
+}
+
+/**
+ * Read the most-recent message from `peerSessionId` on `channelId` whose
+ * `kind` matches `kindFilter`. Sibling to `getMostRecentPeerKind` —
+ * differs only in that messages of OTHER kinds are skipped during the
+ * scan. L152 closure: the `live-delta-reminder` UserPromptSubmit hook
+ * (Bravo's dotfiles consumer lane) calls this with `kindFilter:
+ * "live-delta"` to find the most-recent live-delta from the joining
+ * sibling (NOT the most-recent message of any kind).
+ *
+ * Why a sibling and not an optional parameter on `getMostRecentPeerKind`:
+ * the kind-filtered variant is a distinct caller-intent. Adding a
+ * defaulted optional parameter would mean every existing call site
+ * implicitly opts into the new behavior shape; a sibling function
+ * keeps the two callers explicit about which semantic they want
+ * (per `feedback-partial-v2-anticipation-primitives.md` — extend the
+ * existing primitive cleanly, don't overload it).
+ *
+ * Returns `{ kind, ts } | null` with the same safe-default semantics as
+ * `getMostRecentPeerKind`. The returned `kind` will always equal
+ * `kindFilter` on success — exposed redundantly to keep the return
+ * shape uniform with the sibling.
+ *
+ * @param channelId - per-channel id.
+ * @param peerSessionId - the session id whose post to look up.
+ * @param kindFilter - the canonical CHANNEL_KIND literal to match (e.g.,
+ *   `"live-delta"`, `"digest"`, `"standby"`). Empty string is treated
+ *   as "no match possible" → returns null. Non-canonical kinds may
+ *   appear in the tail (validator rejects them) but the filter compares
+ *   against the message's stored kind regardless.
+ */
+export function getMostRecentPeerMessageOfKind(
+  channelId: string,
+  peerSessionId: string,
+  kindFilter: string,
+): { readonly kind: string; readonly ts: string } | null {
+  if (!kindFilter) return null;
+  return tailScanForPeer(channelId, peerSessionId, kindFilter);
+}
+
+/**
+ * Shared tail-scan core. Walks the channel's messages.jsonl backwards
+ * within the MAX_TAIL_BYTES + MAX_TAIL_LINES bound, returning the
+ * latest line whose `from` matches `peerSessionId` and whose `kind`
+ * matches `kindFilter` (or any kind when `kindFilter === null`).
+ *
+ * Private helper — public callers must use `getMostRecentPeerKind` or
+ * `getMostRecentPeerMessageOfKind` so caller-intent stays explicit at
+ * use sites.
+ */
+function tailScanForPeer(
+  channelId: string,
+  peerSessionId: string,
+  kindFilter: string | null,
+): { readonly kind: string; readonly ts: string } | null {
   if (!channelId || !peerSessionId) return null;
 
   const messagesPath = join(resolveChannelsDir(), channelId, "messages.jsonl");
@@ -179,6 +236,7 @@ export function getMostRecentPeerKind(
     if (!isChannelMessage(parsed)) continue;
     const msg = parsed as ChannelMessage;
     if (msg.from !== peerSessionId) continue;
+    if (kindFilter !== null && msg.kind !== kindFilter) continue;
 
     return { kind: msg.kind, ts: msg.ts };
   }
