@@ -150,6 +150,11 @@
       "import": "./src/channels/peer-message-cursors.ts",
       "default": "./src/channels/peer-message-cursors.ts"
     },
+    "./channels/peer-recent-message": {
+      "types": "./src/channels/peer-recent-message.ts",
+      "import": "./src/channels/peer-recent-message.ts",
+      "default": "./src/channels/peer-recent-message.ts"
+    },
     "./hooks/checks/peer-message-deliverer": {
       "types": "./src/hooks/checks/peer-message-deliverer.ts",
       "import": "./src/hooks/checks/peer-message-deliverer.ts",

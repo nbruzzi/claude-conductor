@@ -52,6 +52,7 @@ import {
   type IdentityPeer,
 } from "../../channels/identity-context.ts";
 import { readHeartbeatBody, resolveChannelsDir } from "../../channels/index.ts";
+import { getMostRecentPeerKind } from "../../channels/peer-recent-message.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { extractSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
@@ -61,6 +62,32 @@ const SOURCE = "teammate-idle-reminder";
 const DEFAULT_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MS = 30 * 60 * 1000;
 const CLOCK_SKEW_THRESHOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Sibling-coord-gate-awareness plan v2 Lane C — suppress the idle reminder
+ * when a peer's most-recent channel message is a deliberate-standby kind.
+ * Stale heartbeat is by-design (not by-crash) for these peers.
+ *
+ * Per RE-5 fold: only canonical `CHANNEL_KINDS` members that semantically
+ * indicate "I am pausing, not crashed" — verified against
+ * `src/channels/index.ts` CHANNEL_KINDS (`note` / `question` / `handoff` /
+ * `status` / `ack` / `roger` / `over` / `standby` / `out` / `digest`).
+ *
+ *   - `standby` — explicit "I am standing by"
+ *   - `roger`   — explicit "received, holding"
+ *   - `out`     — explicit "leaving channel"
+ *   - `digest`  — Phase 4 Layer 4 summary post; indicates work-cycle close
+ *
+ * Excluded:
+ *   - `over` — transient hand-off-the-mic, not a state-end
+ *   - `done` — not a canonical CHANNEL_KIND (v1 plan included it in error)
+ */
+const STANDBY_KINDS: ReadonlySet<string> = new Set([
+  "standby",
+  "roger",
+  "out",
+  "digest",
+]);
 // Step G (ARCH-W2-4) renamed `idle-emit/` to `idle-emit-cursors/` (noun-form
 // standardization). LEGACY name retained for 30-day dual-read transition per
 // `feedback-live-substrate-sequencing.md`; readers fall back to LEGACY,
@@ -270,6 +297,29 @@ export async function check(input: HookInput): Promise<HookResult> {
             sessionId,
             artifactPath: ctx.channelId,
             detail: `${SOURCE}: peer ${peer.identity} body_ts=${bodyTs} mtime=${peer.heartbeat_mtime_ms} delta=${Math.abs(peer.heartbeat_mtime_ms - bodyTs)}ms`,
+          });
+          continue;
+        }
+
+        // Standby-state gate — sibling-coord-gate-awareness plan v2 Lane C.
+        // If the peer's most-recent channel message is a deliberate-standby
+        // kind (`standby` / `roger` / `out` / `digest`), the stale heartbeat
+        // is by-design, not by-crash. Suppress the reminder + emit a
+        // forensic breadcrumb so a mis-suppressed cycle (peer genuinely
+        // crashed AFTER posting a standby kind) is observable in the
+        // presence-failure log (FIND-6 fold).
+        const recentKind = getMostRecentPeerKind(
+          ctx.channelId,
+          peer.session_id,
+        );
+        if (recentKind !== null && STANDBY_KINDS.has(recentKind.kind)) {
+          appendPresenceFailure({
+            timestamp: new Date().toISOString(),
+            source: "channels-identity",
+            kind: "standby-suppressed",
+            sessionId,
+            artifactPath: ctx.channelId,
+            detail: `${SOURCE}: peer ${peer.identity} suppressed (recent kind=${recentKind.kind} ts=${recentKind.ts})`,
           });
           continue;
         }

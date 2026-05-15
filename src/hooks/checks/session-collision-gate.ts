@@ -31,6 +31,7 @@ import {
   touchHeartbeat,
   type PeerInfo,
 } from "../../active-sessions/index.ts";
+import { isPeerCoordinatedWithSelf } from "../../channels/identity-context.ts";
 import {
   appendPresenceFailure,
   failureLogPath,
@@ -38,7 +39,7 @@ import {
 import { LockTimeoutError, withLock } from "../lock.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
-import { block, pass } from "../types.ts";
+import { block, pass, warn } from "../types.ts";
 
 const SOURCE = "session-collision-gate";
 
@@ -125,6 +126,35 @@ export async function check(input: HookInput): Promise<HookResult> {
           return pass();
         }
 
+        // Channel-coordination check (plan v2 Lane B / L161 fix): for each
+        // collision-peer, ask whether they share an open channel with self.
+        // If ALL collision-peers are channel-coordinated, the collision is
+        // by-design (deliberate parallel work) and the BLOCK is wrong; we
+        // downgrade to a warn() notification. If ANY peer is uncoordinated,
+        // the existing BLOCK path engages (safety preserved for unexpected
+        // concurrent sessions).
+        const peerCoordination = new Map<string, boolean>();
+        for (const peer of peers) {
+          const result = isPeerCoordinatedWithSelf(sessionId, peer.sessionId);
+          peerCoordination.set(peer.sessionId, result.coordinated);
+        }
+        const allCoordinated = peers.every(
+          (p) => peerCoordination.get(p.sessionId) === true,
+        );
+
+        if (allCoordinated) {
+          // Downgrade BLOCK → warn. Don't engage cooldown (no cooldown entry
+          // for this artifact, no peer-set capture). Still touch heartbeat +
+          // remember the artifact so other hooks see consistent state.
+          touchHeartbeat({ artifactId, sessionId, artifactPath, now });
+          rememberTouched(state, artifactId);
+          persistState(state);
+          return warn(
+            SOURCE,
+            formatCoordinatedNoticeMessage({ artifactPath, file, peers }),
+          );
+        }
+
         const currentPeerSet = peers.map((p) => p.sessionId).sort();
         const existingCooldown = state.cooldowns[artifactId];
         const inCooldown =
@@ -149,6 +179,7 @@ export async function check(input: HookInput): Promise<HookResult> {
           artifactPath,
           file,
           peers,
+          peerCoordination,
           reblocking: Boolean(inCooldown),
         });
         return block(SOURCE, msg);
@@ -183,6 +214,11 @@ function formatBlockMessage(args: {
   artifactPath: string;
   file: string;
   peers: PeerInfo[];
+  /** Map<peer-session-id, coordinated?> — used for the (channel-coordinated)
+   *  / (uncoordinated) annotation per plan v2 ARCH-2 fold. Mixed-peer
+   *  collisions BLOCK but annotate per-peer so the operator can distinguish
+   *  the deliberate sibling from the unexpected concurrent session. */
+  peerCoordination: ReadonlyMap<string, boolean>;
   reblocking: boolean;
 }): string {
   const lines = [
@@ -193,8 +229,12 @@ function formatBlockMessage(args: {
   ];
   for (const peer of args.peers) {
     const age = formatAge(peer.ageMs);
+    const tag =
+      args.peerCoordination.get(peer.sessionId) === true
+        ? "(channel-coordinated)"
+        : "(uncoordinated)";
     lines.push(
-      `  ${peer.sessionId} — heartbeat ${age} ago (host: ${peer.owner.host}, pid: ${peer.owner.pid})`,
+      `  ${peer.sessionId} — heartbeat ${age} ago (host: ${peer.owner.host}, pid: ${peer.owner.pid}) ${tag}`,
     );
   }
   lines.push("");
@@ -205,9 +245,11 @@ function formatBlockMessage(args: {
   lines.push("");
   lines.push("What to do next:");
   lines.push(
-    "- Check /channel list — if a channel exists for the parallel workflow, join it",
+    "- Coordinated peers (channel-coord with you) are likely intentional — verify via /channel read",
   );
-  lines.push("- Ask the user whether parallel work is expected");
+  lines.push(
+    "- Uncoordinated peers are unexpected — check /channel list + confirm parallel intent",
+  );
   lines.push(
     "- Re-run the Edit if confirmed — this gate enters a 30-min cooldown for this artifact",
   );
@@ -218,6 +260,35 @@ function formatBlockMessage(args: {
   lines.push(
     "To clear a stale peer heartbeat: /presence clear <peer-session-id>",
   );
+  return lines.join("\n");
+}
+
+/**
+ * Format the warn-level notification when ALL collision-peers are
+ * channel-coordinated (plan v2 Lane B / L161 fix). No cooldown engagement;
+ * the edit proceeds. Operator gets a brief visibility cue.
+ */
+function formatCoordinatedNoticeMessage(args: {
+  artifactPath: string;
+  file: string;
+  peers: PeerInfo[];
+}): string {
+  const lines = [
+    "[session-collision-gate] Coordinated edit detected — proceeding:",
+    "",
+  ];
+  for (const peer of args.peers) {
+    const age = formatAge(peer.ageMs);
+    lines.push(
+      `  ${peer.sessionId} — heartbeat ${age} ago (host: ${peer.owner.host}, pid: ${peer.owner.pid}) (channel-coordinated)`,
+    );
+  }
+  lines.push("");
+  lines.push(`Artifact: ${args.artifactPath}`);
+  lines.push(
+    `Edit to ${args.file} proceeding — both sessions are channel-coordinated (no cooldown).`,
+  );
+  lines.push("Verify state via /channel read if uncertain about peer intent.");
   return lines.join("\n");
 }
 

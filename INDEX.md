@@ -71,7 +71,7 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 
 ## Bundled memories (`memories/`)
 
-23 cross-session feedback memories — 18 in batch 7a + 4 in wind-down batch (per `decisions/phase-5.md` Decision B) + 1 in Phase 3 Step G v2.14 fold (per KS-3) — bundled per `memories-to-bundle.md` (V2 schema: `cadence`, `scope`, `updated`, `origin: extracted`). Cross-reference graph: clean. CI substrate-leak grep: passes (with documented allowed-in-frontmatter false positives).
+24 cross-session feedback memories — 18 in batch 7a + 4 in wind-down batch (per `decisions/phase-5.md` Decision B) + 1 in Phase 3 Step G v2.14 fold (per KS-3) + 1 in sibling-coord-gate-awareness Lane F (per `decisions/phase-5.md` Decision G) — bundled per `memories-to-bundle.md` (V2 schema: `cadence`, `scope`, `updated`, `origin: extracted`). Cross-reference graph: clean. CI substrate-leak grep: passes (with documented allowed-in-frontmatter false positives).
 
 - `feedback-confidence-as-verification-output.md` — verification loop produces confidence; no separate "confident-sounding output" pattern.
 - `feedback-encode-while-context-fresh.md` — receipt-in-hand framing; encode lessons in the same session that produced them.
@@ -99,6 +99,7 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 - `feedback-walkie-talkie-out-semantics.md` — **Phase 4 Step A Layer 3 (Bravo lane):** `out` kind's terminal-until-takeover semantics; sole-writer-this-arc is manual `channels send <id> out` via `makeSendOutMutator`; auto-out Stop-hook draft dropped per per-turn-Stop precedent; SessionStart-reaper deferred to Phase 4 Step B.
 - `feedback-digest-message-convention.md` — **Phase 4 Step A Layer 4 (Bravo lane):** `digest` kind's schema rationale (6 required fields) + sole-shared-parser discipline (`parseDigestBody` enforces SHAPE; readers primary-source-verify field-content citations).
 - `feedback-verification-budget-by-kind.md` — **Phase 4 Step A Layer 4 (Bravo lane):** per-kind verification posture convention (note/status trust verbatim; walkie-talkie kinds trust verbatim; question/handoff verify citations; digest trusts SHAPE but primary-source-verifies content citations). Stable cross-arc reference paired with the operator-facing `docs/conventions/message-kinds-and-verification.md`.
+- `feedback-coordination-aware-substrate-gates.md` — **sibling-coord-gate-awareness Lane F (per `decisions/phase-5.md` Decision G):** substrate gates whose input model is wrong on legitimate channel-coordinated work consult coordination state via shared read-only primitives (`isPeerCoordinatedWithSelf`, `getMostRecentPeerKind`); read-only contract; skip-on-error; forensic breadcrumb at suppression; mixed-state preservation via `peers.every()`.
 
 ## Bundled agents (`agents/`)
 

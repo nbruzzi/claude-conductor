@@ -95,7 +95,16 @@ export type PresenceFailureKind =
   // audit-trail line fails, write this breadcrumb so the forensic gap is
   // observable to operators via the session-active registry rather than
   // silent. Source: `channels-identity`.
-  | "takeover-audit-failed";
+  | "takeover-audit-failed"
+  // sibling-coord-gate-awareness plan v2 Lane C FIND-6 (Bravo) — forensic
+  // signal when `teammate-idle-reminder` suppresses a reminder because the
+  // peer's most-recent message on the channel is a standby-state kind
+  // (`standby` / `roger` / `out` / `digest` per RE-5 fold). The breadcrumb
+  // is the only forensic record if standby-suppression mis-engages (e.g.,
+  // peer genuinely crashed AFTER posting a standby kind); without it,
+  // operators have no way to distinguish "reminder correctly suppressed"
+  // from "reminder mistakenly suppressed." Source: `channels-identity`.
+  | "standby-suppressed";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -380,7 +389,9 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "worktree-cleanup-failed" ||
     k === "worktree-cleanup-incomplete" ||
     k === "worktree-provision-incomplete" ||
-    k === "takeover-audit-failed"
+    k === "takeover-audit-failed" ||
+    // sibling-coord-gate-awareness Lane C FIND-6 (Bravo).
+    k === "standby-suppressed"
   );
 }
 
