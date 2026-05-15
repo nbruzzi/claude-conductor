@@ -11,7 +11,8 @@
  * rather than showing up as a bug in one sibling after fixing the other.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import * as fs from "node:fs";
 import {
   existsSync,
   mkdtempSync,
@@ -26,6 +27,7 @@ import {
   appendLogWithRotation,
   diagnosePushFailure,
   oneLine,
+  PER_ENTRY_MAX_BYTES,
 } from "../../../src/hooks/checks/sync-common.ts";
 
 let base: string;
@@ -123,6 +125,55 @@ describe("appendLogWithRotation", () => {
     appendLogWithRotation(logPath, "fresh\n", 1024);
     expect(readFileSync(logPath, "utf-8")).toBe("fresh\n");
     expect(readFileSync(`${logPath}.1`, "utf-8")).toBe("y".repeat(1024));
+  });
+
+  it("falls back to copy+truncate on EXDEV (cross-device) rename failure (L318 RE-2)", () => {
+    const logPath = join(base, "exdev.log");
+    writeFileSync(logPath, "z".repeat(1024), "utf-8");
+    const origFs = { ...fs };
+    let renameCalls = 0;
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        renameSync: (oldPath: fs.PathLike, newPath: fs.PathLike) => {
+          if (String(oldPath) === logPath) {
+            renameCalls++;
+            const err = new Error(
+              "cross-device link not permitted",
+            ) as NodeJS.ErrnoException;
+            err.code = "EXDEV";
+            throw err;
+          }
+          return origFs.renameSync(oldPath, newPath);
+        },
+      }));
+      appendLogWithRotation(logPath, "fresh\n", 1024);
+      expect(renameCalls).toBe(1);
+      expect(readFileSync(logPath, "utf-8")).toBe("fresh\n");
+      expect(existsSync(`${logPath}.1`)).toBe(true);
+      expect(readFileSync(`${logPath}.1`, "utf-8")).toBe("z".repeat(1024));
+    } finally {
+      mock.module("node:fs", () => origFs);
+    }
+  });
+
+  it("clamps oversized entries to PER_ENTRY_MAX_BYTES with ellipsis sentinel (L320 RE-5)", () => {
+    const logPath = join(base, "oversized.log");
+    const oversized = `${"q".repeat(PER_ENTRY_MAX_BYTES + 100)}\n`;
+    appendLogWithRotation(logPath, oversized, 100 * 1024); // generous maxBytes so rotation doesn't fire
+    const written = readFileSync(logPath, "utf-8");
+    expect(written.length).toBe(PER_ENTRY_MAX_BYTES);
+    expect(written.endsWith("…\n")).toBe(true);
+    expect(written.startsWith("q".repeat(100))).toBe(true);
+  });
+
+  it("does not clamp entries at or under PER_ENTRY_MAX_BYTES (L320 boundary)", () => {
+    const logPath = join(base, "atcap.log");
+    const atCap = "p".repeat(PER_ENTRY_MAX_BYTES - 1) + "\n"; // PER_ENTRY_MAX_BYTES bytes total
+    appendLogWithRotation(logPath, atCap, 100 * 1024);
+    const written = readFileSync(logPath, "utf-8");
+    expect(written).toBe(atCap);
+    expect(written.includes("…")).toBe(false);
   });
 });
 

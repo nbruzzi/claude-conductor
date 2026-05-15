@@ -14,7 +14,14 @@
  * the exact pre-Phase-4 byte-for-byte patterns.
  */
 
-import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  mkdirSync,
+  renameSync,
+  statSync,
+  truncateSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 /**
@@ -26,6 +33,17 @@ import { dirname } from "node:path";
  * operators who want deeper history should ship the log to durable storage.
  */
 export const SYNC_LOG_MAX_BYTES = 1_048_576;
+
+/**
+ * Per-entry size cap (8 KiB). Bounds the worst case where a single JSONL
+ * entry could blow past `SYNC_LOG_MAX_BYTES` on its own and force immediate
+ * rotation on the next write, losing up to 1 MiB of prior context. Callers
+ * upstream already collapse stderr via `oneLine` / `slice(0, 500)`, but the
+ * contract here is symmetric: a future caller that bypasses the upstream
+ * cap cannot accidentally trigger a rotation storm via this writer.
+ * Backlog L320 RE-5 closure.
+ */
+export const PER_ENTRY_MAX_BYTES = 8 * 1024;
 
 /**
  * Append to a size-capped log with single-slot rotation.
@@ -53,7 +71,26 @@ export function appendLogWithRotation(
   try {
     const st = statSync(logPath);
     if (st.size >= maxBytes) {
-      renameSync(logPath, `${logPath}.1`);
+      try {
+        renameSync(logPath, `${logPath}.1`);
+      } catch (renameErr: unknown) {
+        const renameCode =
+          renameErr instanceof Error && "code" in renameErr
+            ? String((renameErr as { code: unknown }).code ?? "")
+            : "";
+        // EXDEV — log and `.1` slot sit on different filesystems (e.g.,
+        // ~/.claude/logs/ symlinked to an external SSD). renameSync cannot
+        // cross devices; fall back to copy + truncate so rotation still
+        // works on cross-device setups. Without this fallback, rotation
+        // silently stops working on that machine + the log grows unbounded.
+        // Backlog L318 RE-2 closure.
+        if (renameCode === "EXDEV") {
+          copyFileSync(logPath, `${logPath}.1`);
+          truncateSync(logPath, 0);
+        } else {
+          throw renameErr;
+        }
+      }
     }
   } catch (err: unknown) {
     const code =
@@ -61,8 +98,10 @@ export function appendLogWithRotation(
         ? String((err as { code: unknown }).code ?? "")
         : "";
     // ENOENT = log doesn't exist yet, first append will create it. All good.
-    // Other errors (EACCES on stat, rename target on a different device, etc.)
-    // shouldn't block the append — log through to stderr and keep going.
+    // Other errors (EACCES on stat, rename target with permission denied,
+    // etc.) shouldn't block the append — log through to stderr and keep
+    // going. (EXDEV is handled by the inner fallback above; never reaches
+    // this branch.)
     if (code !== "ENOENT") {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(
@@ -70,7 +109,16 @@ export function appendLogWithRotation(
       );
     }
   }
-  appendFileSync(logPath, entry, "utf-8");
+  // Clamp entry to PER_ENTRY_MAX_BYTES (with ellipsis sentinel) before
+  // append. Defensive against future callers that bypass upstream length
+  // bounds (`oneLine` / `.slice(0, 500)`). Preserves trailing newline so
+  // the JSONL line shape is intact even when truncation kicks in.
+  // Backlog L320 RE-5 closure.
+  const clampedEntry =
+    entry.length > PER_ENTRY_MAX_BYTES
+      ? `${entry.slice(0, PER_ENTRY_MAX_BYTES - 2)}…\n`
+      : entry;
+  appendFileSync(logPath, clampedEntry, "utf-8");
 }
 
 /**
