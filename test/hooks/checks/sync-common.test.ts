@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as fs from "node:fs";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -26,6 +27,7 @@ import { join } from "node:path";
 import {
   appendLogWithRotation,
   diagnosePushFailure,
+  manualCommitInFlight,
   oneLine,
   PER_ENTRY_MAX_BYTES,
 } from "../../../src/hooks/checks/sync-common.ts";
@@ -218,5 +220,63 @@ describe("diagnosePushFailure", () => {
     expect(diagnosePushFailure("slow but completed", 9_499, 10_000, 1)).toBe(
       "slow but completed",
     );
+  });
+});
+
+// L328 closure (backlog 2026-04-22): manualCommitInFlight lifted from
+// dotfiles-common.ts to sync-common.ts. Trio-agnostic primitive — caller
+// passes repoRoot. Covers all 8 mid-op markers.
+describe("manualCommitInFlight", () => {
+  it("returns false when no mid-op markers exist", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "mcif-clean-"));
+    try {
+      writeFileSync(join(repoRoot, ".git"), "", "utf-8"); // pre-create so the dir check below has somewhere to look
+      rmSync(join(repoRoot, ".git"));
+      // .git directory absent → all marker paths fail existsSync → false.
+      expect(manualCommitInFlight(repoRoot)).toBe(false);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns true for each of the 8 mid-op markers", () => {
+    const markers = [
+      ".git/index.lock",
+      ".git/MERGE_HEAD",
+      ".git/CHERRY_PICK_HEAD",
+      ".git/REVERT_HEAD",
+      ".git/rebase-merge",
+      ".git/rebase-apply",
+      ".git/gc.pid",
+      ".git/shallow.lock",
+    ];
+    for (const marker of markers) {
+      const repoRoot = mkdtempSync(join(tmpdir(), "mcif-marker-"));
+      try {
+        const markerPath = join(repoRoot, marker);
+        // mkdir parent (.git) then create the marker as file or dir per the marker name.
+        const dirPart = marker.includes("rebase-")
+          ? markerPath
+          : join(repoRoot, ".git");
+        mkdirSync(dirPart, { recursive: true });
+        if (!marker.includes("rebase-")) {
+          writeFileSync(markerPath, "", "utf-8");
+        }
+        expect(manualCommitInFlight(repoRoot)).toBe(true);
+      } finally {
+        rmSync(repoRoot, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("checks all markers — return true even when only the last (.git/shallow.lock) exists", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "mcif-last-"));
+    try {
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      writeFileSync(join(repoRoot, ".git", "shallow.lock"), "", "utf-8");
+      expect(manualCommitInFlight(repoRoot)).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });
