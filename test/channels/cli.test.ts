@@ -133,6 +133,88 @@ describe("channels CLI — uncaught-throw funneling (CLI-A)", () => {
 });
 
 /**
+ * L135 fallback — `sid()` no longer throws bare when `CLAUDE_SESSION_ID`
+ * is absent. Instead it falls through to the discovery resolver
+ * (`src/shared/session-id-discovery.ts`), and only throws — with a
+ * recovery hint — when discovery exhausts the PPID-tree walk + mtime
+ * telemetry fallback.
+ *
+ * This block pins the fail-loud path. The success paths (env / ppid /
+ * mtime) are covered exhaustively in `session-id-discovery.test.ts`;
+ * here we verify the wire-up: when env is unset and no telemetry
+ * exists, the CLI emits the discovery-style recovery hint rather than
+ * the prior bare "session_id not found or invalid" string.
+ */
+describe("channels CLI — sid() L135 discovery fallback", () => {
+  function runWithoutSessionEnv(args: readonly string[]): RunResult {
+    // Build a deliberately-clean env. process.env is inherited but we
+    // delete CLAUDE_SESSION_ID before passing it down so the discovery
+    // path fires. HOME points at an empty tmp dir so the mtime fallback
+    // sees no telemetry files.
+    const homeIsolated = mkdtempSync(join(tmpdir(), "channels-cli-l135-"));
+    const inherited = { ...process.env };
+    delete inherited["CLAUDE_SESSION_ID"];
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bun", CLI_PATH, ...args],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...inherited,
+          HOME: homeIsolated,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: tempChannelsDir,
+        },
+      });
+      return {
+        exitCode: result.exitCode ?? -1,
+        stdout: new TextDecoder().decode(result.stdout),
+        stderr: new TextDecoder().decode(result.stderr),
+      };
+    } finally {
+      rmSync(homeIsolated, { recursive: true, force: true });
+    }
+  }
+
+  it("emits discovery-style recovery hint when env unset + no telemetry available", async () => {
+    // Plant a real channel so `peers` reaches `sid()` (which is called
+    // AFTER readMetadata in the peers case). Without this, readMetadata
+    // throws ENOENT first and we never exercise the new fallback path.
+    // Unique suffix prevents collision when test re-runs against the
+    // shared tempChannelsDir (beforeAll/afterAll lifetime).
+    const channelId = `l135-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // createChannel reads CLAUDE_CONDUCTOR_CHANNELS_DIR from the test
+    // process's env. Without this, the library uses ~/.claude/channels/
+    // (default) and the planted channel won't be visible to the subprocess
+    // which we point at tempChannelsDir.
+    const prevChannelsDir = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = tempChannelsDir;
+    try {
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID, // setup uses a valid session id
+      });
+    } finally {
+      if (prevChannelsDir !== undefined) {
+        process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannelsDir;
+      } else {
+        delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+      }
+    }
+    // Now invoke peers WITHOUT env CLAUDE_SESSION_ID. sid() falls through
+    // to discovery → walks ppid against HOME-isolated empty sessions dir
+    // → returns kind: missing → throws the recovery hint via my new path.
+    const result = runWithoutSessionEnv(["peers", channelId]);
+    expect(result.exitCode).not.toBe(0);
+    // The recovery hint mentions setting CLAUDE_SESSION_ID explicitly —
+    // distinct from the prior bare "session_id not found or invalid"
+    // string thrown by channels/index.ts:resolveSessionId.
+    expect(result.stderr).toContain("CLAUDE_SESSION_ID");
+    expect(result.stderr).toContain("export CLAUDE_SESSION_ID=");
+  });
+});
+
+/**
  * Slice 5 verb subprocess tests — `whoami` / `set-role` / modified `join`
  * / `close-peer`. Each test seeds channel state via library calls then
  * invokes `cli.ts` end-to-end via `Bun.spawnSync`.
