@@ -48,6 +48,11 @@ import {
 import { parseFlags } from "../cli/flags.ts";
 import { getWallClockNow } from "../shared/clock.ts";
 import {
+  describeSource,
+  formatRecoveryHint,
+  resolveSessionId as discoverSessionId,
+} from "../shared/session-id-discovery.ts";
+import {
   appendMessage,
   channelIdFromHandoff,
   clearLastSeenCursor,
@@ -65,7 +70,6 @@ import {
   readLastSeenCursor,
   readMessages,
   readMetadata,
-  resolveSessionId,
   touchHeartbeat,
   writeLastSeenCursor,
   type ChannelKind,
@@ -303,8 +307,57 @@ function requireChannelId(
   return v;
 }
 
+/**
+ * Resolve the active session id for CLI operations. Fast path is the
+ * `CLAUDE_SESSION_ID` env var — the convention every slash command + hook
+ * dispatch path already feeds through. When env is absent (manual CLI use
+ * from a fresh shell, automation that forgot to export the var), fall back
+ * to the PPID-tree-walk + mtime-fallback discovery in
+ * `src/shared/session-id-discovery.ts`.
+ *
+ * L135 closure (backlog 2026-04-21): prior behavior threw immediately on
+ * env-absent, forcing every channel op to prepend the env var manually
+ * (`CLAUDE_SESSION_ID="$(uuidgen)" bun run ...`). That convention produced
+ * UUID churn on the wire when callers minted fresh ids per invocation —
+ * the exact ghost-participant hallucination shape from
+ * `feedback-convergent-instances.md` R3/R4. The fallback resolves to the
+ * SAME stable id Claude Code wrote into its session telemetry, so wire
+ * identity is consistent across invocations.
+ *
+ * Budget: discovery uses default retry ladder (3 × 250ms = ~750ms max)
+ * before falling through to mtime — well under CLI startup tolerance.
+ */
 function sid(): string {
-  return resolveSessionId(undefined);
+  // Fast path — explicit env var (matches channels/index.ts:resolveSessionId).
+  const envOverride = process.env["CLAUDE_SESSION_ID"];
+  if (envOverride && envOverride.length > 0 && isValidSessionId(envOverride)) {
+    return envOverride;
+  }
+
+  // Fallback — PPID-tree walk → mtime telemetry-tracker → fail with
+  // recovery hint. The discovery resolver returns kind: "env" only when
+  // the env var is set AND passes its stricter UUID check (we already
+  // accepted lenient `isValidSessionId` above), so "env" from discovery
+  // is uncommon-but-possible (e.g., env was set but didn't pass our
+  // lenient check earlier yet matches the strict-UUID check).
+  const discovered = discoverSessionId();
+  if (
+    discovered.kind === "env" ||
+    discovered.kind === "ppid" ||
+    discovered.kind === "mtime"
+  ) {
+    if (process.env["VERBOSE"] !== undefined) {
+      process.stderr.write(
+        `[channels] sid resolved via ${describeSource(discovered)}: ${discovered.sessionId}\n`,
+      );
+    }
+    return discovered.sessionId;
+  }
+
+  // Discovery exhausted — surface recovery hint, not bare throw.
+  throw new Error(
+    `[channels] session_id resolution failed (${discovered.kind}). ${formatRecoveryHint(discovered)}`,
+  );
 }
 
 async function readStdin(): Promise<string> {
