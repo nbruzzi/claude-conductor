@@ -157,6 +157,11 @@
       "import": "./src/channels/peer-recent-message.ts",
       "default": "./src/channels/peer-recent-message.ts"
     },
+    "./channels/live-delta": {
+      "types": "./src/channels/live-delta.ts",
+      "import": "./src/channels/live-delta.ts",
+      "default": "./src/channels/live-delta.ts"
+    },
     "./hooks/checks/peer-message-deliverer": {
       "types": "./src/hooks/checks/peer-message-deliverer.ts",
       "import": "./src/hooks/checks/peer-message-deliverer.ts",
