@@ -216,17 +216,17 @@ Surface the channel ID in the briefing: "Channel `<id>` — peer status: `<live|
 
 **Identity continuity (P2 — `--as <Identity>`).** When this resume should preserve a NATO identity letter from a prior cycle (the prior session's audit threads, handoff body, or channel artifacts named a specific letter — Alpha, Bravo, etc.), pass `--as <Identity>` to the join call above instead of bare `join`. If the named letter is held by another session (the prior holder's heartbeat is still alive but their session ended), add `--force` to take over via atomic sentinel replacement. Optional `--from-session <prior-uuid>` adds a CAS check so the takeover refuses if the holder isn't the expected session. See `commands/session/channel.md` `### join` → "Recovery flow for parallel-session resume" for the full flag matrix; the legacy 4-step recovery dance is documented there too for substrate-pinned CLI versions older than `--as`.
 
-### Step 4b (parallel only): expect a `live-delta` from the active peer
+### Step 4b (parallel only): expect a `live-update` from the active peer
 
-After posting the `joined` status in Step 4a, **wait briefly for the active peer (the session that wrote the handoff and is still alive) to post a `kind: live-delta` message on the channel.** That message carries the live state-of-the-world the handoff cannot — what the active peer is doing right now, what scope you should pick up, what's hands-off — bridging the long-arc handoff (frozen at write-time) and the live channel.
+After posting the `joined` status in Step 4a, **wait briefly for the active peer (the session that wrote the handoff and is still alive) to post a `kind: live-update` message on the channel.** That message carries the live state-of-the-world the handoff cannot — what the active peer is doing right now, what scope you should pick up, what's hands-off — bridging the long-arc handoff (frozen at write-time) and the live channel.
 
-The active peer's `handoff` skill (the writer side) and a `live-delta-reminder` UserPromptSubmit hook prompt them to post this within seconds of seeing your `joined`. You should:
+The active peer's `handoff` skill (the writer side) and a `live-update-reminder` UserPromptSubmit hook prompt them to post this within seconds of seeing your `joined`. You should:
 
-1. Wait ~30s after Step 4a for the live-delta to arrive (poll the channel; do not start work yet).
-2. When it lands, parse the body via `parseLiveDeltaBody` (importable as `claude-conductor/channels/live-delta`). Treat the parser-returned `LiveDeltaBody` as the **authoritative scope assignment** for this resume — NOT the handoff body, which cannot anticipate which sibling picks up which slice.
-3. If no live-delta arrives within ~30s, post a `kind: question` on the channel asking the active peer to specify your scope. Do not guess.
+1. Wait ~30s after Step 4a for the live-update to arrive (poll the channel; do not start work yet).
+2. When it lands, parse the body via `parseLiveUpdateBody` (importable as `claude-conductor/channels/live-update`). Treat the parser-returned `LiveUpdateBody` as the **authoritative scope assignment** for this resume — NOT the handoff body, which cannot anticipate which sibling picks up which slice.
+3. If no live-update arrives within ~30s, post a `kind: question` on the channel asking the active peer to specify your scope. Do not guess.
 
-**Why this matters:** the handoff is the long-arc structured record; the channel is live coordination; before L152 there was no protocol step bridging them at sibling-join. Without `live-delta`, work-division falls back to Nick relaying via cross-window screenshot-shuttle — the failure mode `feedback-pipeline-is-recursive-research-at-every-level.md` and `[[Parallel Session Coordination Convention]]` are designed to remove. Per the verification-budget convention: trust the SHAPE the parser returns; primary-source-verify any SHA / PR / backlog citation in the fields before acting on them.
+**Why this matters:** the handoff is the long-arc structured record; the channel is live coordination; before L152 there was no protocol step bridging them at sibling-join. Without `live-update`, work-division falls back to Nick relaying via cross-window screenshot-shuttle — the failure mode `feedback-pipeline-is-recursive-research-at-every-level.md` and `[[Parallel Session Coordination Convention]]` are designed to remove. Per the verification-budget convention: trust the SHAPE the parser returns; primary-source-verify any SHA / PR / backlog citation in the fields before acting on them.
 
 **Body schema (4 keys, JSON-serialized):**
 

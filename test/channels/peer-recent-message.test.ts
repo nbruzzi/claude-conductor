@@ -181,8 +181,8 @@ describe("getMostRecentPeerKind", () => {
 /**
  * Sibling helper — kind-filtered tail scan. Same shape + same failure
  * modes as `getMostRecentPeerKind` but skips messages whose kind does
- * not equal the filter. Used by Bravo's `live-delta-reminder` hook to
- * find the most-recent live-delta from the joining sibling (NOT the
+ * not equal the filter. Used by Bravo's `live-update-reminder` hook to
+ * find the most-recent live-update from the joining sibling (NOT the
  * most-recent message of any kind).
  */
 describe("getMostRecentPeerMessageOfKind", () => {
@@ -192,16 +192,16 @@ describe("getMostRecentPeerMessageOfKind", () => {
   it("returns the latest message of the filtered kind", () => {
     writeMessages([
       msg(PEER_A, "note"),
-      msg(PEER_A, "live-delta"),
+      msg(PEER_A, "live-update"),
       msg(PEER_A, "status"),
     ]);
     const result = getMostRecentPeerMessageOfKind(
       CHANNEL,
       PEER_A,
-      "live-delta",
+      "live-update",
     );
     expect(result).not.toBeNull();
-    expect(result?.kind).toBe("live-delta");
+    expect(result?.kind).toBe("live-update");
   });
 
   it("returns null when the filter matches no messages from peer", () => {
@@ -209,27 +209,27 @@ describe("getMostRecentPeerMessageOfKind", () => {
     const result = getMostRecentPeerMessageOfKind(
       CHANNEL,
       PEER_A,
-      "live-delta",
+      "live-update",
     );
     expect(result).toBeNull();
   });
 
   it("returns null when peer never posted on channel (even if filter kind exists from others)", () => {
-    writeMessages([msg(PEER_B, "live-delta"), msg(PEER_B, "status")]);
+    writeMessages([msg(PEER_B, "live-update"), msg(PEER_B, "status")]);
     const result = getMostRecentPeerMessageOfKind(
       CHANNEL,
       PEER_A,
-      "live-delta",
+      "live-update",
     );
     expect(result).toBeNull();
   });
 
   it("walks past intervening non-matching messages to find the latest match", () => {
-    // Older live-delta + 3 newer non-matching → returns the OLDER live-delta
-    // (still the most-recent live-delta from peer, just not the most-recent
+    // Older live-update + 3 newer non-matching → returns the OLDER live-update
+    // (still the most-recent live-update from peer, just not the most-recent
     // message overall).
     writeMessages([
-      msg(PEER_A, "live-delta"),
+      msg(PEER_A, "live-update"),
       msg(PEER_A, "note"),
       msg(PEER_A, "note"),
       msg(PEER_A, "status"),
@@ -237,16 +237,16 @@ describe("getMostRecentPeerMessageOfKind", () => {
     const result = getMostRecentPeerMessageOfKind(
       CHANNEL,
       PEER_A,
-      "live-delta",
+      "live-update",
     );
-    expect(result?.kind).toBe("live-delta");
+    expect(result?.kind).toBe("live-update");
   });
 
   it("returns null on empty channel (ENOENT path)", () => {
     const result = getMostRecentPeerMessageOfKind(
       "c-nonexistent",
       PEER_A,
-      "live-delta",
+      "live-update",
     );
     expect(result).toBeNull();
   });
