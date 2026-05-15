@@ -251,3 +251,52 @@ _Phase 5 SHIPPED 2026-05-07:_
   - Total: 4 + 2 + 2 + 3 = 11 lens-runs across plan + delta + diff cycles
 - 10 files changed, 587 insertions / 26 deletions; 6 commits squashed atomically
 - Plan: ~/.claude/plans/transient-plotting-crescent.md v2.1
+
+---
+
+## 2026-05-15 — Decision G: substrate gates consult channel-coordination state via shared read-only primitives
+
+```yaml
+---
+ts: 2026-05-15T15:05:00Z
+kind: architectural
+severity: major
+phase: 5
+affects:
+  - src/channels/identity-context.ts
+  - src/channels/peer-recent-message.ts
+  - src/hooks/checks/teammate-idle-reminder.ts
+  - dotfiles src/hooks/checks/session-collision-gate.ts (parallel-by-design per INVERSIONS B5 ARCH-3 deferral)
+---
+```
+
+**Context:** Two substrate gates fire on legitimate channel-coordinated sibling work because the gate's input model is incomplete. `session-collision-gate` (PreToolUse Edit/Write) sees a peer's heartbeat on a shared artifact and BLOCKs with 30-min cooldown — but when both sessions are participants in an open channel coordinating on that artifact, the BLOCK is operator-noise, not protection. `teammate-idle-reminder` (UserPromptSubmit) treats stale-heartbeat (>5 min) as a recovery-required signal — but when a peer's most-recent channel message is a deliberate-standby kind (`standby` / `roger` / `out` / `digest`), the stale heartbeat is by-design, not by-crash.
+
+Per `feedback-self-monitoring-is-architectural.md`: when a substrate-gate's input model is wrong on legitimate work, the fix belongs in the substrate (sharpen the input model), not at the operator layer (instruct users to dismiss false-fires). Lived evidence 2026-05-15 cycle: 5+ false-fires across both gates during a single triage day, each requiring operator attention to evaluate-and-dismiss.
+
+**Options considered:**
+
+1. **Substrate gates consult channel-coordination state via shared read-only primitives (CHOSEN)** — add `isPeerCoordinatedWithSelf` (extension of `channels/identity-context.ts`) and `getMostRecentPeerKind` (new `channels/peer-recent-message.ts`) as read-only substrate primitives, then thread them into the two consuming gates. Failure-mode preserved: any helper throw is caught internally; gates fall back to their pre-coordination behavior.
+2. Operator-side bypass — document the false-fire pattern in operator runbook and instruct dismissal. Lower implementation cost; preserves the operational tax (~5 false-fires/cycle per lived evidence). Loses substrate-discipline.
+3. Per-gate ad-hoc channel inspection — each gate independently reads channel metadata + `messages.jsonl`. Duplicates read-shape across gates; risks divergence; no shared validation surface.
+4. Wider redesign of session-presence as channel-anchored rather than artifact-anchored — large blast radius; out-of-scope for L161 + L146 bundle; would also pull in active-sessions module-state canonicalization (deferred per INVERSIONS B5 ARCH-3).
+
+**Chosen:** Option 1.
+
+**Reason:** Shared substrate primitives — `isPeerCoordinatedWithSelf` (artifact-collision lens) + `getMostRecentPeerKind` (idle-state lens) — let both gates consult channel-coordination state without duplicating read-shape or owning channel-metadata semantics. The primitives are read-only (zero locks, zero writes), safe to call inside the gates' existing lock contexts. Helper throw is caught internally + breadcrumb'd via `appendPresenceFailure` — gates fall back to their pre-coordination behavior under any helper fault, preserving conservative-by-default failure mode. Option 2 (operator bypass) was the prior state and is what generated the lived false-fire evidence; the substrate is the load-bearing fix surface.
+
+**Operationalized:**
+
+- `src/channels/identity-context.ts` — new named export `isPeerCoordinatedWithSelf(selfSessionId, peerSessionId) → { coordinated: boolean; channelIds: readonly string[] }`. 4-line scan over `getIdentityContextForSession(self).peers[].session_id`. Returns `channelIds` so callers can surface the coordinating channel id in their formatted messages.
+- `src/channels/peer-recent-message.ts` (NEW) — tail-reads peer's most-recent message on a channel, bounded by `MAX_TAIL_BYTES = 256 KB` and `MAX_TAIL_LINES = 500` (RE-2 fold — observed line lengths reach ~3 KB; a 100-line window can exceed 64 KB). Drops partial first line if byte-cap cut mid-record; drops trailing line without `\n` (potentially mid-append). Re-uses canonical `isChannelMessage` validator. Returns `{ kind, ts } | null`.
+- `package.json` — new exports entry `./channels/peer-recent-message`. `./channels/identity-context` entry already present (Lane A.1 is additive within the same module).
+- `src/hooks/checks/teammate-idle-reminder.ts` — standby-state gate inserted after clock-skew, before rate-limit. `STANDBY_KINDS = {standby, roger, out, digest}` per RE-5 fold (NOT `done` — non-canonical; NOT `over` — transient mid-message). Suppression emits `kind: "standby-suppressed"` `PresenceFailureKind` breadcrumb (new union member) + bypasses the rate-limit cursor write so subsequent non-standby kinds fire immediately.
+- Dotfiles `src/hooks/checks/session-collision-gate.ts` (parallel-by-design canonical) — downgrades BLOCK → warn when ALL collision-peers are channel-coordinated. Mixed-peer collisions retain BLOCK with per-peer `(channel-coordinated)` / `(uncoordinated)` annotation in the formatted message body (ARCH-2 fold). Plugin-side mirror retained in lock-step for the eventual `active-sessions` canonicalization commit.
+
+**Cross-edge note:** `session-collision-gate` is dotfiles-LOCAL canonical per INVERSIONS B5 ARCH-3 deferral — the active-sessions module-state canonicalization remains deferred. Bundled-registrations dispatcher routes Edit/Write PreToolUse to the dotfiles file. `teammate-idle-reminder` is plugin canonical (per bundled-registrations cross-edge import from `claude-conductor/hooks/checks/teammate-idle-reminder`).
+
+**Failure-mode preservation:** both gates retain conservative fail-open / fail-closed semantics per their existing contracts. `isPeerCoordinatedWithSelf` returns `{ coordinated: false, channelIds: [] }` on any read failure; `getMostRecentPeerKind` returns null. Either result preserves the pre-coordination behavior (BLOCK on collision; fire on idle). New behavior is purely additive: the substrate gate has a coordinated-work-is-legitimate path it didn't have before.
+
+**Audit cadence:** Plan v1 multi-lens (Architecture + Reliability + Knowledge System; 8 MAJOR + 9 MINOR folded into v2) → Plan v2 sibling cross-audit (Bravo; RATIFIED with 4 nice-to-haves noted) → V3 fold caught at execution (session-collision-gate is dotfiles-local canonical; added Lane B' mirror) → Round 3 cross-audit on staged full diff (CONVERGENT-CLEAN). Plan: `~/.claude/plans/sibling-coord-gate-awareness.md` v2.
+
+**Supersedes / superseded_by:** Decision G is additive — no prior Phase-5 decision is superseded. References Phase 5's substrate-discipline thesis (per the Phase 5 SHIPPED 2026-05-07 closure above) and the active-sessions canonicalization (INVERSIONS B5 ARCH-3) which remains deferred.
