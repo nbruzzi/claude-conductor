@@ -177,6 +177,126 @@ describe("appendLogWithRotation", () => {
     expect(written).toBe(atCap);
     expect(written.includes("…")).toBe(false);
   });
+
+  // TA-1 fold — the append itself is intentionally NOT wrapped in a try/catch.
+  // The contract at sync-common.ts §"append" docstring states: "if
+  // `appendFileSync` throws (EACCES, EISDIR on the path, etc.) the caller
+  // sees the error and is expected to log it via its own catch branch."
+  // Without this test, a future refactor that wraps the append in try/catch
+  // would silently swallow `logVaultFailure`'s only outbound signal — both
+  // callers (`logVaultFailure` + `logSyncFailure`) rely on the throw to
+  // surface failure through their own stderr fallback.
+  it("propagates appendFileSync errors (TA-1: append contract is unwrapped)", () => {
+    // Mock-injected error path: the platform-specific "logPath is a directory"
+    // setup diverges (macOS reports dir size 0 → no rotation → append throws
+    // EISDIR; Linux reports dir size 4096 → rotation moves the dir away →
+    // append succeeds against a clean new path). The contract is about the
+    // append CATCH behavior, not the os-specific stat shape — mock appendFileSync
+    // directly so the test pins the contract platform-independently.
+    const logPath = join(base, "mock-throws.log");
+    const origFs = { ...fs };
+    let appendCalls = 0;
+    try {
+      mock.module("node:fs", () => ({
+        ...origFs,
+        appendFileSync: () => {
+          appendCalls++;
+          const err = new Error(
+            "EACCES: permission denied (test-injected)",
+          ) as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          throw err;
+        },
+      }));
+      expect(() => appendLogWithRotation(logPath, "entry\n", 1024)).toThrow(
+        /EACCES/,
+      );
+      // Confirm the mocked appendFileSync was actually reached (i.e., the
+      // implementation did NOT short-circuit before calling append; the throw
+      // surfaces from the unwrapped append path, not from the rotation prelude).
+      expect(appendCalls).toBe(1);
+    } finally {
+      mock.module("node:fs", () => origFs);
+    }
+  });
+
+  // TA-2 fold — rotation errors OTHER than ENOENT are intentionally caught
+  // and stderr'd (non-fatal); the append still runs against the un-rotated
+  // log. Without this test, a future refactor that re-raised non-ENOENT
+  // rotation errors would block the append silently AND drop the warning to
+  // stderr. The "rotation failed but log preserved" graceful path is the
+  // load-bearing post-condition.
+  it("stderrs and proceeds on non-ENOENT rotation error (TA-2: .1 is non-empty dir)", () => {
+    const logPath = join(base, "blocked-archive.log");
+    writeFileSync(logPath, "x".repeat(1024), "utf-8");
+    // Pre-create `.1` as a non-empty directory. renameSync(file → dir) on
+    // POSIX fails with EISDIR or ENOTEMPTY depending on platform; both are
+    // non-ENOENT and exercise the stderr-and-continue branch.
+    const archivePath = `${logPath}.1`;
+    mkdirSync(archivePath, { recursive: true });
+    writeFileSync(join(archivePath, "blocker"), "blocks-rename", "utf-8");
+
+    const captured: string[] = [];
+    const origError = console.error;
+    console.error = (msg: unknown) => {
+      captured.push(String(msg));
+    };
+    try {
+      expect(() =>
+        appendLogWithRotation(logPath, "fresh\n", 1024),
+      ).not.toThrow();
+    } finally {
+      console.error = origError;
+    }
+    // Append landed against the un-rotated file (`fresh` is now appended
+    // after the 1024-byte `x` prefix — rotation didn't run, so the original
+    // contents are preserved alongside the new entry).
+    const written = readFileSync(logPath, "utf-8");
+    expect(written.endsWith("fresh\n")).toBe(true);
+    expect(written).toContain("x".repeat(1024));
+    // Warning landed on stderr per the contract (single-line, source-tagged).
+    expect(captured.join("\n")).toContain("[sync-common]");
+    expect(captured.join("\n")).toContain("log rotation check failed");
+  });
+});
+
+// TA-3 fold — diagnosePushFailure is exhaustively unit-tested above as a
+// pure function (exit code in → diagnostic string out). But the upstream
+// callers depend on Bun's subprocess `timeout` option delivering SIGTERM and
+// producing `exitCode === 143` in practice. If Bun changes that semantic
+// (SIGKILL, `null` exit code, different signal number), the unit tests stay
+// green because they pass in hardcoded `143` — the real-wire signal would
+// regress silently. This integration test pins the Bun timeout → SIGTERM
+// → exitCode 143 contract by spawning a hanging subprocess with a tight
+// timeout and asserting the exit code is `143`. Coarse is fine — the entry
+// (L337 TA-3) frames it as "push against a URL that hangs proves the wire";
+// any hanging child suffices because the Bun primitive is what's under
+// test, not git's behavior against the URL.
+describe("Bun subprocess timeout → SIGTERM contract (TA-3)", () => {
+  it("delivers SIGTERM at the timeout boundary and exits with code 143", async () => {
+    const start = Date.now();
+    // `sleep 5` would hang for 5s without intervention; with timeout=150ms,
+    // Bun should SIGTERM the child at ~150ms and the process exits 143.
+    const proc = Bun.spawn(["sleep", "5"], {
+      stdout: "ignore",
+      stderr: "ignore",
+      timeout: 150,
+    });
+    const exitCode = await proc.exited;
+    const elapsed = Date.now() - start;
+
+    // Bun's documented behavior: `timeout` delivers SIGTERM (signal 15),
+    // child exits with 128 + 15 = 143. If Bun ever changes this to SIGKILL
+    // (137), `null`, or some other shape, diagnosePushFailure's literal
+    // `exitCode === 143` test would mis-classify a hung push as "non-timeout
+    // failure", forcing operators to chase the wrong diagnostic.
+    expect(exitCode).toBe(143);
+    // Sanity-bound elapsed: at least near the timeout, at most a generous
+    // post-timeout slack (test scheduler / signal-delivery overhead). The
+    // wide upper bound tolerates slow CI without losing the test's intent.
+    expect(elapsed).toBeGreaterThanOrEqual(100);
+    expect(elapsed).toBeLessThan(3000);
+  });
 });
 
 describe("diagnosePushFailure", () => {

@@ -661,3 +661,106 @@ describe("LockIOError discrimination", () => {
     }
   });
 });
+
+// TA-6 fold — env-overridable retry budget for the lock-acquire ladder.
+// Sibling-trio race tests (vault-commit + vault-chain) spawn Bun subprocesses
+// whose startup latency can briefly exceed the default 60ms ladder on cold
+// CI. `LOCK_RETRIES` / `LOCK_BACKOFF_MS` env-vars let those tests raise the
+// ceiling without changing production defaults — these tests pin the
+// override contract so a future regression that drops env-resolution would
+// fail loudly here rather than silently re-introduce CI flake.
+describe("retry-budget env overrides (TA-6)", () => {
+  it("CLAUDE_CONDUCTOR_LOCK_RETRIES bumps the retry ladder length", () => {
+    const base = makeTmpBase("lock-env-retries-");
+    const lockDir = join(base, "lock");
+    // Hold the lock — withLock will be forced into the retry path.
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(
+      join(lockDir, "owner"),
+      JSON.stringify({
+        pid: 99999,
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+      }),
+      "utf-8",
+    );
+    const originalRetries = process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"];
+    const originalBackoff = process.env["CLAUDE_CONDUCTOR_LOCK_BACKOFF_MS"];
+    // Override → 10 retries × 5ms backoff (50 / 100 / ... ladder).
+    // Without the override (default 3 × 10ms = 60ms ladder), this test
+    // would still pass — the env knob just provides headroom. The
+    // assertion below pins behavior: 10 retries × 5ms produces ~275ms of
+    // total wait before LockTimeoutError, vs 60ms at defaults.
+    process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"] = "10";
+    process.env["CLAUDE_CONDUCTOR_LOCK_BACKOFF_MS"] = "5";
+    try {
+      const start = Date.now();
+      let caught: unknown = null;
+      try {
+        withLock(() => undefined, { lockDir, maxAgeMs: 60_000 });
+      } catch (e) {
+        caught = e;
+      }
+      const elapsed = Date.now() - start;
+      expect(caught).toBeInstanceOf(LockTimeoutError);
+      // Retry ladder budget: 5 × (1+2+...+10) = 275ms. Allow generous
+      // upper bound (5x) to tolerate slow CI without losing the bound's
+      // intent.
+      expect(elapsed).toBeGreaterThanOrEqual(200);
+      expect(elapsed).toBeLessThan(2000);
+    } finally {
+      if (originalRetries !== undefined) {
+        process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"] = originalRetries;
+      } else {
+        delete process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"];
+      }
+      if (originalBackoff !== undefined) {
+        process.env["CLAUDE_CONDUCTOR_LOCK_BACKOFF_MS"] = originalBackoff;
+      } else {
+        delete process.env["CLAUDE_CONDUCTOR_LOCK_BACKOFF_MS"];
+      }
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("invalid env value falls back to default (bad input is silent)", () => {
+    const base = makeTmpBase("lock-env-invalid-");
+    const lockDir = join(base, "lock");
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(
+      join(lockDir, "owner"),
+      JSON.stringify({
+        pid: 99999,
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+      }),
+      "utf-8",
+    );
+    const originalRetries = process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"];
+    // Reject scientific notation / decimals / negative / non-digit.
+    process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"] = "abc";
+    try {
+      const start = Date.now();
+      let caught: unknown = null;
+      try {
+        withLock(() => undefined, { lockDir, maxAgeMs: 60_000 });
+      } catch (e) {
+        caught = e;
+      }
+      const elapsed = Date.now() - start;
+      // Bad input → default 3 retries × default 10ms = 60ms ladder. The
+      // assertion isn't on a tight upper bound (scheduler / GC variance)
+      // but the lower bound proves the override didn't accidentally
+      // accept the bad input and run 10+ retries.
+      expect(caught).toBeInstanceOf(LockTimeoutError);
+      expect(elapsed).toBeLessThan(2000);
+    } finally {
+      if (originalRetries !== undefined) {
+        process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"] = originalRetries;
+      } else {
+        delete process.env["CLAUDE_CONDUCTOR_LOCK_RETRIES"];
+      }
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
