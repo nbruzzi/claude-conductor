@@ -820,4 +820,194 @@ describe("teammate-idle-reminder hook", () => {
     const result = await check(inputFor(SESSION_SELF));
     expect(result.stdout).toContain("Peer Bravo");
   });
+
+  // ─── sibling-coord-gate-awareness plan v2 Lane C ─────────────────
+  // Standby-state suppression: peers whose most-recent message is a
+  // deliberate-standby kind (`standby` / `roger` / `out` / `digest` per
+  // RE-5 fold) skip the idle reminder. Forensic breadcrumb at the
+  // suppression point (FIND-6 fold).
+
+  /**
+   * Append a JSONL message line to a channel's messages.jsonl. Bypasses the
+   * `appendMessage` lock machinery — these tests don't exercise the locked
+   * path; they exercise the read side (`getMostRecentPeerKind`) which is
+   * read-only against the JSONL.
+   */
+  function appendPeerMessage(
+    channelId: string,
+    sessionId: string,
+    kind: string,
+    body: string = "test",
+  ): void {
+    const messagesPath = join(
+      resolveChannelsDir(),
+      channelId,
+      "messages.jsonl",
+    );
+    const line = `${JSON.stringify({
+      ts: new Date().toISOString(),
+      from: sessionId,
+      kind,
+      body,
+    })}\n`;
+    mkdirSync(join(resolveChannelsDir(), channelId), { recursive: true });
+    if (existsSync(messagesPath)) {
+      const existing = readFileSync(messagesPath, "utf-8");
+      writeFileSync(messagesPath, existing + line, "utf-8");
+    } else {
+      writeFileSync(messagesPath, line, "utf-8");
+    }
+  }
+
+  it("26. Standby kind suppression — peer most-recent kind=standby → reminder suppressed", async () => {
+    await createChannel({
+      channelId: "ch-standby",
+      handoffId: "ch-standby",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-standby",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-standby",
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-standby", SESSION_SELF);
+    backdateHeartbeat("ch-standby", SESSION_BRAVO, 6 * 60 * 1000); // 6 min idle
+    appendPeerMessage("ch-standby", SESSION_BRAVO, "standby");
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+  });
+
+  it("27. Standby-class kinds (roger / out / digest) all suppress the reminder", async () => {
+    const kinds = ["roger", "out", "digest"] as const;
+    for (const kind of kinds) {
+      cleanup();
+      sandbox();
+      const channelId = `ch-suppress-${kind}`;
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: SESSION_SELF,
+      });
+      await claimIdentity({
+        channelId,
+        sessionId: SESSION_SELF,
+        defaultRole: "pen",
+      });
+      await claimIdentity({
+        channelId,
+        sessionId: SESSION_BRAVO,
+        defaultRole: "queue",
+      });
+      touchHeartbeat(channelId, SESSION_SELF);
+      backdateHeartbeat(channelId, SESSION_BRAVO, 6 * 60 * 1000);
+      appendPeerMessage(channelId, SESSION_BRAVO, kind);
+
+      const result = await check(inputFor(SESSION_SELF));
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("");
+    }
+  });
+
+  it("28. Non-standby kinds (note / status / question / handoff / ack / over) DO fire the reminder", async () => {
+    const kinds = [
+      "note",
+      "status",
+      "question",
+      "handoff",
+      "ack",
+      "over",
+    ] as const;
+    for (const kind of kinds) {
+      cleanup();
+      sandbox();
+      const channelId = `ch-fire-${kind}`;
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: SESSION_SELF,
+      });
+      await claimIdentity({
+        channelId,
+        sessionId: SESSION_SELF,
+        defaultRole: "pen",
+      });
+      await claimIdentity({
+        channelId,
+        sessionId: SESSION_BRAVO,
+        defaultRole: "queue",
+      });
+      touchHeartbeat(channelId, SESSION_SELF);
+      backdateHeartbeat(channelId, SESSION_BRAVO, 6 * 60 * 1000);
+      appendPeerMessage(channelId, SESSION_BRAVO, kind);
+
+      const result = await check(inputFor(SESSION_SELF));
+      expect(result.stdout).toContain("Peer Bravo");
+    }
+  });
+
+  it("29. Peer with no messages on channel → reminder fires (no suppression — empty messages.jsonl path)", async () => {
+    await createChannel({
+      channelId: "ch-no-msgs",
+      handoffId: "ch-no-msgs",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-no-msgs",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-no-msgs",
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-no-msgs", SESSION_SELF);
+    backdateHeartbeat("ch-no-msgs", SESSION_BRAVO, 6 * 60 * 1000);
+    // No appendPeerMessage call — messages.jsonl absent.
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toContain("Peer Bravo");
+  });
+
+  it("30. Standby suppression doesn't engage rate-limit cursor — next non-standby reminder fires immediately", async () => {
+    await createChannel({
+      channelId: "ch-no-cursor-burn",
+      handoffId: "ch-no-cursor-burn",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-no-cursor-burn",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-no-cursor-burn",
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-no-cursor-burn", SESSION_SELF);
+    backdateHeartbeat("ch-no-cursor-burn", SESSION_BRAVO, 6 * 60 * 1000);
+
+    // First fire: peer posted `standby` → suppressed → cursor NOT written.
+    appendPeerMessage("ch-no-cursor-burn", SESSION_BRAVO, "standby");
+    const r1 = await check(inputFor(SESSION_SELF));
+    expect(r1.stdout).toBe("");
+    // Cursor file must not exist (suppression bypassed the cursor write path).
+    expect(existsSync(cursorPath("ch-no-cursor-burn", SESSION_SELF))).toBe(
+      false,
+    );
+
+    // Second fire: peer now posted a non-standby kind. Reminder should fire
+    // immediately — rate-limit was never engaged by the prior suppression.
+    appendPeerMessage("ch-no-cursor-burn", SESSION_BRAVO, "note");
+    const r2 = await check(inputFor(SESSION_SELF));
+    expect(r2.stdout).toContain("Peer Bravo");
+  });
 });
