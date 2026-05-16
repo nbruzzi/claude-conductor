@@ -18,7 +18,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -239,5 +241,61 @@ describe("unregisterActiveSession", () => {
 
   it("returns 0 on invalid sessionId without throwing", () => {
     expect(unregisterActiveSession("../bad")).toBe(0);
+  });
+});
+
+// ─── L588 race-fix: realpath canonicalization at setSentinelDotfilesRoot ───
+describe("setSentinelDotfilesRoot — L588 realpath canonicalization", () => {
+  it("stores realpath-canonicalized form when target exists (resolves symlink chain)", () => {
+    // Create a real target dir + a symlink pointing at it. Pass the symlink
+    // path to setSentinelDotfilesRoot; the stored form should be the realpath.
+    const targetBase = mkdtempSync(join(tmpdir(), "l588-real-target-"));
+    const symlinkPath = join(targetBase, "symlinked-worktree");
+    const realTarget = join(targetBase, "actual-worktree");
+    mkdirSync(realTarget, { recursive: true });
+    symlinkSync(realTarget, symlinkPath);
+
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: symlinkPath });
+
+    const stored = readSentinelDotfilesRoot(SID);
+    // Stored form is the realpath of `symlinkPath`. On macOS this also
+    // resolves `/tmp` → `/private/tmp` (the tmpdir's ancestor chain); use
+    // realpathSync on the same `symlinkPath` to compute the expected canonical.
+    const expected = realpathSync(symlinkPath);
+    expect(stored).toBe(expected);
+
+    // Cleanup
+    rmSync(targetBase, { recursive: true, force: true });
+  });
+
+  it("falls back to resolve() when target does not exist (fresh-provisioning race window)", () => {
+    // Provisioner can pin the sentinel BEFORE the worktree directory is
+    // fully written. realpathSync throws ENOENT; fallback resolve() strips
+    // `.`/`..` but does NOT touch the filesystem, so the stored shape
+    // still reflects the operator-intended path (just not canonicalized
+    // against ancestor symlinks).
+    const nonExistent = "/tmp/.claude-dotfiles-nonexistent-l588-fallback";
+
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: nonExistent });
+
+    const stored = readSentinelDotfilesRoot(SID);
+    // resolve() returns the input as-is when already absolute + no ./../
+    expect(stored).toBe(nonExistent);
+  });
+
+  it("idempotent re-pin with the same realpath produces identical OwnerRecord shape", () => {
+    const targetBase = mkdtempSync(join(tmpdir(), "l588-idempotent-"));
+    mkdirSync(join(targetBase, "wt"), { recursive: true });
+    const path = join(targetBase, "wt");
+
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: path });
+    const first = readSentinelDotfilesRoot(SID);
+
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: path });
+    const second = readSentinelDotfilesRoot(SID);
+
+    expect(second).toBe(first);
+
+    rmSync(targetBase, { recursive: true, force: true });
   });
 });

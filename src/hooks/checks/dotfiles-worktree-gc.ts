@@ -48,11 +48,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { effectiveHome } from "../../shared/home.ts";
 import {
   artifactIdFromPath,
@@ -242,7 +243,22 @@ function mapByDotfilesRoot(
   const out = new Map<string, HeartbeatListing>();
   for (const a of anchors) {
     const root = a.owner.dotfilesRoot;
-    if (root !== undefined && root.length > 0) out.set(root, a);
+    if (root === undefined || root.length === 0) continue;
+    // L588 symmetric realpath at compare time — closes the asymmetric
+    // migration window where a pre-fix OwnerRecord (stored non-canonical)
+    // would mis-match against canonical on-disk worktree paths
+    // enumerated by `listWorktrees`. The matching `realpathSync` in
+    // `setSentinelDotfilesRoot` canonicalizes the WRITE side; this
+    // canonicalizes the READ side so both pre-fix + post-fix records
+    // resolve to the same key. resolve() fallback mirrors the write-site
+    // pattern for the "target doesn't exist yet" edge.
+    let canonical: string;
+    try {
+      canonical = realpathSync(root);
+    } catch {
+      canonical = resolve(root);
+    }
+    out.set(canonical, a);
   }
   return out;
 }

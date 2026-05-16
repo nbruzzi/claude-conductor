@@ -56,7 +56,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { getWallClockNow } from "../shared/clock.ts";
 import { effectiveHome } from "../shared/home.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
@@ -967,6 +967,23 @@ function canonicalClaudeHomeArtifactId(): string {
  * hook calls this at session-start regardless of whether the session has
  * touched `~/.claude/` yet). Idempotent — re-pinning with the same value
  * is a no-op merge through `touchHeartbeat`'s read-merge-write semantics.
+ *
+ * **L588 race-fix (chokepoint):** the input `dotfilesRoot` is canonicalized
+ * via `realpathSync()` before storing so consumers (notably
+ * `mapByDotfilesRoot` in `src/hooks/checks/dotfiles-worktree-gc.ts:243`) can
+ * compare against `realpathSync`-resolved worktree paths without drift.
+ * Without canonicalization, a provisioner that stores e.g. `/var/folders/.../X`
+ * while GC enumerates the on-disk realpath `/private/var/folders/.../X` would
+ * mis-classify the worktree as orphan and reap it. Backlog L588 documents the
+ * 3 cross-session evidence points that triggered the race-fix slot.
+ *
+ * If `realpathSync` throws (target doesn't exist yet — possible during the
+ * fresh-provisioning race window before the worktree directory is fully
+ * written), fall back to `path.resolve()` which strips `.`/`..` segments
+ * without filesystem access. The eventual `realpathSync`-side reader (GC) is
+ * tolerant of this transient form — its own `mapByDotfilesRoot` compare
+ * still keys against the (non-resolved) sentinel value, so a one-cycle
+ * mismatch self-heals at next anchor-pin on a successful realpath.
  */
 export function setSentinelDotfilesRoot(args: {
   sessionId: string;
@@ -981,6 +998,16 @@ export function setSentinelDotfilesRoot(args: {
 
   mkdirSync(heartbeatsDir(artifactId), { recursive: true });
 
+  // L588 — canonicalize to realpath form so GC's compare keys against the
+  // same shape the on-disk enumeration produces. Fall back to resolve() if
+  // realpath throws (target may not exist during fresh-provisioning).
+  let canonical: string;
+  try {
+    canonical = realpathSync(dotfilesRoot);
+  } catch {
+    canonical = resolve(dotfilesRoot);
+  }
+
   const path = heartbeatPath(artifactId, sessionId);
   const existing = readOwnerRecord(path);
   const now = getWallClockNow();
@@ -991,7 +1018,7 @@ export function setSentinelDotfilesRoot(args: {
     host: hostname(),
     createdAt,
     touchedAt: now,
-    dotfilesRoot,
+    dotfilesRoot: canonical,
   };
 
   // Ensure meta.json exists for this artifact — first-write path mirrors
