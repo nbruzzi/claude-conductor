@@ -36,6 +36,7 @@ import {
   appendPresenceFailure,
   failureLogPath,
 } from "../../shared/presence-failure-log.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { LockTimeoutError, withLock } from "../lock.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
@@ -111,7 +112,7 @@ export async function check(input: HookInput): Promise<HookResult> {
   if (!artifactPath) return pass();
 
   const artifactId = artifactIdFromPath(artifactPath);
-  const now = Date.now();
+  const now = getWallClockNow();
 
   try {
     return withLock(
@@ -352,7 +353,7 @@ function freshState(sessionId: string, now: number): State {
 }
 
 function persistState(state: State): void {
-  state.lastActive = Date.now();
+  state.lastActive = getWallClockNow();
   trimCooldowns(state);
   const file = stateFile(state.session);
   const tmp = `${file}.tmp`;

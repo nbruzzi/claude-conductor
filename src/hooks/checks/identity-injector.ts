@@ -41,6 +41,7 @@ import {
   type IdentityContext,
 } from "../../channels/identity-context.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { extractSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
@@ -130,7 +131,7 @@ function shouldEmit(
 
 function formatRelativeTime(
   isoString: string,
-  now: number = Date.now(),
+  now: number = getWallClockNow(),
 ): string {
   const ms = now - new Date(isoString).getTime();
   if (Number.isNaN(ms)) return "earlier";
@@ -165,7 +166,7 @@ export async function check(input: HookInput): Promise<HookResult> {
     const contexts = getIdentityContextForSession(sessionId);
     if (contexts.length === 0) return pass();
 
-    const now = Date.now();
+    const now = getWallClockNow();
     const blocks: string[] = [];
 
     for (const ctx of contexts) {

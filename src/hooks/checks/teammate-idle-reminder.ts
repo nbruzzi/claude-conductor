@@ -54,6 +54,7 @@ import {
 import { readHeartbeatBody, resolveChannelsDir } from "../../channels/index.ts";
 import { getMostRecentPeerKind } from "../../channels/peer-recent-message.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { extractSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
@@ -268,7 +269,7 @@ export async function check(input: HookInput): Promise<HookResult> {
     if (contexts.length === 0) return pass();
 
     const idleThreshold = readIdleThresholdMs();
-    const now = Date.now();
+    const now = getWallClockNow();
     const blocks: string[] = [];
 
     for (const ctx of contexts) {

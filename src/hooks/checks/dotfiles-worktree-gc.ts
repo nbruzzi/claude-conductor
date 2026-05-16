@@ -61,6 +61,7 @@ import {
   unregisterActiveSession,
   type HeartbeatListing,
 } from "../../active-sessions/index.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { listWorktrees, removeWorktree } from "../../worktrees/index.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
@@ -103,7 +104,7 @@ export async function check(input: HookInput): Promise<HookResult> {
       return pass();
     }
 
-    const now = Date.now();
+    const now = getWallClockNow();
     const anchorArtifactId = artifactIdFromPath(
       join(effectiveHome(), ".claude"),
     );
@@ -215,7 +216,7 @@ function cursorFilePath(): string {
 function recentSweep(cursorPath: string): boolean {
   try {
     const mtime = statSync(cursorPath).mtimeMs;
-    return Date.now() - mtime < REAP_INTERVAL_MS;
+    return getWallClockNow() - mtime < REAP_INTERVAL_MS;
   } catch {
     return false;
   }
