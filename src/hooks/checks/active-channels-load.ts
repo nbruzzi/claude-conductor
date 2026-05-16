@@ -25,6 +25,7 @@ import {
   touchHeartbeat,
 } from "../../channels/index.ts";
 import { isValidSessionId } from "../../active-sessions/index.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import { extractSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
@@ -66,7 +67,7 @@ export async function check(input: HookInput): Promise<HookResult> {
     }
     if (channels.length === 0) return pass();
 
-    const now = Date.now();
+    const now = getWallClockNow();
     const selfLines: string[] = [];
     const pendingLines: string[] = [];
     const observerLines: string[] = [];

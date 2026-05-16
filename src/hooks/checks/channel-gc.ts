@@ -24,6 +24,7 @@ import {
   newestHeartbeatMtime,
   pruneArchive,
 } from "../../channels/index.ts";
+import { getWallClockNow } from "../../shared/clock.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
 
@@ -62,7 +63,7 @@ export async function check(_input: HookInput): Promise<HookResult> {
 }
 
 function sweepStale(): string[] {
-  const now = Date.now();
+  const now = getWallClockNow();
   const archived: string[] = [];
   let channels: ReturnType<typeof listChannels>;
   try {
