@@ -11,16 +11,22 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
 import { check } from "../../../src/hooks/checks/channels-gc-reaper.ts";
-import { createChannel } from "../../../src/channels/index.ts";
+import {
+  archiveChannel,
+  createChannel,
+  resolveLatestSymlinkPath,
+} from "../../../src/channels/index.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
 const SANDBOX = `/tmp/test-channels-gc-reaper-${process.pid}`;
@@ -356,5 +362,82 @@ describe("channels-gc-reaper hook", () => {
     expect(result.stdout).not.toContain("STUCK orphan channel=c-corrupt2");
     // Breadcrumb present.
     expect(result.stdout).toContain("UNREACHABLE channel=c-corrupt2");
+  });
+
+  // ─── L143 stale-LATEST symlink sweep ────────────────────────────────
+  // The reaper opportunistically cleans `~/.claude/channels/LATEST` when
+  // it points at a missing or archived target. Live cases:
+  //   1. Channel dir was rmSync'd directly (bypass archiveChannel) — LATEST
+  //      becomes a dangling symlink.
+  //   2. Channel was archived but archiveChannel's preemptive clear lost a
+  //      race with a concurrent appendMessage — LATEST points into archive.
+  // The sweep is fail-open (any error breadcrumbed via appendPresenceFailure
+  // and the reaper continues without surfacing).
+
+  it("(L143) sweeps stale LATEST symlink when its target dir is missing", async () => {
+    await makeChannel("c-latest-missing");
+    // createChannel wrote LATEST → c-latest-missing. Now delete the channel
+    // dir directly (bypass archiveChannel) to simulate rmSync.
+    rmSync(channelDir("c-latest-missing"), { recursive: true, force: true });
+    expect(existsSync(resolveLatestSymlinkPath())).toBe(false); // dangling lstat: false symlink remains
+    // existsSync on a dangling symlink returns false on most platforms; we
+    // need lstatSync to see the link itself before the sweep runs.
+    expect(lstatSync(resolveLatestSymlinkPath()).isSymbolicLink()).toBe(true);
+
+    const result = await check(inputFor());
+
+    // The dangling symlink is gone post-sweep.
+    expect(
+      (() => {
+        try {
+          lstatSync(resolveLatestSymlinkPath());
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+    ).toBe(false);
+    // Summary line surfaces the action.
+    expect(result.stdout).toContain("swept stale LATEST symlink");
+    expect(result.stdout).toContain("target missing");
+  });
+
+  it("(L143) sweeps stale LATEST symlink when its target was archived", async () => {
+    await makeChannel("c-latest-archived");
+    // archiveChannel's preemptive clear would normally remove LATEST first.
+    // Simulate the lost-race case by replanting LATEST → archive AFTER
+    // archive moves the dir.
+    archiveChannel("c-latest-archived");
+    const archivedDir = join(SANDBOX, ".archive", "c-latest-archived");
+    // The preemptive clear ran inside archiveChannel; LATEST is already
+    // cleared. Re-plant it pointing into archive to simulate the race.
+    symlinkSync(archivedDir, resolveLatestSymlinkPath());
+    expect(lstatSync(resolveLatestSymlinkPath()).isSymbolicLink()).toBe(true);
+
+    const result = await check(inputFor());
+
+    expect(
+      (() => {
+        try {
+          lstatSync(resolveLatestSymlinkPath());
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+    ).toBe(false);
+    expect(result.stdout).toContain("swept stale LATEST symlink");
+    expect(result.stdout).toContain("target archived");
+  });
+
+  it("(L143) preserves a valid LATEST symlink pointing at a live channel", async () => {
+    await makeChannel("c-latest-live");
+    expect(lstatSync(resolveLatestSymlinkPath()).isSymbolicLink()).toBe(true);
+
+    const result = await check(inputFor());
+
+    // Symlink still present, still pointing at the live channel.
+    expect(lstatSync(resolveLatestSymlinkPath()).isSymbolicLink()).toBe(true);
+    expect(result.stdout).not.toContain("swept stale LATEST symlink");
   });
 });
