@@ -27,13 +27,16 @@ import {
   closeSync,
   constants as fsConstants,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -46,6 +49,7 @@ import {
 import { getWallClockNow } from "../shared/clock.ts";
 import { extractSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
+import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 
 /** Conservative atomic-append threshold. POSIX guarantees PIPE_BUF (512 on
  *  macOS); Linux regular-file O_APPEND is typically safe up to 4096. We
@@ -224,6 +228,23 @@ export function resolveArchiveDir(): string {
 }
 
 /**
+ * Path to the `~/.claude/channels/LATEST` aggregate-pointer symlink. The
+ * symlink points to the channel directory of the most-recently-active
+ * channel (touched on `createChannel` + `appendMessage`; cleared on
+ * `closeChannel` + `archiveChannel` if it points to the channel being
+ * closed/archived). Sibling to `~/.claude/handoffs/LATEST.md` — same
+ * discoverability semantic at the channels layer.
+ *
+ * See backlog L143 design — option (a) was selected. Aggregate-pointer
+ * symlinks are write-through-fragile if written via `>` (per the L146
+ * "tool wired, pathway broken" cluster instance 5); writes here always go
+ * through `writeLatestSymlink` which uses mkstemp + rename for race-safety.
+ */
+export function resolveLatestSymlinkPath(): string {
+  return join(resolveChannelsDir(), LATEST_BASENAME);
+}
+
+/**
  * Canonicalize a handoff path to a channel ID.
  *
  *   HANDOFF_2026-04-19_11-30.md     → 2026-04-19_11-30
@@ -325,6 +346,87 @@ const HEARTBEAT_SUBDIR = "heartbeats";
 const LEGACY_HEARTBEAT_SUBDIR = "heartbeat";
 const LAST_SEEN_SUBDIR = "last-seen-cursors";
 const LEGACY_LAST_SEEN_SUBDIR = "last-seen";
+
+// Aggregate-pointer symlink for active-arc discoverability (backlog L143).
+// Sibling to `~/.claude/handoffs/LATEST.md`. Writes go through
+// `writeLatestSymlink` (mkstemp+rename for race-safety per L143 concern (i));
+// reads via `resolveLatestSymlinkPath` + `readlinkSync`. The handoff guard at
+// `~/.claude-dotfiles/src/hooks/checks/handoff-symlink-write-guard.ts` is the
+// PreToolUse precedent that prevents Edit/Write through this symlink — a
+// parallel `channels-latest-symlink-write-guard.ts` lands on the dotfiles
+// consumer side (paired Bravo PR per plan §LATEST symlink lane split).
+const LATEST_BASENAME = "LATEST";
+
+/**
+ * Touch the `~/.claude/channels/LATEST` symlink so it points at `channelId`'s
+ * directory. Called on `createChannel` + `appendMessage` (touch-on-activity
+ * semantic). Atomic via mkstemp + `renameSync` per L143 concern (i) on
+ * concurrent-create races. **Fail-open + breadcrumb** per plan Q4: a write
+ * failure (read-only filesystem, EACCES, ELOOP) emits an
+ * `appendPresenceFailure` event and the caller continues. LATEST is a
+ * discoverability primitive, not a correctness one — throwing in
+ * `appendMessage` for a discoverability fault would be the wrong tradeoff.
+ */
+function writeLatestSymlink(channelId: string): void {
+  const target = channelDir(channelId);
+  const symlinkPath = resolveLatestSymlinkPath();
+  const tmpPath = `${symlinkPath}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
+  try {
+    mkdirSync(resolveChannelsDir(), { recursive: true });
+    symlinkSync(target, tmpPath);
+    renameSync(tmpPath, symlinkPath);
+  } catch (err: unknown) {
+    // Cleanup tmp if the rename failed; ignore secondary errors.
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      /* tmp may not exist if symlinkSync failed first */
+    }
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId: null,
+      source: "channels-identity",
+      kind: "write-failed",
+      artifactPath: symlinkPath,
+      detail: `[channels-latest-symlink] write failed for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+}
+
+/**
+ * Clear the `~/.claude/channels/LATEST` symlink iff it currently points to
+ * `channelId`. Called on `closeChannel` + `archiveChannel` (defensive
+ * touch-on-end semantic). Idempotent — silent no-op if the symlink is
+ * missing, points elsewhere, or is unreadable. Same fail-open + breadcrumb
+ * discipline as `writeLatestSymlink`.
+ */
+function clearLatestSymlinkIfPointsTo(channelId: string): void {
+  const symlinkPath = resolveLatestSymlinkPath();
+  let currentTarget: string;
+  try {
+    const stat = lstatSync(symlinkPath);
+    if (!stat.isSymbolicLink()) return;
+    currentTarget = readlinkSync(symlinkPath);
+  } catch {
+    // ENOENT / EACCES / ELOOP — nothing to clear.
+    return;
+  }
+  // `readlinkSync` returns the symlink's target as it was created. We wrote
+  // the absolute path of `channelDir(channelId)`, so compare against that.
+  if (currentTarget !== channelDir(channelId)) return;
+  try {
+    unlinkSync(symlinkPath);
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId: null,
+      source: "channels-identity",
+      kind: "write-failed",
+      artifactPath: symlinkPath,
+      detail: `[channels-latest-symlink] clear failed for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+}
 
 function heartbeatDir(id: string): string {
   return join(channelDir(id), HEARTBEAT_SUBDIR);
@@ -667,6 +769,7 @@ export async function createChannel(args: {
     };
     writeMetadataRaw(channelId, meta, sessionId);
     touchHeartbeat(channelId, sessionId);
+    writeLatestSymlink(channelId);
     return meta;
   });
 }
@@ -705,6 +808,11 @@ export async function closeChannel(args: {
       meta.closed_at = new Date().toISOString();
       writeMetadataRaw(channelId, meta, sessionId);
     }
+    // Defensive: clear LATEST if it pointed at this channel. Idempotent close
+    // means we always check (re-close on a channel that LATEST migrated away
+    // from is a no-op). Tiny race window vs concurrent appendMessage on
+    // another channel is documented in clearLatestSymlinkIfPointsTo.
+    clearLatestSymlinkIfPointsTo(channelId);
     return meta;
   });
 }
@@ -1247,6 +1355,13 @@ export async function appendMessage(args: {
       writeMetadataRaw(channelId, mutatedMetadata, message.from);
     }
     touchHeartbeat(channelId, message.from);
+    // L143 — touch LATEST symlink so the most-recently-active channel is
+    // discoverable as `~/.claude/channels/LATEST`. Sibling pattern to
+    // `~/.claude/handoffs/LATEST.md`. Inside the metadata lock for the
+    // SOURCE channel; the symlink itself is a cross-channel primitive but
+    // the atomic mkstemp+rename in writeLatestSymlink handles cross-channel
+    // race against other appendMessage callers.
+    writeLatestSymlink(channelId);
     return message;
   });
 }
@@ -1496,6 +1611,16 @@ export function listChannels(opts?: {
   if (!existsSync(root)) return out;
   for (const entry of readdirSync(root)) {
     if (entry === ".archive") continue;
+    if (entry === LATEST_BASENAME) continue; // L143 aggregate-pointer symlink — not a channel
+    // Defense in depth: skip any symlink entry. The channels dir SHOULD contain
+    // only the LATEST symlink today, but other future aggregate pointers (per
+    // the L146 "tool wired, pathway broken" cluster) would also be symlinks
+    // and must not surface as channel candidates.
+    try {
+      if (lstatSync(join(root, entry)).isSymbolicLink()) continue;
+    } catch {
+      /* lstat failed — fall through, the metadata read below will catch */
+    }
     const id = entry;
     // Split try/catch (RE-1 v2.6 fold per Step C cross-audit): a failure
     // reading `metadata.json` is what defines "unreachable" — orphan
@@ -1577,6 +1702,12 @@ function lastMessageTs(id: string): string | null {
 
 /** Move a channel dir into .archive/. Used by channel-gc. */
 export function archiveChannel(channelId: string): void {
+  // L143 — clear LATEST first so a brief window where LATEST points at a
+  // half-renamed source dir doesn't surface. Concurrent appendMessage on
+  // another channel can still race and re-establish LATEST → that channel
+  // during the window between this clear and the renameSync below; that's
+  // fine (LATEST tracks activity, not archive-state).
+  clearLatestSymlinkIfPointsTo(channelId);
   const src = channelDir(channelId);
   const archive = resolveArchiveDir();
   mkdirSync(archive, { recursive: true });
