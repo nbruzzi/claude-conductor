@@ -90,6 +90,7 @@ export {
   readMetadata,
   resolveArchiveDir,
   resolveChannelsDir,
+  resolveLatestSymlinkPath,
   resolveSessionId,
   touchHeartbeat,
   validateChannelMetadata,

@@ -52,8 +52,10 @@ import {
   existsSync,
   linkSync,
   mkdirSync,
+  lstatSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   statSync,
   unlinkSync,
   utimesSync,
@@ -64,8 +66,10 @@ import { join } from "node:path";
 import {
   LOCK_STALE_MS,
   listChannels,
+  resolveArchiveDir,
   resolveChannelsDir,
   resolveLastSeenDir,
+  resolveLatestSymlinkPath,
   resolveLegacyLastSeenDir,
   withMetadataLock,
   readMetadata,
@@ -227,7 +231,66 @@ async function reapAllChannels(): Promise<string[]> {
     }
   }
 
+  // L143 — sweep stale LATEST symlink. Defensive: archiveChannel +
+  // closeChannel both clear LATEST if it pointed at them, but this catches
+  // cases where the channel dir was deleted directly (rmSync) without going
+  // through archiveChannel, OR a race left LATEST pointing at .archive/.
+  // Append the action as a summary line if a sweep fired so the operator
+  // sees the cleanup at session-start.
+  const sweepLine = sweepLatestSymlinkStaleness();
+  if (sweepLine !== null) summaryLines.push(sweepLine);
+
   return summaryLines;
+}
+
+/**
+ * Detect + clean a stale `~/.claude/channels/LATEST` symlink. Returns a
+ * one-line summary string when the symlink was removed (for inclusion in
+ * the reaper's warn output); returns `null` when the symlink is absent,
+ * still valid, or unreadable (in which case we leave it alone).
+ *
+ * Stale conditions:
+ *   - Target path does not exist (the channel dir was deleted out from
+ *     under us — direct rmSync, ENOENT-after-archive race, etc.).
+ *   - Target path resolves under `<channelsDir>/.archive/` (LATEST should
+ *     never point at an archived channel; archiveChannel's preemptive
+ *     clear catches the dominant path; this is the belt-and-suspenders).
+ *
+ * Fail-open: any unexpected error during the sweep is breadcrumbed via
+ * `appendPresenceFailure` and the sweep returns `null`. The reaper never
+ * blocks session-start on a discoverability-primitive cleanup.
+ */
+function sweepLatestSymlinkStaleness(): string | null {
+  const symlinkPath = resolveLatestSymlinkPath();
+  let target: string;
+  try {
+    const stat = lstatSync(symlinkPath);
+    if (!stat.isSymbolicLink()) return null;
+    target = readlinkSync(symlinkPath);
+  } catch {
+    // ENOENT / EACCES / ELOOP — nothing to sweep.
+    return null;
+  }
+  // Stale if target dir is missing OR resides under the archive subtree.
+  const archivePrefix = resolveArchiveDir();
+  const targetExists = existsSync(target);
+  const targetIsArchived = target.startsWith(`${archivePrefix}/`);
+  if (targetExists && !targetIsArchived) return null;
+  try {
+    unlinkSync(symlinkPath);
+    const reason = !targetExists ? "target missing" : "target archived";
+    return `  swept stale LATEST symlink (${reason}): was → ${target}`;
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "write-failed",
+      sessionId: null,
+      artifactPath: symlinkPath,
+      detail: `gc-reaper: failed to sweep stale LATEST symlink: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return null;
+  }
 }
 
 async function reapChannel(channelId: string): Promise<string[]> {
