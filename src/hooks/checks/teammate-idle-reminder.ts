@@ -45,7 +45,6 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
-import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
   getIdentityContextForSession,
   type IdentityContext,
@@ -55,7 +54,7 @@ import { readHeartbeatBody, resolveChannelsDir } from "../../channels/index.ts";
 import { getMostRecentPeerKind } from "../../channels/peer-recent-message.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
-import { extractSessionId } from "../session-id.ts";
+import { extractValidSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
 
@@ -261,8 +260,8 @@ function formatPeerBlock(
 
 export async function check(input: HookInput): Promise<HookResult> {
   try {
-    const sessionId = extractSessionId(input.raw);
-    if (sessionId === undefined || !isValidSessionId(sessionId)) return pass();
+    const sessionId = extractValidSessionId(input.raw);
+    if (sessionId === undefined) return pass();
 
     const contexts: readonly IdentityContext[] =
       getIdentityContextForSession(sessionId);

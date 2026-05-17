@@ -6,6 +6,7 @@ import type { HookInput } from "../../src/hooks/types.ts";
 import { DEFAULT_DISPATCH } from "../../src/hooks/types.ts";
 import {
   extractSessionId,
+  extractValidSessionId,
   resolveSessionIdOrNull,
 } from "../../src/hooks/session-id.ts";
 
@@ -21,7 +22,7 @@ function input(raw: Record<string, unknown>): HookInput {
   };
 }
 
-describe("extractSessionId", () => {
+describe("extractSessionId (raw — deprecated for end-consumers; preserved for test infra)", () => {
   it("returns the session_id field when present and non-empty", () => {
     expect(extractSessionId({ session_id: "abc-123" })).toBe("abc-123");
   });
@@ -38,6 +39,100 @@ describe("extractSessionId", () => {
     expect(extractSessionId({ session_id: 42 })).toBe(undefined);
     expect(extractSessionId({ session_id: null })).toBe(undefined);
     expect(extractSessionId({ session_id: ["abc"] })).toBe(undefined);
+  });
+
+  it("returns path-traversal-shaped strings VERBATIM (the safety gap the safe wrapper closes)", () => {
+    // This is the L:768 motivating case: the raw extractor does not validate,
+    // so a malformed id flows through to any consumer that forgets to gate.
+    expect(extractSessionId({ session_id: "../etc/passwd" })).toBe(
+      "../etc/passwd",
+    );
+    expect(extractSessionId({ session_id: "bad/slash" })).toBe("bad/slash");
+  });
+});
+
+describe("extractValidSessionId (safe — preferred for all end-consumers, L:768)", () => {
+  let prevEnv: string | undefined;
+  let errors: string[];
+  let origError: typeof console.error;
+
+  beforeEach(() => {
+    prevEnv = process.env["CLAUDE_SESSION_ID"];
+    delete process.env["CLAUDE_SESSION_ID"];
+    errors = [];
+    origError = console.error;
+    console.error = ((msg: string) => {
+      errors.push(msg);
+    }) as unknown as typeof console.error;
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env["CLAUDE_SESSION_ID"];
+    else process.env["CLAUDE_SESSION_ID"] = prevEnv;
+    console.error = origError;
+  });
+
+  it("returns the validated session_id when it matches isValidSessionId", () => {
+    expect(extractValidSessionId({ session_id: "abc-123" })).toBe("abc-123");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("returns undefined when session_id is absent (no breadcrumb — normal case)", () => {
+    expect(extractValidSessionId({})).toBe(undefined);
+    expect(errors).toHaveLength(0);
+  });
+
+  it("returns undefined when session_id is empty (no breadcrumb — empty is treated as absent)", () => {
+    expect(extractValidSessionId({ session_id: "" })).toBe(undefined);
+    expect(errors).toHaveLength(0);
+  });
+
+  it("rejects path-traversal-shaped strings AND emits a stderr breadcrumb (the safety property)", () => {
+    expect(extractValidSessionId({ session_id: "../etc/passwd" })).toBe(
+      undefined,
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("[session-id]");
+    expect(errors[0]).toContain("raw.session_id");
+    expect(errors[0]).toContain("isValidSessionId");
+    // The raw id is never logged — only its length
+    expect(errors[0]).not.toContain("../etc/passwd");
+  });
+
+  it("rejects slash-containing ids with breadcrumb", () => {
+    expect(extractValidSessionId({ session_id: "bad/slash" })).toBe(undefined);
+    expect(errors).toHaveLength(1);
+  });
+
+  it("rejects leading-hyphen ids with breadcrumb", () => {
+    expect(extractValidSessionId({ session_id: "-abc" })).toBe(undefined);
+    expect(errors).toHaveLength(1);
+  });
+
+  it("rejects ids exceeding 128 chars with breadcrumb", () => {
+    expect(extractValidSessionId({ session_id: "a" + "b".repeat(128) })).toBe(
+      undefined,
+    );
+    expect(errors).toHaveLength(1);
+  });
+
+  it("accepts the 128-char boundary", () => {
+    const exactlyMax = "a" + "b".repeat(127);
+    expect(extractValidSessionId({ session_id: exactlyMax })).toBe(exactlyMax);
+    expect(errors).toHaveLength(0);
+  });
+
+  it("accepts allowed special chars (._-)", () => {
+    expect(extractValidSessionId({ session_id: "a.b_c-d" })).toBe("a.b_c-d");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("returns undefined for non-string session_id (no breadcrumb — extraction failed)", () => {
+    expect(extractValidSessionId({ session_id: 42 })).toBe(undefined);
+    expect(extractValidSessionId({ session_id: null })).toBe(undefined);
+    expect(extractValidSessionId({ session_id: ["abc"] })).toBe(undefined);
+    // No breadcrumbs — these fail at extractSessionId, never reach validation
+    expect(errors).toHaveLength(0);
   });
 });
 

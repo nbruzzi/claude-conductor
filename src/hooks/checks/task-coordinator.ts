@@ -33,13 +33,12 @@
  * Plan: ~/.claude/plans/prismatic-orbiting-mesh.md REV 2.1 §Slice 6.
  */
 
-import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
   getIdentityContextForSession,
   type IdentityContext,
 } from "../../channels/identity-context.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
-import { extractSessionId } from "../session-id.ts";
+import { extractValidSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { block, pass, warn } from "../types.ts";
 
@@ -50,8 +49,8 @@ export async function check(input: HookInput): Promise<HookResult> {
   // through — this hook has no opinion on Bash/Edit/Write/etc.
   if (input.toolName !== "Task") return pass();
 
-  const sessionId = extractSessionId(input.raw);
-  if (sessionId === undefined || !isValidSessionId(sessionId)) {
+  const sessionId = extractValidSessionId(input.raw);
+  if (sessionId === undefined) {
     // No session id (or invalid shape) — fail-open per RE-W0-3 + ARCH-W0-9.
     // Hook can't reason about role without a session id; let the dispatch
     // proceed rather than block on a missing-context state.

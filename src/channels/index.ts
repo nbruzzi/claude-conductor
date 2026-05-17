@@ -47,7 +47,7 @@ import {
   isValidSessionId,
 } from "../active-sessions/index.ts";
 import { getWallClockNow } from "../shared/clock.ts";
-import { extractSessionId } from "../hooks/session-id.ts";
+import { extractValidSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 
@@ -300,8 +300,8 @@ export function resolveSessionId(
   if (envOverride && envOverride.length > 0 && isValidSessionId(envOverride)) {
     return envOverride;
   }
-  const fromInput = raw ? extractSessionId(raw) : undefined;
-  if (fromInput && isValidSessionId(fromInput)) return fromInput;
+  const fromInput = raw ? extractValidSessionId(raw) : undefined;
+  if (fromInput) return fromInput;
   throw new Error(
     "[channels] session_id not found or invalid — pass hook input with raw.session_id (matching isValidSessionId) or set CLAUDE_SESSION_ID",
   );
