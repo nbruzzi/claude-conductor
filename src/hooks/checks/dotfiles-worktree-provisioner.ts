@@ -5,14 +5,17 @@
  * Phase 3 Slice 2 — `dotfiles-worktree-provisioner` session-start hook.
  *
  * Plan: ~/.claude/plans/curious-whistling-sparrow.md REV 0.2 §Provisioner
- * hook step list.
+ * hook step list. **P0 substrate canary (backlog L:892, 2026-05-17):**
+ * Path B integration — `linkCanonicalNodeModules` composed unconditionally
+ * after worktree-path materialization (covers fresh-provision, idempotent
+ * re-entry, and provisionWorktree-internal "exists" branches uniformly).
  *
  * Default-off in this slice (per D9): the feature flag
  * `CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES` must equal `"1"` for the hook
  * to do anything. The flag-default flip happens as a separate follow-up
  * commit on main after Bravo first-dogfood ack.
  *
- * Step list (per REV 0.2 + plan):
+ * Step list (per REV 0.2 + P0 fold):
  *   1. Extract sessionId.
  *   2. Read feature flag; return pass() (no-op) when off.
  *   3. Soft-ceiling check (REV 0.2 RE-105): if listWorktrees().length >= 20,
@@ -26,11 +29,15 @@
  *      regardless of CWD. Force-creates the canonical-claude-home anchor
  *      heartbeat record if absent so the resolver's read path is
  *      reachable from any later context.
- *   7. If worktree path exists already, return pass() with informational
- *      reminder ("[worktree-provisioner] using existing worktree …").
- *   8. Otherwise provisionWorktree() and report.
- *   9. Errors: appendPresenceFailure(kind: "worktree-provision-failed");
- *      session continues against canonical (degraded but functional).
+ *   7. Materialize the worktree: provision if absent, accept if present.
+ *      provisionWorktree errors short-circuit with a `worktree-provision-
+ *      failed` breadcrumb; feature-disabled short-circuits silently.
+ *   8. **P0 link step** (Path B fold): `linkCanonicalNodeModules` composed
+ *      unconditionally after Step 7. Idempotent via `already-linked`. Error
+ *      paths emit `worktree-deps-link-failed` breadcrumb but session continues.
+ *   9. verifyProvision with `cross-edge-dep-missing` facet — pins the
+ *      cross-edge resolution invariant (`<wt>/node_modules/claude-conductor/
+ *      package.json` resolvable) post-link.
  *
  * Fail-open + breadcrumb is the entire failure-mode policy — provisioning
  * MUST NOT break session-start.
@@ -49,6 +56,7 @@ import {
 } from "../../active-sessions/index.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
+  linkCanonicalNodeModules,
   listWorktrees,
   provisionWorktree,
   worktreePathForSession,
@@ -90,24 +98,86 @@ export async function check(input: HookInput): Promise<HookResult> {
     // anchor exists even if provision fails or returns "exists".
     setSentinelDotfilesRoot({ sessionId, dotfilesRoot: worktreePath });
 
-    if (existsSync(worktreePath)) {
+    // Step 7 — Materialize worktree. Three terminal materialization states
+    // (existsSync-early, provisionWorktree="ok", provisionWorktree="exists")
+    // all converge on "worktreePath is now usable." Path B fold (P0 substrate
+    // canary L:892, 2026-05-17) lifted the link + verify steps OUTSIDE the
+    // conditional so they run uniformly across all three terminal states.
+    if (!existsSync(worktreePath)) {
+      const result = provisionWorktree(sessionId, { dotfilesCanonical });
+      if (result.kind === "feature-disabled") {
+        // Defensive — we already checked the flag above. Keep as belt-and-
+        // suspenders for the case where provisionWorktree's internal flag-read
+        // diverges from this hook's read (e.g., a featureFlagOverride somehow
+        // flips between calls).
+        return pass();
+      }
+      if (result.kind === "error") {
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          sessionId,
+          source: "dispatcher",
+          kind: "worktree-provision-failed",
+          artifactPath: dotfilesCanonical,
+          detail: result.detail,
+        });
+        messages.push(
+          `[${SOURCE}] provision failed: ${result.detail.slice(0, 240)}; session continues against canonical`,
+        );
+        // Short-circuit: no worktree means nothing to link or verify.
+        return warn(SOURCE, messages.join("\n"));
+      }
+      // result.kind === "ok" || "exists" — worktree path is materialized.
+      messages.push(
+        result.kind === "ok"
+          ? `[${SOURCE}] created ${worktreePath}`
+          : `[${SOURCE}] using existing ${result.path}`,
+      );
+    } else {
       messages.push(
         `[${SOURCE}] using existing worktree at ${worktreePath} (idempotent re-run)`,
       );
-      return messages.length > 0 ? warn(SOURCE, messages.join("\n")) : pass();
     }
 
-    const result = provisionWorktree(sessionId, { dotfilesCanonical });
-    if (result.kind === "ok") {
-      const verdict = verifyProvision({
+    // Step 8 — P0 substrate canary fix (backlog L:892). Compose
+    // `linkCanonicalNodeModules` AFTER worktree materialization regardless of
+    // which path got us there (Path B per Bravo cross-audit L93 catch + Alpha
+    // confirmation 2026-05-17 ~13:20Z). Symlink is idempotent via
+    // `already-linked`; race-safe via EEXIST catch in the primitive.
+    const link = linkCanonicalNodeModules(dotfilesCanonical, worktreePath);
+    if (link.kind === "error") {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
         sessionId,
-        worktreePath,
-        dotfilesCanonical,
+        source: "dispatcher",
+        kind: "worktree-deps-link-failed",
+        artifactPath: worktreePath,
+        detail: link.detail,
       });
-      if (verdict.complete) {
-        messages.push(`[${SOURCE}] created and verified ${worktreePath}`);
-        return warn(SOURCE, messages.join("\n"));
-      }
+      messages.push(
+        `[${SOURCE}] node_modules symlink failed: ${link.detail.slice(0, 240)}; cross-edge imports will break — investigate and fix with \`ln -s ${dotfilesCanonical}/node_modules ${worktreePath}/node_modules\``,
+      );
+      // Fail-soft: continue to verify so cross-edge-dep-missing fires too,
+      // giving the operator both the "why" (link error) and "what's broken"
+      // (verifyProvision facet) signals in the same session-start surface.
+    } else if (link.kind === "skip") {
+      // Canonical has no `node_modules/` yet — likely first-ever invocation
+      // before any `bun install` ran at canonical. Breadcrumb-only; not a
+      // failure (the operator's next action is "bun install at canonical").
+      messages.push(
+        `[${SOURCE}] canonical has no node_modules — run \`bun install\` at ${dotfilesCanonical} once, then this fix engages on subsequent worktrees`,
+      );
+    }
+    // kind: "ok" and "already-linked" are happy paths — no breadcrumb noise.
+
+    // Step 9 — verifyProvision with `cross-edge-dep-missing` facet extension.
+    // Pins the cross-edge resolution invariant post-link.
+    const verdict = verifyProvision({
+      sessionId,
+      worktreePath,
+      dotfilesCanonical,
+    });
+    if (!verdict.complete) {
       appendPresenceFailure({
         timestamp: new Date().toISOString(),
         sessionId,
@@ -119,51 +189,9 @@ export async function check(input: HookInput): Promise<HookResult> {
       messages.push(
         `[${SOURCE}] INCOMPLETE: ${verdict.facet}; logged to presence-failure-log for substrate diagnosis`,
       );
-      return warn(SOURCE, messages.join("\n"));
     }
-    if (result.kind === "exists") {
-      const verdict = verifyProvision({
-        sessionId,
-        worktreePath,
-        dotfilesCanonical,
-      });
-      if (verdict.complete) {
-        messages.push(`[${SOURCE}] using existing ${result.path}`);
-        return warn(SOURCE, messages.join("\n"));
-      }
-      appendPresenceFailure({
-        timestamp: new Date().toISOString(),
-        sessionId,
-        source: "dispatcher",
-        kind: "worktree-provision-incomplete",
-        artifactPath: worktreePath,
-        detail: verdict.detail,
-      });
-      messages.push(
-        `[${SOURCE}] INCOMPLETE on idempotent re-run: ${verdict.facet}; logged to presence-failure-log`,
-      );
-      return warn(SOURCE, messages.join("\n"));
-    }
-    if (result.kind === "feature-disabled") {
-      // Defensive — we already checked the flag above. Keep as belt-and-
-      // suspenders for the case where provisionWorktree's internal flag-read
-      // diverges from this hook's read (e.g., a featureFlagOverride somehow
-      // flips between calls).
-      return pass();
-    }
-    // result.kind === "error"
-    appendPresenceFailure({
-      timestamp: new Date().toISOString(),
-      sessionId,
-      source: "dispatcher",
-      kind: "worktree-provision-failed",
-      artifactPath: dotfilesCanonical,
-      detail: result.detail,
-    });
-    messages.push(
-      `[${SOURCE}] provision failed: ${result.detail.slice(0, 240)}; session continues against canonical`,
-    );
-    return warn(SOURCE, messages.join("\n"));
+
+    return messages.length > 0 ? warn(SOURCE, messages.join("\n")) : pass();
   } catch (err: unknown) {
     const detail = err instanceof Error ? err.message : String(err);
     appendPresenceFailure({
@@ -220,9 +248,9 @@ type VerifyResult =
  *
  * Returns `complete: true` when post-provision state matches what a future
  * GC reaper would expect (path is statable, no realpath-vs-raw drift,
- * sentinel readback returns the worktreePath). Otherwise returns the
- * incomplete facet that fired and a stable key=value detail string for
- * presence-failure-log ingestion.
+ * sentinel readback returns the worktreePath, and cross-edge dep resolution
+ * is intact). Otherwise returns the incomplete facet that fired and a stable
+ * key=value detail string for presence-failure-log ingestion.
  *
  * The realpath-vs-raw mismatch facet is the load-bearing diagnostic for
  * the H2 hypothesis (provisioner stores raw `dotfilesRoot` at the sentinel;
@@ -233,6 +261,15 @@ type VerifyResult =
  * (the value was just written by `setSentinelDotfilesRoot`), but kept for
  * cross-session diagnostic — a sentinel-readback-null in production would
  * indicate the registry write itself failed silently.
+ *
+ * P0 substrate canary fold (backlog L:892, 2026-05-17): the
+ * `cross-edge-dep-missing` facet pins the post-link invariant that
+ * `<worktreePath>/node_modules/claude-conductor/package.json` resolves.
+ * Fires when canonical lacks `claude-conductor` in node_modules, when
+ * the symlink target points at a moved/missing canonical, or when the
+ * link step itself failed (operator collision or fs error). Probed last
+ * so earlier substrate-shape facets take precedence (a missing worktree
+ * dir is more diagnostic than a missing cross-edge dep within it).
  */
 function verifyProvision(args: {
   sessionId: string;
@@ -277,6 +314,22 @@ function verifyProvision(args: {
     /* best-effort */
   }
 
+  // P0 substrate canary (backlog L:892, 2026-05-17) — cross-edge dep
+  // resolution probe. Cheap existence check on the load-bearing target
+  // (`claude-conductor/package.json`); bun resolution walks up from a
+  // script's location to find this file, so its presence is the necessary
+  // condition for cross-edge imports to resolve from the worktree.
+  let crossEdgeDepMissing = false;
+  if (statErrno === "none") {
+    const claudeConductorPkgJson = join(
+      worktreePath,
+      "node_modules",
+      "claude-conductor",
+      "package.json",
+    );
+    crossEdgeDepMissing = !existsSync(claudeConductorPkgJson);
+  }
+
   let facet: string | null = null;
   if (statErrno !== "none") {
     facet = `stat-errno=${statErrno}`;
@@ -284,6 +337,8 @@ function verifyProvision(args: {
     facet = "realpath-mismatch";
   } else if (sentinelReadback === null) {
     facet = "sentinel-readback-null";
+  } else if (crossEdgeDepMissing) {
+    facet = "cross-edge-dep-missing";
   }
 
   let branchExists = false;
