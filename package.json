@@ -25,7 +25,8 @@
     "smoke:all": "./scripts/smoke-phase-1.sh && ./scripts/smoke-phase-2.sh",
     "lint:workflows": "actionlint",
     "verify:fold": "bun run typecheck && bun run format:check && bun run lint && bun run check-generic-paths && bun run check-import-extensions",
-    "verify": "bun run verify:fold && bun test --timeout 30000"
+    "verify": "bun run verify:fold && bun test --timeout 30000",
+    "check": "bun run verify"
   },
   "devDependencies": {
     "@types/bun": "latest",
