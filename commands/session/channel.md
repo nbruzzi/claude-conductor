@@ -226,6 +226,30 @@ Render each peer as `<session-id-short> — <live|online|stale|unknown>
 
 ---
 
+## Audit-request templates
+
+When dispatching an audit-request to a sibling session via this channel
+(e.g., `kind=question` or `kind=note` requesting peer cross-audit), use the
+per-stage template body from `docs/conventions/audit-request-by-stage.md`.
+The convention doc covers all 6 stages — pre-plan-write, plan-v1 cross-audit,
+plan-v2-locked, per-PR, pre-merge-Lane-D, post-merge-retrospective — plus
+self-audit framing and anti-patterns to spot.
+
+**Why this matters for sibling-coord:** silence on the stage + mode-mix
+fields defaults the auditor to mode-1 (downstream verification) only. At
+pre-plan / plan-v1 stages where mode-2 (upstream challenge) is the
+load-bearing axis, silent defaults close the framing-challenge door. The
+templates make stage + mode-mix explicit at the channel-message level so
+the peer auditor commissions correctly without round-tripping for
+clarification.
+
+Default cadence: post the audit-request as `kind=note` or `kind=question`
+on the channel; auditor responds with `kind=note` carrying separated
+mode-1 / mode-2 findings sections + aggregate score + disposition gate
+per the template's "Disposition gate" line.
+
+---
+
 ## Constraints
 
 - Never guess the session ID from mtime — always use hook-input `raw.session_id`.

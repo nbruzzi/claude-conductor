@@ -4,7 +4,7 @@ description: Audit findings need prefix conventions that distinguish mode-2 (cha
 type: feedback
 cadence: stable
 scope: global
-updated: a referenced date
+updated: 2026-05-17
 origin: extracted
 ---
 

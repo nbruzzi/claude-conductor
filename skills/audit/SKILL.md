@@ -37,14 +37,18 @@ If the user didn't specify the stage in their `/audit` invocation, infer from co
 
 If unclear, ASK the user to specify stage before proceeding.
 
+### Per-stage audit-request templates
+
+For each stage, the canonical operator-facing template body — including ask-fields, mode-2 invitations (where applicable), disposition gates — lives in `docs/conventions/audit-request-by-stage.md`. When commissioning an audit (or helping the operator write the audit-request body), refer to that doc for the stage-appropriate template. The convention doc covers all 6 stages (pre-plan-write / plan-v1 / plan-v2-locked / per-PR / pre-merge-Lane-D / post-merge-retrospective) plus self-audit framing and anti-patterns to spot in malformed audit-requests. Source-of-truth: the convention doc; this skill imports it.
+
 ### How stage drives auditor selection (Step 2)
 
-The auditor registry today contains **domain auditors only** (mode-1-biased). Mode-2 invocation at pre-plan + plan-v1 stages currently happens two ways:
+The auditor registry is organized as **two independent pools** per `agents/audit/registry.md`:
 
-1. **Existing domain auditors run BOTH passes.** When stage = pre-plan / plan-v1, dispatch instructions in Step 4 include the mode-2 invitation explicitly: each auditor runs an upstream challenge first (probe the framing within their domain) and a downstream verification second. See Step 4 dispatch template additions.
-2. **Future posture-auditor pool.** A backlog entry tracks adding dedicated posture-auditors (Premise / Scope / Reframe / Default-Action / Sequence) to the registry. When that lands, Step 2 selection includes both pools.
+1. **Pool A — domain auditors** (cold + familiar; keyword-trigger selection at all stages).
+2. **Pool B — posture auditors** (`agents/audit/posture/{premise,scope,reframe,default-action,sequence}.md`; LENS-class, stage-gated rather than keyword-triggered).
 
-Until posture-auditors exist, the workaround is (1) — domain auditors stretched to both modes via explicit dispatch invitation.
+Posture-auditor selection happens per the stage-mix table in the registry's Selection Heuristics — Pool B fires at pre-plan-write (all 5) / plan-v1 cross-audit (3-5) / post-merge retrospective (1-2) and is zero at plan-v2-locked / per-PR / pre-merge stages. The stage-mode-mix sensitivity (Architecture +3 + workflow forced in) remains as a Pool A fallback when Pool B selects zero — preserved for cycles where domain-heavy plans need mode-2 coverage via domain-stretching.
 
 ### How stage drives synthesis (Step 5)
 
@@ -229,7 +233,7 @@ Each agent call must include:
 - For familiar auditors, `## Project Context` with injected file contents
 - **When Step 1.5 fired:** `## Sibling-Symmetry Context` with the prepared symmetry-delta summary (component pair(s), per-axis deltas, and the explicit instruction to flag structural asymmetry as a finding). Place after `## Plan Under Review` and before `## Project Context` (when present).
 - Closing instruction: "Audit this plan using your protocol. Follow your output format exactly. If your audit required substantive web research, append a `## Research Synthesis` section at the end of your report with the convergent findings, sources, and a 1-line relevance note per source. This captures the research byproduct separately from your audit findings."
-- **When stage = pre-plan / plan-v1** (per Step 0), append a `## Mode-2 invitation` block to the dispatch: "Before the standard mode-1 verification (within-frame correctness), run an upstream challenge pass within your domain. Probe: (a) is the framing right within your lens? (b) what's the alternative shape you'd propose? (c) what default-action is silently being accepted that may be the wrong default? Tag mode-2 findings with one of: `PREMISE-N` (challenges an assumption), `REFRAME-N` (proposes a different design shape), `SCOPE-N` (proposes bundle composition change), `DEFAULT-N` (proposes a different default behavior), `SEQUENCE-N` (proposes a different ordering). Mode-2 findings MUST include concrete-alternative + cost-benefit; 'I have concerns' is not a finding. Run mode-2 BEFORE mode-1 to avoid sunk-cost bias on the implementation." See `~/.claude/projects/-Users-{user}/memory/feedback-audit-findings-prefix-distinguishes-mode.md` for the full prefix convention.
+- **When stage = pre-plan / plan-v1** (per Step 0), append a `## Mode-2 invitation` block to the dispatch: "Before the standard mode-1 verification (within-frame correctness), run an upstream challenge pass within your domain. Probe: (a) is the framing right within your lens? (b) what's the alternative shape you'd propose? (c) what default-action is silently being accepted that may be the wrong default? Tag mode-2 findings with one of: `PREMISE-N` (challenges an assumption), `REFRAME-N` (proposes a different design shape), `SCOPE-N` (proposes bundle composition change), `DEFAULT-N` (proposes a different default behavior), `SEQUENCE-N` (proposes a different ordering). Mode-2 findings MUST include concrete-alternative + cost-benefit; 'I have concerns' is not a finding. Run mode-2 BEFORE mode-1 to avoid sunk-cost bias on the implementation." See `memories/feedback-audit-findings-prefix-distinguishes-mode.md` (plugin-bundled) for the full prefix convention + `docs/conventions/audit-request-by-stage.md` for the per-stage audit-request templates that drive what to push on per stage.
 
 **All auditor agents must be dispatched in a single message** so they run concurrently.
 
