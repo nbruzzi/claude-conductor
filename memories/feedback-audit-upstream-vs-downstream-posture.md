@@ -4,7 +4,7 @@ description: "Every audit has two modes — upstream (challenge the frame — is
 type: feedback
 cadence: stable
 scope: global
-updated: a referenced date
+updated: 2026-05-17
 origin: extracted
 ---
 

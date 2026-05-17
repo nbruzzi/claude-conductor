@@ -40,6 +40,7 @@ Mandatory updating-on-every-change discipline (mirroring the vault `wiki/index.m
 ## Conventions (`docs/conventions/`)
 
 - [docs/conventions/message-kinds-and-verification.md](docs/conventions/message-kinds-and-verification.md) — **Phase 4 Step A Layer 3 + Layer 4 (Bravo lane):** first inhabitant of `docs/conventions/`. Operator + developer reference for the 10 message kinds the `channels send` verb accepts (4 Phase 1 + 5 walkie-talkie + 1 digest), plus the verification-budget convention per kind (when to trust verbatim vs primary-source-verify cited claims). Paired with `feedback-verification-budget-by-kind.md` (the stable cross-arc memory form).
+- [docs/conventions/audit-request-by-stage.md](docs/conventions/audit-request-by-stage.md) — **L:508 audit-request convention doc (2026-05-17):** per-stage templates for audit-requests covering all 6 stages (pre-plan-write / plan-v1 / plan-v2-locked / per-PR / pre-merge-Lane-D / post-merge-retrospective). Ask-fields (stage / mode-mix / lenses / questions / out-of-scope / disposition gate / mode-2 invitations), self-audit framing, anti-patterns to spot in audit-requests. Imported by `skills/audit/SKILL.md` Step 0 + Step 4 + `commands/session/channel.md` audit-request-templates subsection. Paired with `memories/feedback-audit-request-framing-by-stage.md` (the rationale + per-template-design memory; body preserved per L:506+L:508 KS REFRAME-1 option (c) — memory canon + plugin extract).
 
 ## Operations runbooks (`docs/operations/`)
 
