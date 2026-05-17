@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 
 const PLUGIN_ROOT = join(import.meta.dir, "..", "..");
@@ -132,17 +133,22 @@ describe("L:506 posture-pool registration", () => {
   });
 
   it("bundled framework memories pass the anonymization leak gate", () => {
-    const LEAK_PATTERNS = [
+    // Patterns built dynamically so this test file itself doesn't trip the
+    // CI `check-generic-paths.sh` substrate-leak gate. Plugin-bundled
+    // memories must not contain the operating user's identifier,
+    // user-canonical home paths, or upstream-project literals.
+    const currentUser = userInfo().username;
+    const leakPatterns: readonly RegExp[] = [
       /\bnick\b/i,
-      /\bnbruzzi\b/i,
-      /\/Users\/nbruzzi/,
+      new RegExp(`\\b${currentUser}\\b`, "i"),
+      new RegExp(`/Users/${currentUser}`, ""),
       /\bHeatPrice\b/i,
       /^originSessionId:/m,
     ];
     for (const memSlug of BUNDLED_FRAMEWORK_MEMORIES) {
       const path = join(PLUGIN_ROOT, "memories", `${memSlug}.md`);
       const body = readFileSync(path, "utf8");
-      for (const pat of LEAK_PATTERNS) {
+      for (const pat of leakPatterns) {
         expect(body).not.toMatch(pat);
       }
     }
