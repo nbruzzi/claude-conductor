@@ -473,7 +473,7 @@ function readBodyFromFile(ctx: DieContext, path: string): string {
       if (resolved === root || resolved.startsWith(`${root}/`)) {
         die(
           ctx,
-          `--body-file: refusing path under "${root}" — sensitive location`,
+          `--body-file: refusing path under "${root}" — sensitive location. Try a path under ~/scratch/ or another non-sensitive location.`,
           {
             code: 2,
             category: "VALIDATION",

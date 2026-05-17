@@ -148,6 +148,10 @@ describe("--body-file: denylist prefixes (9)", () => {
     const result = runSend("/etc/passwd");
     expect(result.status).toBe(2);
     expect(result.stderr).toMatch(/refusing path under "(\/etc|\/private)"/);
+    // L:504 — denylist refusal hints at a sanctioned scratch path so operators
+    // know where to go instead. macOS `/tmp → /private/tmp` is the dominant
+    // hit class; without the hint, callers default to /tmp again and re-hit.
+    expect(result.stderr).toContain("Try a path under ~/scratch/");
   });
 
   it("rejects /var/* paths", () => {
