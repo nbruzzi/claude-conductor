@@ -311,9 +311,9 @@ claude-conductor worktrees gc --force          # reap orphans + clear sentinels
 # Find the session's worktree:
 claude-conductor worktrees show <sid>
 # OR query the resolver directly:
-eval "$(bun run ~/claude-conductor/src/cli/resolve-dotfiles-root.ts --session-id <sid>)"
-echo $CLAUDE_DOTFILES_ROOT_RESOLVED
-cd $CLAUDE_DOTFILES_ROOT_RESOLVED
+CLAUDE_DOTFILES_ROOT_RESOLVED="$(bun run ~/claude-conductor/src/cli/resolve-dotfiles-root.ts --print --session-id <sid>)"
+echo "$CLAUDE_DOTFILES_ROOT_RESOLVED"
+cd "$CLAUDE_DOTFILES_ROOT_RESOLVED"
 ```
 
 The Stop-hook epilogue echoes a similar pointer in the session-end output:
