@@ -523,3 +523,138 @@ Framework earned its weight cycle 1. Pre-emptively naming mode-2 axes in the pla
 - Channel: `2026-05-17_03-21` — Alpha (sid 207c3247) + Bravo (sid f3da24e2) coordination throughout
 
 ---
+
+## Decision: Post-framework-ratification arc — posture-auditor pool + audit-request convention doc + slash-prelude eval-shim refactor (L:506 + L:508 + L:894 bundle)
+
+```yaml
+---
+ts: 2026-05-17T16:55:00Z
+kind: architectural
+severity: major
+phase: 3
+backlog:
+  - "wiki/backlog.md:506 (posture-auditor pool)"
+  - "wiki/backlog.md:508 (audit-request templates)"
+  - "wiki/backlog.md:894 (slash-prelude eval-shim refactor)"
+plan: "~/.claude/plans/twinkling-nibbling-gosling.md v2"
+prs:
+  - "#66 squash b35f32b (L:506)"
+  - "#65 squash 014ed2e (L:894)"
+  - "#67 squash 62ceed5 (L:508)"
+main_ci:
+  - "25996534026 success (#66)"
+  - "25996592371 success (#65)"
+  - "25996962882 success (#67)"
+audit_class: "plan-v1 4-auditor cross-audit (REPLAN 6.875/10) + 3× per-PR mode-1 (all SHIP)"
+---
+```
+
+### Context
+
+Same session as the prior P0 substrate canary cycle (L:892). After audit-posture framework codification shipped (PR #61 `f3deb74`), the very next plan-v1 cycle exercised the framework empirically — 1 load-bearing PREMISE catch collapsed ~70% of plan-v1. The framework earned its weight. This bundle is the **post-framework-ratification completion arc**: 3 backlog items that operationalize the framework + close one Sev-3 prompt-fatigue tax.
+
+The 3 items selected by 4-axis weighting (ratified-but-stale × operational-tax × bounded-scope × blast-radius):
+
+- **L:894** composite 18 (a=5/b=5/c=5/d=3) — eval-shim per-session prompt tax (27 prompts in a ~75min cycle)
+- **L:506** composite 15 — posture-auditor pool completes the framework
+- **L:508** composite 14 — convention doc operationalizes per-stage templates
+
+Charlie also extended the framework mid-session with the **Best-of-breed comparison** technique (Nick's bun-vs-npm framing applied as a 6th upstream-challenge probe), which Bravo's plan-v1 cross-audit then exercised on this very bundle.
+
+### Decisions (5)
+
+#### 1. Posture-auditor categorization → new `agents/audit/posture/` top-level directory
+
+Plan v1 proposed `agents/audit/familiar/` (matching existing taxonomy). 4-auditor cross-audit converged on REFRAME: posture-auditors are LENS-class (axes applied across any plan), not domain-class or project-context-injected (the `familiar/` definition). Three independent lines of evidence:
+
+- ARCH — keyword-trigger selection model structurally breaks for meta-axes that don't appear as plan-text keywords.
+- WP — source memory uses "**pool**" language ("Add a posture-auditor pool"), suggesting distinct category.
+- KS — `familiar/` definition is "project-aware-with-memory-context-injection"; posture-auditors don't fit.
+
+Decision: new top-level category `agents/audit/posture/`. Registry header: "21 auditors: 13 cold + 4 familiar + 5 posture + 1 template" (explicit 3-category split). Triggers column empty in TSV by design (stage-gated, not keyword-triggered).
+
+**Alternative rejected (inversion):** extend each domain auditor's body with explicit mode-2 prompts. Lower decomposition cost; higher coupling. Plan v1's Step 2 sensitivity (Architecture +3 + workflow-force) was the partial-inversion path already in place; preserved as fallback when Pool B selects zero (e.g., domain-heavy plans).
+
+#### 2. 2-pool auditor selection model
+
+Plan v1 had implicit 1-pool model. ARCH PREMISE-1 caught the pool-slot-math issue: adding 5 LENS-class lenses to a 17-auditor keyword-matched pool that selects 3-5 means posture-auditors compete for slots and fire 0-1 times per audit.
+
+Decision: declare **2-pool architecture** in SKILL.md Step 2 + registry Selection Heuristics:
+
+- **Pool A — domain (cold + familiar):** selected per keyword-trigger heuristics at ALL stages.
+- **Pool B — posture:** selected per stage from Step 0 (all 5 at pre-plan-write; 3-5 at plan-v1; 0-1 at plan-v2; 0 at per-PR / pre-merge; 1-2 at post-merge retrospective).
+
+Total commissioned = Pool A ∪ Pool B with independent caps; pools don't compete for slots. Stage-mode-mix sensitivity (Architecture +3 + workflow-force) preserved as Pool-B-yields-zero fallback in Pool A.
+
+#### 3. Template home → `docs/conventions/audit-request-by-stage.md`
+
+Tension T-1 (3-auditor convergence on REJECTING the plan's `templates/` top-level proposal): ARCH proposed `docs/conventions/audit-request-by-stage.md` (sibling to existing `message-kinds-and-verification.md`); KS proposed `agents/audit/templates/` (co-located with auditors); WP requested enumeration.
+
+Decision: **`docs/conventions/audit-request-by-stage.md`** — rationale: stable contract docs live there by convention, posture-auditor pool is one consumer not the sole consumer, sibling-shape to existing convention docs, zero new top-level dirs.
+
+#### 4. Memory body trim direction → option (c) memory canon + plugin extract
+
+Plan v1 picked option (a) trim-without-preservation; broke self-sufficient-notes discipline. KS REFRAME-1 rejected.
+
+Decision: **option (c)** — user-canonical memory bodies preserved with full prose + cross-references intact; plugin-bundled `<plugin-root>/memories/*` are the operational extract (referenced by posture-auditor `context_sources.plugin:` paths). Pointer line added at top of `feedback-audit-request-framing-by-stage.md` ("operational per-stage templates also live at `docs/conventions/audit-request-by-stage.md`"). NO body trim.
+
+This establishes the principle for future memory-to-plugin lifts: **memory is canon; plugin extracts for operational reference**.
+
+#### 5. `--print` direct-assign on resolver (eval-shim refactor)
+
+Backlog L:894 proposed 4 candidates (a `--print` direct-assign / b session-start env injection / c cached-file write / d inline fallback). Plan v1 picked (a). CLI REFRAME-1 mode-2 finding proposed flipping the default to `--print` + adding `--export-shell` opt-in for legacy. Disposition: deferred per per-PR-mode-1-only discipline.
+
+Decision: `--print` flag opt-in; legacy `export ...` default preserved unchanged. Backwards-compat invariant honored. Slash-command preludes switch from `eval "$(...)"` to `CLAUDE_DOTFILES_ROOT_RESOLVED="$(... --print)" || { echo "[prelude] resolve-dotfiles-root failed; falling back" >&2; ... }` — DEFAULT-1 breadcrumb fold replaces silent fallback with explicit stderr message.
+
+### Audit-posture framework second-cycle ratification
+
+This cycle was the framework's second empirical exercise (first was P0 substrate canary L:892, captured in the prior decision entry). Notable measurements:
+
+- **Mode-2 findings raised:** 8 distinct PREMISE/REFRAME/SCOPE/DEFAULT/SEQUENCE prefixes across 4 auditors (ARCH/WP/KS/CLI)
+- **REPLAN-class catches:** 5 cross-auditor-convergent (categorization, pool slot math, template home, memory trim direction, branch+merge sequence) → all folded inline to plan v2
+- **False positives caught by cross-auditor cross-check:** 0 this cycle (1 in prior cycle)
+- **Aggregate score:** 6.875/10 (range 6.5 KS/WP — 7.5 CLI)
+- **Mode-1 critical folds:** 3 (memory bundling, --help flag, CI evidence block)
+- **Mode-1 major+minor folds:** ~15
+- **Technique #6 (Best-of-breed comparison) usage:** 3 auditors enumerated 3-5 named alternatives per major decision with substrate-aligned cost-benefit analysis. First-cycle usage validated the technique's value.
+
+### Cross-cutting patterns observed (cross-auditor)
+
+These were flagged in the audit synthesis but deferred from inline-fold per their structural-deferred nature. File as next-cycle backlog if recurrence pattern strengthens:
+
+1. **Selection-algorithm complexity creeping** (ARCH) — SKILL.md Step 2 accreting stage-gated bias clauses. v2's 2-pool model is structural cleanup; if recurrence happens, structural rewrite to "declared-pools, declared-rules" is the next-cycle task.
+2. **Memory-vs-plugin-artifact load-bearing inversion** (KS) — v2's option-(c) approach (memory canon + plugin extract) establishes the principle; this decision entry documents it. Future similar moves apply the principle.
+3. **Process shortcut erosion** (WP) — v1 had "two PRs from one branch" anti-pattern; v2 restored one-PR-one-branch via three separate branches. Vigilance against precedent erosion.
+
+### CI-vs-local-drift catch (cross-cycle learning)
+
+Two empirical catches this cycle exemplify why CLAUDE.md mandates `gh run watch` after every push:
+
+1. **PR #66 substrate-leak gate trip** — Bravo's local `verify:fold` passed; CI failed on `check-generic-paths.sh` finding 2 hardcoded `nbruzzi` references in the new test file. Fix shape: `userInfo().username` from `node:os` (portable across operators). Local-clean ≠ CI-clean exactly as CLAUDE.md flags.
+2. **PR #67 bundled-memory `updated:` frontmatter regression** — L:506's anonymization pass over-corrected by stripping ISO dates from `updated:` frontmatter (legitimate metadata per memories-to-bundle.md). L:508 caught + restored + added test pin going forward. Cross-cycle regression caught BY the same cycle's audit framework operating on its own artifacts.
+
+### Out-of-scope (deferred follow-ups)
+
+- **CLI REFRAME-1 default-direction flip (--print default + --export-shell opt-in):** mode-2 finding deferred per per-PR-mode-1-only discipline. Conservative default (`--print` opt-in) shipped; default-flip is a next-cycle decision if backwards-compat concerns warrant re-evaluation.
+- **SKILL.md Step 2 structural rewrite to "declared-pools, declared-rules":** flagged as cross-cutting pattern #1; defer to next plan-v1 if 2-pool model proves insufficient.
+- **L:526 isManagedRepo worktree-pattern tighten** — composite-14 opportunistic; defer.
+- **L:890 plugin-root paired-helper** — composite-12 architectural; defer per its own trigger conditions.
+- **Posture-auditor 6th-stage row in SKILL.md Step 0 stage-mix table:** minor doc-sync gap surfaced in PR #67 audit; post-merge-retrospective stage in convention doc but not in SKILL.md table. Future cleanup pass.
+
+### Cross-references
+
+- Plan: `~/.claude/plans/twinkling-nibbling-gosling.md` v2 (full content; folded ARCH PREMISE-1 + 4 other REPLAN-class + 3 critical mode-1 + ~15 major/minor)
+- Backlog entries closed via this bundle: `wiki/backlog.md:506` + `:508` + `:894`
+- PR #66 squash `b35f32b` — Bravo L:506 posture-auditor pool
+- PR #65 squash `014ed2e` — Alpha L:894 eval-shim refactor
+- PR #67 squash `62ceed5` — Bravo L:508 audit-request convention doc
+- PR #61 squash `f3deb74` — audit-posture framework codification prerequisite
+- PR #64 squash `7df108a` — prior P0 substrate canary decision-log (same-day precedent for the post-merge decision-log PR pattern)
+- Memory: `feedback-audit-upstream-vs-downstream-posture.md` (framework primary; extended in this session to include technique #6 Best-of-breed comparison)
+- Memory: `feedback-audit-findings-prefix-distinguishes-mode.md` (PREMISE/REFRAME/SCOPE/DEFAULT/SEQUENCE prefix convention)
+- Memory: `feedback-audit-request-framing-by-stage.md` (rationale doc; operational templates extracted to `docs/conventions/audit-request-by-stage.md`)
+- Memory: `feedback-projects-as-substrate-work.md` (Charlie's framing — substrate-aligned tools earn the best-of-breed probe always)
+- Memory: `feedback-name-not-ordinal-references.md` (Charlie's naming-convention extension; applied throughout this entry — "Best-of-breed comparison" not "technique #6")
+- Channel: `2026-05-17_03-21` — Alpha (sid 207c3247) + Bravo (sid f3da24e2) + Charlie (sid d6137354) coordination throughout
+
+---
