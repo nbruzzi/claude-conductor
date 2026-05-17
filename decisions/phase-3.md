@@ -658,3 +658,78 @@ Two empirical catches this cycle exemplify why CLAUDE.md mandates `gh run watch`
 - Channel: `2026-05-17_03-21` — Alpha (sid 207c3247) + Bravo (sid f3da24e2) + Charlie (sid d6137354) coordination throughout
 
 ---
+
+## Decision: Sharded-swinging-locket — post-audit-residual polish quintet (L:504 + L:771 + L:761 + L:757 + L:527)
+
+```yaml
+---
+ts: 2026-05-17T19:10:00Z
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/cli.ts,
+    test/channels/cli-body-file.test.ts,
+    package.json,
+    CONTRIBUTING.md,
+    scripts/check-import-extensions.sh,
+    test/scripts/check-import-extensions.test.ts,
+    dotfiles/src/hooks/checks/test-gate.ts,
+    dotfiles/src/hooks/checks/branch-enforcement.ts,
+    dotfiles/src/__tests__/hooks/test-gate.test.ts,
+    dotfiles/src/__tests__/hooks/branch-enforcement.test.ts,
+    dotfiles/src/__tests__/hooks/dispatcher.test.ts,
+  ]
+---
+```
+
+**Context:** Nick prompted a 4-axis backlog scoring pass (ratified-but-stale / operational tax / bounded scope / blast radius) over the ~196 open items in `wiki/backlog.md`. The top-5 selection (filed names L:504 / L:771 / L:761 / L:757 / L:527, line numbers as of plan-v1 author time) was a coherent post-audit-residual polish bundle, each item primary-source-traced to disciplined prior cycles (the 2026-04-28 Bravo plugin audit batch + the 2026-05-08 dotfiles F1 follow-up). Every item had a settled fix shape, sub-50-LOC budget, and a named author whose research was already captured in the entry. Execution was the only missing step. Plan: `~/.claude/plans/sharded-swinging-locket.md` v1 (no v2 needed; SHIP-CLEAN with 3 minor folds).
+
+**Cycle outcome:** 5 PRs shipped end-to-end with full main-CI evidence (see table below); 5 backlog closures landed in `wiki/backlog.md`; 1 new feedback memory filed; 1 plan-v1 cross-audit cycle (no replan); 4 per-PR cross-audits (4 × SHIP-CLEAN with 0 findings total).
+
+**5 PRs shipped:**
+
+| PR   | Repo             | Squash     | Subject                                                              | Main-CI run   | Conclusion                             |
+| ---- | ---------------- | ---------- | -------------------------------------------------------------------- | ------------- | -------------------------------------- |
+| #70  | claude-conductor | `35a19da`  | L:504 — denylist refusal hint (~/scratch/ pointer)                   | `25998895538` | success                                |
+| #71  | claude-conductor | `8750d94`  | L:771 — `bun run check` alias for `verify` + CONTRIBUTING note       | `25999130850` | success                                |
+| #72  | claude-conductor | `e48adfc`  | L:761 — `check-import-extensions.sh` dynamic-import regex + new test | `25999595360` | success                                |
+| #111 | claude-dotfiles  | `a1598e2`  | L:757 — HOME-empty observability in test-gate + branch-enforcement   | `25999709992` | success                                |
+| #112 | claude-dotfiles  | `f91fd88a` | L:527 — inline-prefix regression test (F1 v2 codification)           | `26000035477` | success (pending verify at close time) |
+
+**Decisions captured in this cycle:**
+
+1. **L:771 staleness fold (mode-2 catch):** primary-source verify before plan-v2-lock found that `check-bundled-registrations-parity` script no longer exists; `verify` script already orchestrates the 5 gates + tests. Original entry's "multi-script orchestrator" fix reduced to a 1-line `check` alias for `verify` + a 1-line CONTRIBUTING note. Bravo's plan-v1 cross-audit Q1 disposition: SHIP-as-planned (PREMISE-2 catch validated).
+
+2. **L:757 cross-edge file relocation:** backlog entry filed 2026-04-28 against plugin paths (`claude-conductor/src/hooks/checks/test-gate.ts` etc.); files moved to dotfiles substrate during the INVERSIONS arc (2026-05-07 → 2026-05-08). Caught via `find` before lane lock. Lane reassigned plugin → dotfiles. No plan replan.
+
+3. **L:757 vs L:527 — test-boundary taxonomy clarified:** plan-v1 fold #3 recommended "process-boundary discipline a la disable-hooks.test.ts" for both items. Bravo self-corrected during L:757 implementation: helper-function tests use in-process invocation via INTERNAL exports (matching `branch-enforcement.test.ts` precedent), not process-boundary. L:527 IS process-boundary (testing process.env behavior of the dispatcher subprocess; in-process would not exercise the env-inheritance boundary). Same author, opposite test shapes, both correct — the taxonomy was the missing piece. Memorialized as `feedback-test-boundary-taxonomy-helper-vs-binary.md`.
+
+4. **Lane split (plugin / dotfiles by repo, not by sequence):** the 5-item bundle naturally divided 3 plugin (L:504 + L:771 + L:761) / 2 dotfiles (L:757 + L:527). Alpha took plugin (matching Alpha's identity continuity from the prior cycle's plugin work), Bravo took dotfiles. Zero file overlap; zero cross-edge dependencies; lanes ran in parallel after L:504 (Alpha solo pre-slice) landed.
+
+5. **Audit cadence:** plan-v1 cross-audit (mode-1 dominant + mode-2 invitations open on L:771 staleness) → 3 minor folds (1 anticipated by Alpha live-update before verdict; 2 Bravo-lane) → no v2 file needed → per-PR cross-audits (4 PRs × 1 lens = light-touch, all SHIP-CLEAN). Total: 1 plan-v1 audit + 4 per-PR audits + 0 findings folded post-audit. Cleanest audit cadence in the recent cycle history.
+
+**Cycle metrics:**
+
+- **PRs shipped:** 5 (3 plugin Alpha + 2 dotfiles Bravo); 1 was an Alpha solo pre-slice (L:504) shipped while plan-v1 cross-audit was in flight
+- **Plan-v1 cross-audit cycles:** 1; SHIP-CLEAN verdict; 3 minor folds; 0 mode-2 reframes; 0 replan
+- **Per-PR cross-audits:** 4 (L:504 trivial-skip per plan v1; L:771 + L:761 Alpha-receives-Bravo-audit; L:757 + L:527 Bravo-receives-Alpha-audit); all 4 SHIP-CLEAN, 0/0/0 findings each
+- **Backlog deltas:** -5 closed (L:504, L:771, L:761, L:757, L:527); -1 net change in cycle character (5 items removed from 196 open)
+- **New memories filed:** 1 (`feedback-test-boundary-taxonomy-helper-vs-binary.md`)
+- **Nick interventions:** 0 protocol-class; 1 directional (rubric prompt + lane authorization); 1 wind-down style ("no handoff, just check-in")
+- **Cross-cycle catch:** L:771 staleness (PREMISE-2 caught by primary-source verify before plan-v2-lock); L:757 file relocation (caught by `find` before lane assignment lock)
+
+**Why this cycle matters (pattern observation):** The 4-axis backlog rubric (ratified-but-stale / operational tax / bounded scope / blast radius) reliably surfaces shippable polish items that compose into ~90-min cycles. Each item carried its own audit-research from the original filing; execution was unambiguous. The cycle character is "honor existing work" — don't redesign, just ship what previous audits already designed. Recommend running this rubric quarterly OR opportunistically when no urgent P0 surfaces but the backlog has tail items aging > 30 days.
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/sharded-swinging-locket.md` (v1, no v2)
+- Backlog entries closed: `wiki/backlog.md` L:504 + L:771 + L:761 + L:757 + L:527 (line numbers as filed; current positions shifted by sibling-session edits)
+- Channel: `2026-05-17_17-00` — Alpha (sid `163efa04`) + Bravo (sid `ebff22dd`) coordination throughout
+- Memory filed: `feedback-test-boundary-taxonomy-helper-vs-binary.md`
+- Memories consulted: `feedback-substrate-precedent-as-design-rescue` (2-instance "wait for 3rd site" precedent applied at L:757), `feedback-audit-recommendations-primary-source-verified` (caught L:771 staleness), `feedback-pre-staged-caller-reads-validation` (Bravo's pre-stage research on his lane sites), `feedback-audit-request-framing-by-stage` (plan-v1 vs per-PR mode-mix), `feedback-sibling-coordination-protocol` (Core 6 + Optional 1 held throughout)
+- Prior cycle context: `HANDOFF_2026-05-17_17-00.md` (resumed-from)
+- Author note: L:504 line number drifted to L:506 mid-cycle when Charlie's parallel work added entries above; recorded as observation, not blocker — backlog L:N IDs are relative pointers that shift under parallel-session edits. Future consideration: stable content-hash IDs OR explicit `id:` frontmatter slugs.
+
+---
