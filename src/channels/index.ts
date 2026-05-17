@@ -131,6 +131,13 @@ export type ChannelMessage = {
   kind: ChannelKind;
   body?: string;
   body_ref?: string;
+  /** Populated when `body_ref` is set on the message but the referenced
+   *  body file could not be read (missing, permission denied, IO error).
+   *  Surfaces what was previously a silent fallback (message returned with
+   *  `body_ref` but no `body`) so downstream consumers can distinguish
+   *  "message has no body" from "message had a body but we couldn't load
+   *  it." L:140 reader-attribution fix. */
+  body_read_error?: string;
   /** NATO identity letter (e.g., "Alpha", "Bravo") — Phase 1 structured
    *  field. Absent on legacy messages; renders as `<unknown>` per the
    *  display matrix at parent plan §311-321 row 5. */

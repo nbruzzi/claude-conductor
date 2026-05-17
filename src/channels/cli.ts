@@ -1001,7 +1001,15 @@ export async function runChannelsCli(
         const resolved = filtered.map((m) => {
           if (m.body_ref && !m.body) {
             const body = readBodyFile(channelId, m.body_ref);
-            return body !== null ? { ...m, body } : m;
+            if (body !== null) return { ...m, body };
+            // L:140 — attribute the read failure instead of silently
+            // returning the message with body_ref but no body. Stderr
+            // breadcrumb surfaces the failure in real-time; the
+            // body_read_error field lets downstream consumers distinguish
+            // "no body" from "body unreadable".
+            const errMsg = `body_ref "${m.body_ref}" unreadable (file missing, permission denied, or IO error)`;
+            process.stderr.write(`[channels] ${errMsg}\n`);
+            return { ...m, body_read_error: errMsg };
           }
           return m;
         });

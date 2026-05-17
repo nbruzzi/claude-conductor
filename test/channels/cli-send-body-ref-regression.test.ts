@@ -163,3 +163,89 @@ describe("L496 — small body stays inline (no shunt below threshold)", () => {
     expect(msg["body_ref"]).toBeUndefined();
   });
 });
+
+// ─── L:140 — body_ref read-error attribution (silent-truncation fix) ──
+
+function readChannel(): SpawnSyncReturns<string> {
+  // `--json` for machine-readable ChannelMessage[] (default `read` output
+  // is `renderMessage` per line; not parseable by JSON.parse).
+  return spawnSync("bun", ["run", CLI_PATH, "read", channelId, "--json"], {
+    env: {
+      ...process.env,
+      CLAUDE_SESSION_ID: TEST_SESSION_ID,
+      CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDir,
+    },
+    encoding: "utf-8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+describe("L:140 — body_ref read attributes errors instead of silent fallback", () => {
+  it("sanity: large body roundtrips via body_ref + inline reconstruction on read", () => {
+    const body = "x".repeat(4 * 1024);
+    expect(sendViaStdin(body).status).toBe(0);
+    const written = readSingleMessage();
+    expect(written["body_ref"]).toBeTypeOf("string");
+    expect(written["body"]).toBeUndefined();
+
+    const readResult = readChannel();
+    expect(readResult.status).toBe(0);
+    const messages = JSON.parse(readResult.stdout) as Record<string, unknown>[];
+    expect(messages.length).toBe(1);
+    const m = messages[0] ?? {};
+    expect(m["body"]).toBe(body);
+    expect(m["body_read_error"]).toBeUndefined();
+    expect(readResult.stderr).not.toContain("unreadable");
+  });
+
+  it("missing body file → message returned with body_read_error + stderr breadcrumb", () => {
+    const body = "x".repeat(4 * 1024);
+    expect(sendViaStdin(body).status).toBe(0);
+    const written = readSingleMessage();
+    const ref = written["body_ref"] as string;
+    expect(ref).toBeTypeOf("string");
+
+    // Delete the body file to simulate the silent-failure surface this
+    // fix attributes — IO error, missing file, permission denied.
+    const bodyFile = join(channelsDir, channelId, "bodies", `${ref}.txt`);
+    rmSync(bodyFile);
+
+    const readResult = readChannel();
+    expect(readResult.status).toBe(0);
+    const messages = JSON.parse(readResult.stdout) as Record<string, unknown>[];
+    expect(messages.length).toBe(1);
+    const m = messages[0] ?? {};
+
+    // Behavioral assertion: body remains absent (no fabricated content) AND
+    // body_ref is preserved (so callers can still know which ref failed) AND
+    // body_read_error explicitly attributes the failure.
+    expect(m["body"]).toBeUndefined();
+    expect(m["body_ref"]).toBe(ref);
+    expect(m["body_read_error"]).toBeTypeOf("string");
+    expect(m["body_read_error"]).toContain(ref);
+    expect(m["body_read_error"]).toContain("unreadable");
+
+    // Observability assertion: stderr breadcrumb fires in real-time so the
+    // failure isn't only visible to consumers that inspect the JSON shape.
+    expect(readResult.stderr).toContain("[channels]");
+    expect(readResult.stderr).toContain(ref);
+    expect(readResult.stderr).toContain("unreadable");
+  });
+
+  it("inline body messages are unaffected (no body_ref → no body_read_error path)", () => {
+    const body = "x".repeat(1024);
+    expect(sendViaStdin(body).status).toBe(0);
+
+    const readResult = readChannel();
+    expect(readResult.status).toBe(0);
+    const messages = JSON.parse(readResult.stdout) as Record<string, unknown>[];
+    expect(messages.length).toBe(1);
+    const m = messages[0] ?? {};
+
+    expect(m["body"]).toBe(body);
+    expect(m["body_ref"]).toBeUndefined();
+    expect(m["body_read_error"]).toBeUndefined();
+    expect(readResult.stderr).not.toContain("unreadable");
+  });
+});
