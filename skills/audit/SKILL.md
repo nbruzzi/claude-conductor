@@ -7,6 +7,51 @@ description: Commission 2-4 expert auditors to adversarially review the current 
 
 Commission expert auditors to adversarially review the current plan before implementation begins.
 
+## Step 0 — Determine stage + mode-mix
+
+Every audit has two modes, and the stage determines which mix is appropriate. The auditor selection in Step 2 + the dispatch instructions in Step 4 + the synthesis report in Step 5 all flow from this decision. Pin it before proceeding.
+
+### The two modes
+
+- **Mode 1 — Downstream verification.** "Given the design as stated, is X correctly handled?" Probes within the accepted frame. The current domain auditors (Reliability Engineer / Architecture / CLI DX / Security / Performance / etc.) are mode-1 by construction.
+- **Mode 2 — Upstream challenge.** "Is the frame right? What's the unstated alternative? What scope/default/sequence is being silently accepted?" Probes the frame itself. Higher leverage when correct, costly when overdone.
+
+See `~/.claude/projects/-Users-{user}/memory/feedback-audit-upstream-vs-downstream-posture.md` for the full framework + the why.
+
+### Stage → mode-mix table
+
+| Stage                 | Mode mix                           | Reframe cost   | Mode-2 disposition                       |
+| --------------------- | ---------------------------------- | -------------- | ---------------------------------------- |
+| pre-plan-write        | mode-2 dominant                    | nearly free    | revise scope / shape pre-plan-write      |
+| plan-v1 cross-audit   | mode-2 + mode-1                    | cheap (v1→v2)  | fold to v2 OR BLOCK + replan             |
+| plan-v2 / plan-locked | mode-1 dominant; mode-2 if BLOCKER | expensive      | BLOCK-CATASTROPHIC only; else next-cycle |
+| per-PR audit          | mode-1 only                        | very expensive | next-cycle backlog                       |
+| pre-merge Lane D      | mode-1 only                        | catastrophic   | NO mode-2 — gate is "ship-safe-as-is"    |
+
+If the user didn't specify the stage in their `/audit` invocation, infer from context:
+
+- A plan file just written / `ExitPlanMode` called in the same session → **plan-v1 cross-audit**
+- A PR URL or `gh pr view` in the user's prompt → **per-PR audit**
+- A pre-flight check before squash-merge → **pre-merge Lane D**
+- An ideation / brainstorming exchange with no plan yet → **pre-plan-write**
+
+If unclear, ASK the user to specify stage before proceeding.
+
+### How stage drives auditor selection (Step 2)
+
+The auditor registry today contains **domain auditors only** (mode-1-biased). Mode-2 invocation at pre-plan + plan-v1 stages currently happens two ways:
+
+1. **Existing domain auditors run BOTH passes.** When stage = pre-plan / plan-v1, dispatch instructions in Step 4 include the mode-2 invitation explicitly: each auditor runs an upstream challenge first (probe the framing within their domain) and a downstream verification second. See Step 4 dispatch template additions.
+2. **Future posture-auditor pool.** A backlog entry tracks adding dedicated posture-auditors (Premise / Scope / Reframe / Default-Action / Sequence) to the registry. When that lands, Step 2 selection includes both pools.
+
+Until posture-auditors exist, the workaround is (1) — domain auditors stretched to both modes via explicit dispatch invitation.
+
+### How stage drives synthesis (Step 5)
+
+The synthesis report MUST separate mode-1 findings from mode-2 findings. Different disposition processes (fold vs replan) require different decision flows. See Step 5 additions for finding-prefix convention + report shape.
+
+---
+
 ## Step 1 — Locate the plan
 
 Resolve the plan path in this order, stopping at the first hit:
@@ -98,6 +143,7 @@ Sum hits per auditor. Rank by total.
 - **At least one familiar auditor** when the plan touches project internals (references dotfiles, hooks, wiki, memory, existing repos, or established conventions).
 - **Maximum lens diversity** — if two candidate auditors share >50% of their trigger keywords, prefer the one with more matches and skip the other.
 - **Sibling-symmetry pre-flight boost (Step 1.5)** — if pre-flight fired, add **+5** to the score of any auditor whose triggers include `architecture` or `architecture-integration`. This nudges the structural lens into selection without overriding stronger keyword matches.
+- **Stage-mode-mix sensitivity (Step 0)** — at stages where mode-2 is in scope (pre-plan / plan-v1), Architecture auditor gets **+3** (frame-level decomposition is its strongest probe) and at least one auditor whose triggers include `workflow` or `coordination` is forced into selection (sibling-coord + sequencing are mode-2-rich domains). At stages where mode-2 is out-of-scope (per-PR / pre-merge), no stage-bias is applied. Until posture-auditor entries are added to the registry, this nudges the existing domain auditors toward the lenses most likely to surface mode-2 findings within their domain.
 - Break ties by adversarial relevance to the plan's domain.
 
 ## Step 3 — Present the recommendation
@@ -162,6 +208,7 @@ Each agent call must include:
 - For familiar auditors, `## Project Context` with injected file contents
 - **When Step 1.5 fired:** `## Sibling-Symmetry Context` with the prepared symmetry-delta summary (component pair(s), per-axis deltas, and the explicit instruction to flag structural asymmetry as a finding). Place after `## Plan Under Review` and before `## Project Context` (when present).
 - Closing instruction: "Audit this plan using your protocol. Follow your output format exactly. If your audit required substantive web research, append a `## Research Synthesis` section at the end of your report with the convergent findings, sources, and a 1-line relevance note per source. This captures the research byproduct separately from your audit findings."
+- **When stage = pre-plan / plan-v1** (per Step 0), append a `## Mode-2 invitation` block to the dispatch: "Before the standard mode-1 verification (within-frame correctness), run an upstream challenge pass within your domain. Probe: (a) is the framing right within your lens? (b) what's the alternative shape you'd propose? (c) what default-action is silently being accepted that may be the wrong default? Tag mode-2 findings with one of: `PREMISE-N` (challenges an assumption), `REFRAME-N` (proposes a different design shape), `SCOPE-N` (proposes bundle composition change), `DEFAULT-N` (proposes a different default behavior), `SEQUENCE-N` (proposes a different ordering). Mode-2 findings MUST include concrete-alternative + cost-benefit; 'I have concerns' is not a finding. Run mode-2 BEFORE mode-1 to avoid sunk-cost bias on the implementation." See `~/.claude/projects/-Users-{user}/memory/feedback-audit-findings-prefix-distinguishes-mode.md` for the full prefix convention.
 
 **All auditor agents must be dispatched in a single message** so they run concurrently.
 
@@ -172,6 +219,8 @@ After all agents return, present a unified report:
 ### 5a. Individual auditor reports
 
 Present each auditor's findings in full, in the order they were dispatched.
+
+**When stage = pre-plan / plan-v1 (Step 0):** each auditor's report should already separate mode-2 findings (PREMISE / REFRAME / SCOPE / DEFAULT / SEQUENCE prefix) from mode-1 findings (MINOR / MAJOR / CRITICAL prefix). If an auditor returned mixed prefixes without separation, request a re-format BEFORE proceeding to 5b — the synthesis depends on mode separation. Mode-2 findings flow into a different disposition process (replan / scope-recomposition / behavior-change) than mode-1 findings (fold). Mixing them dilutes the disposition signal.
 
 ### 5b. Cross-cutting themes (overlap map)
 
