@@ -20,13 +20,14 @@ See `~/.claude/projects/-Users-{user}/memory/feedback-audit-upstream-vs-downstre
 
 ### Stage → mode-mix table
 
-| Stage                 | Mode mix                           | Reframe cost   | Mode-2 disposition                       |
-| --------------------- | ---------------------------------- | -------------- | ---------------------------------------- |
-| pre-plan-write        | mode-2 dominant                    | nearly free    | revise scope / shape pre-plan-write      |
-| plan-v1 cross-audit   | mode-2 + mode-1                    | cheap (v1→v2)  | fold to v2 OR BLOCK + replan             |
-| plan-v2 / plan-locked | mode-1 dominant; mode-2 if BLOCKER | expensive      | BLOCK-CATASTROPHIC only; else next-cycle |
-| per-PR audit          | mode-1 only                        | very expensive | next-cycle backlog                       |
-| pre-merge Lane D      | mode-1 only                        | catastrophic   | NO mode-2 — gate is "ship-safe-as-is"    |
+| Stage                    | Mode mix                           | Reframe cost    | Mode-2 disposition                       |
+| ------------------------ | ---------------------------------- | --------------- | ---------------------------------------- |
+| pre-plan-write           | mode-2 dominant                    | nearly free     | revise scope / shape pre-plan-write      |
+| plan-v1 cross-audit      | mode-2 + mode-1                    | cheap (v1→v2)   | fold to v2 OR BLOCK + replan             |
+| plan-v2 / plan-locked    | mode-1 dominant; mode-2 if BLOCKER | expensive       | BLOCK-CATASTROPHIC only; else next-cycle |
+| per-PR audit             | mode-1 only                        | very expensive  | next-cycle backlog                       |
+| pre-merge Lane D         | mode-1 only                        | catastrophic    | NO mode-2 — gate is "ship-safe-as-is"    |
+| post-merge retrospective | mode-2 (SCOPE / SEQUENCE)          | n/a (post-ship) | file as next-cycle backlog, NOT revert   |
 
 If the user didn't specify the stage in their `/audit` invocation, infer from context:
 
