@@ -71,7 +71,7 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 
 ## Bundled memories (`memories/`)
 
-24 cross-session feedback memories — 18 in batch 7a + 4 in wind-down batch (per `decisions/phase-5.md` Decision B) + 1 in Phase 3 Step G v2.14 fold (per KS-3) + 1 in sibling-coord-gate-awareness Lane F (per `decisions/phase-5.md` Decision G) — bundled per `memories-to-bundle.md` (V2 schema: `cadence`, `scope`, `updated`, `origin: extracted`). Cross-reference graph: clean. CI substrate-leak grep: passes (with documented allowed-in-frontmatter false positives).
+27 cross-session feedback memories — 18 in batch 7a + 4 in wind-down batch (per `decisions/phase-5.md` Decision B) + 1 in Phase 3 Step G v2.14 fold (per KS-3) + 1 in sibling-coord-gate-awareness Lane F (per `decisions/phase-5.md` Decision G) + **3 in audit-posture framework completion batch (per L:506 — `feedback-audit-upstream-vs-downstream-posture`, `feedback-audit-findings-prefix-distinguishes-mode`, `feedback-audit-request-framing-by-stage`)** — bundled per `memories-to-bundle.md` (V2 schema: `cadence`, `scope`, `updated`, `origin: extracted`). Cross-reference graph: clean. CI substrate-leak grep: passes (with documented allowed-in-frontmatter false positives).
 
 - `feedback-confidence-as-verification-output.md` — verification loop produces confidence; no separate "confident-sounding output" pattern.
 - `feedback-encode-while-context-fresh.md` — receipt-in-hand framing; encode lessons in the same session that produced them.
@@ -100,20 +100,28 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 - `feedback-digest-message-convention.md` — **Phase 4 Step A Layer 4 (Bravo lane):** `digest` kind's schema rationale (6 required fields) + sole-shared-parser discipline (`parseDigestBody` enforces SHAPE; readers primary-source-verify field-content citations).
 - `feedback-verification-budget-by-kind.md` — **Phase 4 Step A Layer 4 (Bravo lane):** per-kind verification posture convention (note/status trust verbatim; walkie-talkie kinds trust verbatim; question/handoff verify citations; digest trusts SHAPE but primary-source-verifies content citations). Stable cross-arc reference paired with the operator-facing `docs/conventions/message-kinds-and-verification.md`.
 - `feedback-coordination-aware-substrate-gates.md` — **sibling-coord-gate-awareness Lane F (per `decisions/phase-5.md` Decision G):** substrate gates whose input model is wrong on legitimate channel-coordinated work consult coordination state via shared read-only primitives (`isPeerCoordinatedWithSelf`, `getMostRecentPeerKind`); read-only contract; skip-on-error; forensic breadcrumb at suppression; mixed-state preservation via `peers.every()`.
+- `feedback-audit-upstream-vs-downstream-posture.md` — **L:506 audit-posture framework batch (2026-05-17):** mode-1 vs mode-2 audit posture framework. 6 upstream-challenge techniques (premortem / adjacent-item / default-action / inversion / cost-of-not-doing / best-of-breed). Sequencing across stage-gates. Lens-by-lens upstream/downstream pairs. Failure modes when overdone + mitigations. Sibling-coord sticky-commitment protocol.
+- `feedback-audit-findings-prefix-distinguishes-mode.md` — **L:506 audit-posture framework batch (2026-05-17):** finding-prefix convention. Mode-1 keeps existing MINOR/MAJOR/CRITICAL severity prefixes; mode-2 uses PREMISE/REFRAME/SCOPE/DEFAULT/SEQUENCE axis prefixes. Disposition-default-per-kind table. Concrete-alternative + cost-benefit required for mode-2 findings.
+- `feedback-audit-request-framing-by-stage.md` — **L:506 audit-posture framework batch (2026-05-17):** per-stage audit-request templates (pre-plan-write / plan-v1 / plan-v2-locked / per-PR / pre-merge / post-merge retrospective). Sibling rationale doc; operational templates extracted to `docs/conventions/audit-request-by-stage.md` per L:508.
 
 ## Bundled agents (`agents/`)
 
-21 agents bundled in batch 7b per `agents-to-bundle.md`. Auditor registry at `agents/audit/registry.md` (16 expert auditors: 13 cold + 4 familiar + 1 unregistered template).
+21 agents bundled in batch 7b per `agents-to-bundle.md`. Auditor registry at `agents/audit/registry.md` (**21 expert auditors: 13 cold + 4 familiar + 5 posture + 1 unregistered template**; posture pool added 2026-05-17 per L:506 audit-posture framework completion arc).
 
 - `agents/code-simplifier.md` — generic post-implementation cleanup agent.
 - `agents/verify-app.md` — generic end-to-end verification agent.
-- `agents/audit/registry.md` — auditor registry with selection heuristics + machine-readable TSV index + known-tension pairs.
+- `agents/audit/registry.md` — auditor registry with selection heuristics + machine-readable TSV index + known-tension pairs (2-pool model: domain + posture, independent selection).
 - `agents/audit/cold/` — 13 domain-pure auditors (accessibility, api, cli-dx, db, marketplace, nextjs, performance, reliability, security, seo-geo, test-architect, typescript, ux).
 - `agents/audit/familiar/architecture-integration.md` — plugin integration drift catcher (HEAVY rewrite from upstream).
 - `agents/audit/familiar/code-standards.md` — TypeScript convention drift catcher.
 - `agents/audit/familiar/knowledge-system.md` — memory + decisions-log convention drift catcher (HEAVY rewrite).
 - `agents/audit/familiar/workflow-process.md` — pipeline + branching + commit-gate discipline catcher.
 - `agents/audit/familiar/_template.md` — structural template for project-specific familiar auditors (UNREGISTERED).
+- `agents/audit/posture/premise.md` — PREMISE-class lens; challenges assumptions that, if false, invalidate the bundle. Stage-gated (fires at pre-plan / plan-v1 / post-merge-retrospective).
+- `agents/audit/posture/scope.md` — SCOPE-class lens; challenges bundle composition (in/out, adjacent items, lowest-yield). Stage-gated.
+- `agents/audit/posture/reframe.md` — REFRAME-class lens; proposes alternative design shapes via enumeration + inversion. Stage-gated.
+- `agents/audit/posture/default-action.md` — DEFAULT-class lens; challenges conservative-flow-preserving defaults vs user-intent-aligned defaults. Stage-gated.
+- `agents/audit/posture/sequence.md` — SEQUENCE-class lens; challenges ordering claims, race-prone steps, rebase-storm risk. Stage-gated.
 
 ## Bundled skills (`skills/`)
 
