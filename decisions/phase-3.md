@@ -733,3 +733,81 @@ affects:
 - Author note: L:504 line number drifted to L:506 mid-cycle when Charlie's parallel work added entries above; recorded as observation, not blocker — backlog L:N IDs are relative pointers that shift under parallel-session edits. Future consideration: stable content-hash IDs OR explicit `id:` frontmatter slugs.
 
 ---
+
+## Decision: Sharded-swinging-locket slice 2 — body_ref attribution + ci-reminder cursor + extractValidSessionId (L:140 + L:481 + L:768)
+
+```yaml
+---
+ts: 2026-05-17T20:15:00Z
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/cli.ts,
+    src/channels/index.ts,
+    src/hooks/session-id.ts,
+    src/hooks/timing.ts,
+    src/hooks/checks/active-channels-load.ts,
+    src/hooks/checks/identity-injector.ts,
+    src/hooks/checks/teammate-idle-reminder.ts,
+    src/hooks/checks/task-coordinator.ts,
+    src/hooks/checks/peer-message-deliverer.ts,
+    test/channels/cli-send-body-ref-regression.test.ts,
+    test/hooks/session-id.test.ts,
+    dotfiles/src/hooks/checks/ci-verification-reminder.ts,
+    dotfiles/src/__tests__/hooks/ci-verification-reminder.test.ts,
+  ]
+---
+```
+
+**Context:** Slice 2 continuation of slice 1 (`sharded-swinging-locket` post-audit-residual polish quintet). Nick promoted the next 3 high-composite items from the original agent-assisted 4-axis backlog scoring pass after slice 1 shipped clean. Same cycle character: "honor existing work" — backlog items already had ratified research; execution was the only missing step.
+
+**Cycle outcome:** 3 PRs shipped end-to-end with full main-CI evidence; 3 backlog closures landed; 0 cross-audit findings post-fold; 0 Nick protocol-class interventions. Plan-v1 cross-audit produced 1 MINOR fold (Bravo's counter-proposal on channels/index.ts:303 migration for all-7-consumer symmetry) and 4 ACCEPT verdicts. No replan. No mode-2 reframes after fold.
+
+**3 PRs shipped:**
+
+| PR   | Repo             | Squash    | Subject                                                         | Main-CI run   | Conclusion |
+| ---- | ---------------- | --------- | --------------------------------------------------------------- | ------------- | ---------- |
+| #73  | claude-conductor | `3ccdf8d` | L:768 — extractValidSessionId helper + 7 consumer migrations    | `26001269955` | success    |
+| #74  | claude-conductor | `d709e42` | L:140 — body_ref read-error attribution (silent-truncation fix) | `26001420772` | success    |
+| #113 | claude-dotfiles  | `b5cd06a` | L:481 — once-per-session cursor for ci-verification-reminder    | `26001421839` | success    |
+
+**Decisions captured in this slice:**
+
+1. **L:140 scope refinement (mode-2 catch, plan-v1 SCOPE-1 ACCEPT):** backlog entry mentioned "pagination," but `readBodyFile` is a single `readFileSync` with no pagination today. Plan-v1 reframed to "address what exists (null-fallback path); defer real pagination if/when streaming added." Bravo ratified ACCEPT. Final shape: explicit `body_read_error: string` attribution + stderr breadcrumb, behavior preservation (body absent on read failure, body_ref preserved).
+
+2. **L:481 cross-edge file location:** same pattern as slice 1 L:757 — backlog filed against plugin path, file lives in dotfiles substrate post-INVERSIONS arc. Caught at plan time via `find` (slice 1 lesson institutionalized). Zero plan rework.
+
+3. **L:768 channels/index.ts:303 v2 fold (plan-v1 MINOR-1):** plan-v1 carved-out the already-wrapped site as "intentionally not migrated"; Bravo's cross-audit counter-proposed all-7-consumer symmetry + drop the redundant `&& isValidSessionId(fromInput)` from the downstream check. Net: -1 LOC at the migration site, full symmetry across 7 consumers, no redundancy. Pattern: outside-view audit improves on inside-view's "consistency vs. minimal-churn" tradeoff.
+
+4. **L:481 cursor pattern duplication:** inline-in-both `ci-verification-reminder.ts` + existing `output-externalization-nudge.ts` per the 2-instance-no-lift precedent (`feedback-substrate-precedent-as-design-rescue.md`). Will lift to shared `~/.claude-dotfiles/src/hooks/checks/session-cursor.ts` when a 3rd cursor consumer surfaces.
+
+5. **L:768 `extractSessionId` survival (plan-v1 MINOR-2 ACCEPT):** keep raw form with `@deprecated` JSDoc + cross-pointer to safe-by-default `extractValidSessionId`. Minimal-churn lean over rename-to-`extractSessionIdRaw`. The `@deprecated` JSDoc triggers TS-level deprecation warnings (better than convention-only); eslint rule banning raw form deferred to backlog candidate.
+
+6. **Lane split (plugin-or-dotfiles by author honor + LOC balance):** Alpha got L:140 (channels-adjacent to slice 1 L:504) + L:481 (Alpha-filed) ≈ 165 LOC across 2 PRs. Bravo got L:768 (Bravo-filed RE-2; deepest context on the 7-consumer set) ≈ 130 LOC across 1 PR. Roughly balanced.
+
+7. **Drive-by during execution:** 2 Charlie backlog entries (lines 212+219 at cycle time) lacked the scope-prefix convention and were tripping the `wiki-backlog-scope-check #15` canary test in the full dotfiles test suite. Added 'Cross-repo —' prefix to both (zero content change); inline note in each that Alpha added the prefix during slice-2. Pattern: live canary tests catch convention drift across sibling sessions; act on the catch when shipping is gated.
+
+**Cycle metrics:**
+
+- **PRs shipped:** 3 (2 Alpha plugin/dotfiles + 1 Bravo plugin)
+- **Plan-v1 cross-audit cycles:** 1; SHIP-CLEAN with 3 minor folds (Q2 MINOR-1 actionable; Q1 + Q4 SCOPE-1/SCOPE-2 ACCEPT; Q3 MINOR-2 ACCEPT)
+- **Per-PR cross-audits:** 3 (Bravo audits 2 Alpha PRs; Alpha audits 1 Bravo PR); all 3 SHIP-CLEAN with 0/0/0 findings
+- **Backlog deltas:** -3 closed (L:140 + L:481 + L:768); slice 1 + slice 2 = -8 from the post-rubric backlog tail
+- **New memories filed:** 0 (slice 1's `feedback-test-boundary-taxonomy-helper-vs-binary` covers the cross-cycle pattern observed here too)
+- **Nick interventions:** 0 protocol-class; 1 directional (rubric continuation prompt); 1 wind-down style ("no handoff, just check-in" precedent inherited from slice 1)
+- **Cross-cycle catch:** L:768 consumer-count drift (5→7 since filing — caught via grep at plan time); L:481 cross-edge file location (caught via `find` at plan time — slice 1 pattern reapplied); Charlie convention-drift on backlog scope-prefix (caught via live canary at pre-commit time — drive-by fixed).
+
+**Why this slice matters (pattern reinforcement):** Slice 2 is the same shape as slice 1 (4-axis pickup → plan-v1 → cross-audit → ship). The repeated success at this shape — 8/8 PRs across both slices clean, 0/0/0 findings on 5 of the 7 cross-audits, 1 MINOR fold ratified outside-view — validates the rubric+cadence as a sustainable polish-cycle template. Next opportunity: apply rubric again when 4-axis weights produce a new top-N set after backlog naturally accumulates more items.
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/sharded-swinging-locket.md` (slice 2 overwrite of slice 1 plan; slice 1 retrospective entry above is the slice 1 record)
+- Backlog entries closed: L:140 + L:481 + L:768 (line numbers as filed; current positions checked at close time)
+- Channel: `2026-05-17_17-00` — Alpha (sid `163efa04`) + Bravo (sid `ebff22dd`) coordination throughout (continued from slice 1)
+- Slice 1 retrospective: this file above; same cycle metrics shape; same sibling-coord protocol
+- Memories applied: `feedback-test-boundary-taxonomy-helper-vs-binary` (slice 1 codification; held in test-shape choices this slice — L:140 + L:481 use process-boundary spawn for end-to-end coverage; L:768 uses in-process for helper test), `feedback-substrate-precedent-as-design-rescue` (cursor-pattern 2-instance-no-lift discipline at L:481), `feedback-audit-recommendations-primary-source-verified` (caught L:768 consumer-count growth)
+- Drive-by: 2 Charlie backlog entries (lines 212+219) scope-prefix added
+
+---
