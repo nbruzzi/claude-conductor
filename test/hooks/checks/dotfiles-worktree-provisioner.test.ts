@@ -16,13 +16,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +78,15 @@ beforeEach(() => {
       },
     },
   );
+
+  // P0 substrate canary (backlog L:892, 2026-05-17) — minimal canonical
+  // `node_modules/claude-conductor/` fixture so post-link `verifyProvision`'s
+  // `cross-edge-dep-missing` facet doesn't fire on happy-path hook tests.
+  // Tests that exercise failure paths (skip / link-failed / facet-fires) override
+  // by removing or shadowing this fixture locally before invoking the hook.
+  const canonicalCcDir = join(canonical, "node_modules", "claude-conductor");
+  mkdirSync(canonicalCcDir, { recursive: true });
+  writeFileSync(join(canonicalCcDir, "package.json"), "{}");
 
   prevHome = process.env["HOME"];
   prevActiveSessionsDir = process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
@@ -186,10 +197,21 @@ describe("dotfiles-worktree-provisioner hook", () => {
 describe("verifyProvision (v3 fold) — direct unit coverage", () => {
   const { verifyProvision, formatIncompleteDetail } = PROVISIONER_INTERNAL;
 
-  it("returns complete=true when path exists, no realpath drift, sentinel pinned", () => {
+  it("returns complete=true when path exists, no realpath drift, sentinel pinned, cross-edge dep resolves", () => {
     const realCanonical = realpathSync(canonical);
     const wt = `${realCanonical}-${SID.slice(0, 8)}`;
     mkdirSync(wt, { recursive: true });
+    // P0 substrate canary (backlog L:892) — materialize the cross-edge dep
+    // probe target directly so `cross-edge-dep-missing` facet doesn't fire.
+    // Production hook path uses `linkCanonicalNodeModules` to make this true;
+    // this unit test exercises `verifyProvision` in isolation.
+    mkdirSync(join(wt, "node_modules", "claude-conductor"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(wt, "node_modules", "claude-conductor", "package.json"),
+      "{}",
+    );
     setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: wt });
 
     const verdict = verifyProvision({
@@ -319,3 +341,194 @@ describe("verifyProvision (v3 fold) — direct unit coverage", () => {
 // realpath path (Linux CI). execFileSyncFor is deliberately re-exported to
 // keep the import surface stable if a future test adds git-driven fixtures.
 void execFileSyncFor;
+
+// ─── P0 substrate canary (backlog L:892, 2026-05-17) ───────────────────────
+// Hook-level integration of `linkCanonicalNodeModules` per Path B (link
+// composition lifted outside the conditional). Covers fresh-create + idempotent
+// re-entry + skip + operator-collision + cross-edge-dep-missing facet + TA-3
+// real-subprocess `bun` resolve.
+
+describe("dotfiles-worktree-provisioner hook — node_modules linking (P0 L:892)", () => {
+  it("symlinks worktree node_modules → canonical node_modules on fresh provision", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const result = await provisionerCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+
+    // The hook reads `dotfilesCanonical` from CLAUDE_DOTFILES_ROOT (raw form);
+    // git worktree add resolves to the realpath form for the worktree dir;
+    // `linkCanonicalNodeModules` writes the symlink target as the raw
+    // canonical that was passed. Assert via realpath-equivalence on both
+    // sides per `feedback-cross-platform-tmpdir-divergence.md` (macOS
+    // `/var ↔ /private/var` aliasing).
+    const realCanonical = realpathSync(canonical);
+    const wt = `${realCanonical}-${SID.slice(0, 8)}`;
+    const wtNm = join(wt, "node_modules");
+    expect(lstatSync(wtNm).isSymbolicLink()).toBe(true);
+    expect(realpathSync(wtNm)).toBe(join(realCanonical, "node_modules"));
+    // Specifically: no worktree-deps-link-failed breadcrumb on happy path.
+    // (Note: on macOS, `realpath-mismatch` from the existing H2 facet still
+    // fires because the hook stores raw `dotfilesCanonical` from env var while
+    // realpath-resolves under `/private/var/`. That's orthogonal to the P0 fix.)
+    const linkFailures = readPresenceFailures().filter(
+      (e) => e.kind === "worktree-deps-link-failed" && e.sessionId === SID,
+    );
+    expect(linkFailures).toHaveLength(0);
+  });
+
+  it("idempotent on re-entry — second call observes already-linked, no errors logged", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const first = await provisionerCheck(makeInput());
+    expect(first.exitCode).toBe(0);
+    const second = await provisionerCheck(makeInput());
+    expect(second.exitCode).toBe(0);
+
+    const realCanonical = realpathSync(canonical);
+    const wt = `${realCanonical}-${SID.slice(0, 8)}`;
+    // Symlink still present, target resolves to the canonical's node_modules
+    // (realpath compare per macOS tmpdir divergence).
+    expect(lstatSync(join(wt, "node_modules")).isSymbolicLink()).toBe(true);
+    expect(realpathSync(join(wt, "node_modules"))).toBe(
+      join(realCanonical, "node_modules"),
+    );
+    // No worktree-deps-link-failed breadcrumb on either call.
+    const linkFailures = readPresenceFailures().filter(
+      (e) => e.kind === "worktree-deps-link-failed" && e.sessionId === SID,
+    );
+    expect(linkFailures).toHaveLength(0);
+  });
+
+  it("logs worktree-deps-link-failed when worktree node_modules is a real dir (operator collision)", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    // First call provisions + links. Tear down the symlink and replace with a
+    // real directory to simulate an operator override left in place across
+    // sessions.
+    const realCanonical = realpathSync(canonical);
+    const wt = `${realCanonical}-${SID.slice(0, 8)}`;
+    await provisionerCheck(makeInput());
+    rmSync(join(wt, "node_modules"), { recursive: true, force: true });
+    mkdirSync(join(wt, "node_modules"));
+
+    // Second call sees the real dir, refuses to overwrite, logs the failure.
+    const result = await provisionerCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    const linkFailures = readPresenceFailures().filter(
+      (e) => e.kind === "worktree-deps-link-failed" && e.sessionId === SID,
+    );
+    expect(linkFailures).toHaveLength(1);
+    expect(linkFailures[0]?.detail).toContain("not a symlink");
+  });
+
+  it("emits skip-breadcrumb when canonical has no node_modules", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    // Tear down the beforeEach-provisioned canonical node_modules to simulate
+    // first-ever invocation before any `bun install` ran at canonical.
+    rmSync(join(canonical, "node_modules"), { recursive: true, force: true });
+
+    const result = await provisionerCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // The hook returns warn() with a skip-breadcrumb; no link-failed entry.
+    const linkFailures = readPresenceFailures().filter(
+      (e) => e.kind === "worktree-deps-link-failed" && e.sessionId === SID,
+    );
+    expect(linkFailures).toHaveLength(0);
+    // verifyProvision fires cross-edge-dep-missing → worktree-provision-incomplete entry.
+    const incomplete = readPresenceFailures().filter(
+      (e) => e.kind === "worktree-provision-incomplete" && e.sessionId === SID,
+    );
+    expect(incomplete).toHaveLength(1);
+  });
+
+  it("verifyProvision: cross-edge-dep-missing fires when worktree node_modules has no claude-conductor", () => {
+    const { verifyProvision } = PROVISIONER_INTERNAL;
+    const realCanonical = realpathSync(canonical);
+    const wt = `${realCanonical}-${SID.slice(0, 8)}`;
+    mkdirSync(wt, { recursive: true });
+    // Empty node_modules dir — exists but lacks claude-conductor.
+    mkdirSync(join(wt, "node_modules"));
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: wt });
+
+    const verdict = verifyProvision({
+      sessionId: SID,
+      worktreePath: wt,
+      dotfilesCanonical: realCanonical,
+    });
+
+    expect(verdict.complete).toBe(false);
+    expect(verdict.facet).toBe("cross-edge-dep-missing");
+  });
+
+  it("verifyProvision: cross-edge-dep-missing does NOT fire when claude-conductor/package.json present", () => {
+    const { verifyProvision } = PROVISIONER_INTERNAL;
+    const realCanonical = realpathSync(canonical);
+    const wt = `${realCanonical}-${SID.slice(0, 8)}`;
+    mkdirSync(wt, { recursive: true });
+    // Direct (non-symlink) materialization of the probe target.
+    mkdirSync(join(wt, "node_modules", "claude-conductor"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(wt, "node_modules", "claude-conductor", "package.json"),
+      "{}",
+    );
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: wt });
+
+    const verdict = verifyProvision({
+      sessionId: SID,
+      worktreePath: wt,
+      dotfilesCanonical: realCanonical,
+    });
+
+    expect(verdict.complete).toBe(true);
+    expect(verdict.facet).toBeNull();
+  });
+
+  it("TA-3 (real-subprocess bun resolve): import resolves from worktree script after hook fires", async () => {
+    // Materialize a real importable package in canonical's node_modules.
+    const ccDir = join(canonical, "node_modules", "claude-conductor");
+    writeFileSync(
+      join(ccDir, "package.json"),
+      JSON.stringify({
+        name: "claude-conductor",
+        type: "module",
+        exports: { "./marker": "./marker.js" },
+      }),
+    );
+    writeFileSync(join(ccDir, "marker.js"), "export const marker = 'OK';\n");
+
+    process.env[FEATURE_FLAG_ENV] = "1";
+    await provisionerCheck(makeInput());
+
+    const realCanonical = realpathSync(canonical);
+    const wt = `${realCanonical}-${SID.slice(0, 8)}`;
+
+    // Per Path A validation lesson: bun's package resolution is script-file-
+    // relative, not cwd-relative. The probe script must be a real file inside
+    // the worktree so resolution walks up from the script's location.
+    const probeScript = join(wt, "test-resolve.mjs");
+    writeFileSync(
+      probeScript,
+      [
+        "import { marker } from 'claude-conductor/marker';",
+        "if (marker !== 'OK') process.exit(2);",
+        "process.exit(0);",
+      ].join("\n"),
+    );
+
+    const proc = spawnSync("bun", [probeScript], {
+      cwd: wt,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    });
+
+    // Skip gracefully on runners without `bun` on PATH (per the
+    // "skipped gracefully on runners without production canonicals" pattern).
+    if (
+      proc.error !== undefined &&
+      (proc.error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return;
+    }
+
+    expect(proc.status).toBe(0);
+  });
+});

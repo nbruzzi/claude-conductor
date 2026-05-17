@@ -134,4 +134,15 @@ describe("BUNDLED_LOCK_DOMAINS invariants", () => {
   test("LOCK_DOMAINS includes `none` sentinel", () => {
     expect((LOCK_DOMAINS as readonly string[]).includes("none")).toBe(true);
   });
+
+  // P0 substrate canary (backlog L:892, 2026-05-17): directed assertion that
+  // the dotfiles-worktree-provisioner row carries the new symlink domain.
+  // Invariant 4 ensures the literal is referenced SOMEWHERE; this test pins
+  // it to the right row so future moves don't silently regress the registry.
+  test("dotfiles-worktree-provisioner row includes per-worktree-node-modules-symlink (P0 L:892)", () => {
+    const row = BUNDLED_LOCK_DOMAINS.find(
+      (r) => r.phase === "dotfiles-worktree-provisioner",
+    );
+    expect(row?.domains).toContain("per-worktree-node-modules-symlink");
+  });
 });
