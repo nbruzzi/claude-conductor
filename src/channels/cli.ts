@@ -82,7 +82,10 @@ import {
   readPendingPeerMessageCursor,
 } from "./peer-message-cursors.ts";
 import { parseDigestBody } from "./digest.ts";
-import { resolveActiveChannelForHandoff } from "./handoff-resolver.ts";
+import {
+  resolveActiveChannelForHandoff,
+  summarizeChannelForHandoff,
+} from "./handoff-resolver.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   claimIdentity,
@@ -127,6 +130,8 @@ const VERB_HELP: Record<string, string> = {
     "from-handoff <handoff-path>\n  Print the channel id derived from a handoff filename.",
   "resolve-handoff":
     "resolve-handoff <handoff-path>\n  Resolve a handoff to its active channel. Emits JSON with `kind`:\n    derived-active | derived-empty-no-body-refs | mismatch-body-has-live-alternative | derive-failed.\n  L141 — used by /handoff-resume parallel Step 4a to surface the closeout-handoff mismatch case\n  (derived channel has no live peers AND handoff body names a different channel WITH live peers).",
+  "summarize-handoff-channel":
+    "summarize-handoff-channel <handoff-path>\n  Summarize the derived channel's activity state for a handoff. Emits JSON with `kind`:\n    live | online | stale | missing | derive-failed.\n  L:142 — used by /handoff-resume Step 1a picker to enrich each candidate row with channel-liveness.\n  Live (peer heartbeat <30 min) and online (≥30 min, <24h) peer counts surfaced separately.\n  Excludes CLAUDE_SESSION_ID from peer counts when set (so the operator's own session\n  doesn't count as a live peer).",
   create:
     "create <channel-id> <handoff-id>\n  Create a new channel with metadata for the given handoff id.",
   join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
@@ -190,10 +195,10 @@ const KINDS_HELP =
 const TOP_LEVEL_HELP =
   "channels CLI — see src/channels/cli.ts header for full usage.\n" +
   "\n" +
-  "Subcommands: from-handoff | resolve-handoff | create | join | close | send | read | list |\n" +
-  "             meta | heartbeat | peers | body | whoami | set-role | close-peer |\n" +
-  "             forget-cursor | show-cursor | forget-message-cursor | show-message-cursor |\n" +
-  "             kinds\n" +
+  "Subcommands: from-handoff | resolve-handoff | summarize-handoff-channel | create | join |\n" +
+  "             close | send | read | list | meta | heartbeat | peers | body | whoami |\n" +
+  "             set-role | close-peer | forget-cursor | show-cursor | forget-message-cursor |\n" +
+  "             show-message-cursor | kinds\n" +
   "\n" +
   "Run '<subcommand> --help' for verb-specific usage.";
 
@@ -666,6 +671,12 @@ export async function runChannelsCli(
       case "resolve-handoff": {
         const path = requireArg(ctx, rest, 0, "handoff-path");
         printJson(resolveActiveChannelForHandoff(path));
+        return;
+      }
+      case "summarize-handoff-channel": {
+        const path = requireArg(ctx, rest, 0, "handoff-path");
+        const self = process.env["CLAUDE_SESSION_ID"] ?? null;
+        printJson(summarizeChannelForHandoff(path, self));
         return;
       }
       case "create": {

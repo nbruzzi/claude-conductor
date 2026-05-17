@@ -99,7 +99,17 @@ For each candidate:
   - **dir** — value of the `**Working directory:**` field in the handoff body.
   - **next** — first item of the `## Next Steps` section, trimmed to one line (≤80 chars).
   - **touched** — 2–3 file basenames from `entries_touched` (if present), comma-separated. This is the disambiguation axis: two peers with similar titles are distinguished by the files they worked on. Omit on degraded path or when `entries_touched` is empty.
+  - **channel** — channel-liveness summary for the row's derived channel (L:142). Emit on BOTH frontmatter and degraded paths — channel id derives from filename either way. Fail-open: any helper exception → render `channel: ?`, never abort the picker. Render variants:
+    - `channel: live (N live[, M online])` — ≥1 peer heartbeat within 30 min; N is live-peer count (excluding self when `CLAUDE_SESSION_ID` is set); M online appended when >0.
+    - `channel: online (M online)` — 0 live, ≥1 online peer (heartbeat <24h).
+    - `channel: stale` — channel exists but no recent peer activity.
+    - `channel: missing` — derived channel id has no on-disk channel dir (fresh-cycle handoff).
+    - `channel: ?` — derive-failed (handoff filename doesn't match `HANDOFF_<id>.md` shape) or any unexpected exception.
   - **ended** — frontmatter `ended_at`; on degraded path, label the row `mtime:` instead and use the file mtime.
+
+Compute via the channels CLI: `bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/channels/cli.ts" summarize-handoff-channel <handoff-path>`. The verb emits JSON `{ kind, channelId?, livePeerCount?, onlinePeerCount? }` per the shape above. Per-row liveness lookup must NOT abort the picker on error; pipe `2>/dev/null` and fall through to `channel: ?` on any non-success exit.
+
+**No auto-promotion.** Channel-liveness is informational only — DO NOT re-rank rows by liveness. Per backlog L:142 lean (b), surface the datum and let the operator pick. `ended_at` descending ordering is preserved.
 
 Format (frontmatter path):
 
@@ -110,12 +120,14 @@ Two recent handoffs look like parallel sessions (different work, finished around
     dir: <working-dir>
     next: <first-next-step>
     touched: <basename1, basename2, basename3>
+    channel: <kind> [(<counts>)]
     ended: <ended_at>
 
 [2] <title>
     dir: <working-dir>
     next: <first-next-step>
     touched: <basename1, basename2>
+    channel: <kind> [(<counts>)]
     ended: <ended_at>
 
 [0] None of these — list all handoffs and let me pick manually
@@ -123,7 +135,7 @@ Two recent handoffs look like parallel sessions (different work, finished around
 Which one?
 ```
 
-Degraded-path header reads instead: `Recent handoffs without telemetry — possible parallel sessions. Which were you in?` and row labels use `mtime:` in place of `ended:`.
+Degraded-path header reads instead: `Recent handoffs without telemetry — possible parallel sessions. Which were you in?` and row labels use `mtime:` in place of `ended:`. The `channel:` field is still emitted on degraded path — channel id still derives from filename.
 
 **Handling the user's pick.**
 
