@@ -197,22 +197,67 @@ Before waiting on the user, derive `channel-id = channelIdFromHandoff(handoff-pa
 eval "$(bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/cli/resolve-dotfiles-root.ts" --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || true)"
 cd "${CLAUDE_DOTFILES_ROOT_RESOLVED:-${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}}"
 
-# Canonicalize handoff path → channel id.
-channel_id="$(bun run src/channels/cli.ts from-handoff "$handoff_path")"
+# L141 — resolve the handoff to its active channel.
+# Emits JSON {kind, ...} discriminating four outcomes:
+#   - derived-active: derived channel has live peers; join it.
+#   - derived-empty-no-body-refs: nothing live; create/join the derived id.
+#   - mismatch-body-has-live-alternative: closeout-handoff case — surface the
+#     mismatch to the user so they can switch to the live channel.
+#   - derive-failed: handoff missing or malformed; abort Step 4a.
+resolution="$(bun run src/channels/cli.ts resolve-handoff "$handoff_path")"
+resolution_kind="$(printf '%s' "$resolution" | python3 -c 'import sys, json; print(json.load(sys.stdin)["kind"])')"
 
-# Create if missing; otherwise join.
-if ! CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts meta "$channel_id" > /dev/null 2>&1; then
-  CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts create "$channel_id" "$channel_id"
-else
-  CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts join "$channel_id"
+case "$resolution_kind" in
+  derived-active | derived-empty-no-body-refs)
+    channel_id="$(printf '%s' "$resolution" | python3 -c 'import sys, json; print(json.load(sys.stdin)["channelId"])')"
+    ;;
+  mismatch-body-has-live-alternative)
+    # Render warning + candidate list. Default action: join the derived id
+    # anyway (preserves single-flow happy path); user can switch manually.
+    derived_id="$(printf '%s' "$resolution" | python3 -c 'import sys, json; print(json.load(sys.stdin)["derivedChannelId"])')"
+    printf '\n⚠ Step 4a: derived channel `%s` has no live peers, but the handoff body\n' "$derived_id"
+    printf '  names channels with live peers:\n\n'
+    printf '%s' "$resolution" | python3 -c '
+import sys, json
+data = json.load(sys.stdin)
+for c in data["candidateChannels"]:
+    print(f"    - `{c[\"id\"]}` ({c[\"peers\"]} live peer{\"\" if c[\"peers\"] == 1 else \"s\"})")
+'
+    printf '\n  Joining the derived channel anyway (current default).\n'
+    printf '  To switch: `/channel join <id>` (pick one of the above).\n\n'
+    channel_id="$derived_id"
+    ;;
+  derive-failed)
+    printf '\n⚠ Step 4a: handoff resolution failed — skipping channel open.\n%s\n\n' "$resolution"
+    channel_id=""  # signals "no channel open" to the downstream guards below
+    ;;
+  *)
+    printf '\n⚠ Step 4a: unexpected resolution kind `%s`; falling back to from-handoff.\n' "$resolution_kind"
+    channel_id="$(bun run src/channels/cli.ts from-handoff "$handoff_path")"
+    ;;
+esac
+
+# Skill markdown isn't a single shell invocation — each fenced block is
+# reasoned about separately. Guard create/join + status-post on a non-empty
+# channel_id so a `derive-failed` resolution (channel_id="") doesn't try to
+# meta/create/join an empty id. Step 4a aborts cleanly; downstream Step 4b
+# still runs but with no channel context.
+if [ -n "$channel_id" ]; then
+  if ! CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts meta "$channel_id" > /dev/null 2>&1; then
+    CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts create "$channel_id" "$channel_id"
+  else
+    CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts join "$channel_id"
+  fi
+
+  # Post a "status: joined — parallel context load" message so any peer sees us.
+  printf '%s' "joined channel in parallel context-load mode; no writes this session" \
+    | CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts send "$channel_id" status
 fi
-
-# Post a "status: joined — parallel context load" message so any peer sees us.
-printf '%s' "joined channel in parallel context-load mode; no writes this session" \
-  | CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts send "$channel_id" status
 ```
 
 Surface the channel ID in the briefing: "Channel `<id>` — peer status: `<live|online|stale|unknown>` (from `/channel peers`)." If channel creation fails, flag the error and continue — the parallel briefing still completes.
+
+**L141 mismatch — what to render in the briefing.** When `resolve-handoff` returns `mismatch-body-has-live-alternative`, the bash block prints a warning + candidate list before joining the derived channel. Reproduce that warning in the parallel-mode briefing (Step 3 output) so the user sees the mismatch clearly when they read your reply. The default action is to join the derived channel anyway; the user's call is whether to issue `/channel join <id>` against an alternative.
 
 **Identity continuity (P2 — `--as <Identity>`).** When this resume should preserve a NATO identity letter from a prior cycle (the prior session's audit threads, handoff body, or channel artifacts named a specific letter — Alpha, Bravo, etc.), pass `--as <Identity>` to the join call above instead of bare `join`. If the named letter is held by another session (the prior holder's heartbeat is still alive but their session ended), add `--force` to take over via atomic sentinel replacement. Optional `--from-session <prior-uuid>` adds a CAS check so the takeover refuses if the holder isn't the expected session. See `commands/session/channel.md` `### join` → "Recovery flow for parallel-session resume" for the full flag matrix; the legacy 4-step recovery dance is documented there too for substrate-pinned CLI versions older than `--as`.
 
