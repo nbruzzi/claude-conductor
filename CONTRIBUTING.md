@@ -16,7 +16,7 @@ Work proceeds in phases per the parent plan (`~/.claude/plans/disciplined-multi-
 3. **Post-phase audit** — same persona set re-runs against the implementation diff.
 4. **Verification round** — each persona verifies only their own findings against the integration. Bounded 1 round by default; up to 3 rounds when integration substantively changed the surface.
 5. **Smoke-run gate** — run new code in a real (no-op) test environment to catch sandbox/reality drift.
-6. **Pipeline gates** — typecheck + format + lint + tests all clean.
+6. **Pipeline gates** — typecheck + format + lint + tests all clean. Single-command equivalent: `bun run check` (alias for `bun run verify` — orchestrates typecheck + format:check + lint + check-generic-paths + check-import-extensions + `bun test`).
 7. **Autonomous merge** — when all gates pass, the implementing Claude merges on the user's behalf without asking.
 
 Any gate failure stops the merge and surfaces the issue.
