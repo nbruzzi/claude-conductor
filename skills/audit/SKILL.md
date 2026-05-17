@@ -117,9 +117,13 @@ This step encodes a structural blind spot caught at PR #42 merge time on 2026-04
 
 This same trigger logic and pre-flight discipline applies to **audits commissioned via direct Agent calls outside the `/audit` skill** (e.g., inline sibling-parity audits during PR-merge sessions). The skill is the canonical encoding, but the pattern itself isn't skill-specific. The memory entry referenced above is the cross-context source of truth.
 
-## Step 2 — Match auditors to the plan
+## Step 2 — Match auditors to the plan (2-pool model)
 
 Read `~/.claude/agents/audit/registry.md`. Parse the `## Machine-readable index` TSV block — one row per auditor, tab-separated `file \t prefix \t name \t triggers-pipe-separated`. This is the authoritative source for trigger matching. Do **not** re-read each auditor's `.md` file for triggers — the registry is the cache.
+
+**The board is organized as two independent pools.** Selection happens in parallel; final commissioned set = Pool A ∪ Pool B (independent caps).
+
+### Pool A — Domain (cold + familiar; keyword-trigger selection at ALL stages)
 
 **Match algorithm (case-insensitive, word-boundary):**
 
@@ -134,17 +138,34 @@ def match_count(triggers: list[str], plan: str) -> dict[str, int]:
     return hits
 ```
 
-Sum hits per auditor. Rank by total.
+Sum hits per auditor. Rank by total. **Skip posture rows** (TSV triggers column is empty by design — those select via Pool B below).
 
-**Selection rules:**
+**Pool A selection rules:**
 
 - Word count <800 → **3** auditors minimum. 800–8,000 → **3–4**. >8,000 → **4–5**. Always **3 minimum**, never less. **Scale up beyond the floor when the plan's risk surface warrants it** — multiple distinct domains in scope, high-stakes shipping, or cross-cutting concerns across security/performance/DX/accessibility/business/knowledge-system. Diminishing returns bite past ~5–6 (coordination overhead exceeds incremental insight, reconciliation rounds in 5b' get unwieldy), but **the cap is scope-driven, not a fixed numeric ceiling**. A 10K-word multi-system plan with broad risk surface warrants 5 distinct lenses; a 1K-word focused refactor warrants 3. Defaulting to 3 on every plan is itself a handicap.
 - **At least one cold auditor** — prevents familiarity blind spots.
 - **At least one familiar auditor** when the plan touches project internals (references dotfiles, hooks, wiki, memory, existing repos, or established conventions).
 - **Maximum lens diversity** — if two candidate auditors share >50% of their trigger keywords, prefer the one with more matches and skip the other.
 - **Sibling-symmetry pre-flight boost (Step 1.5)** — if pre-flight fired, add **+5** to the score of any auditor whose triggers include `architecture` or `architecture-integration`. This nudges the structural lens into selection without overriding stronger keyword matches.
-- **Stage-mode-mix sensitivity (Step 0)** — at stages where mode-2 is in scope (pre-plan / plan-v1), Architecture auditor gets **+3** (frame-level decomposition is its strongest probe) and at least one auditor whose triggers include `workflow` or `coordination` is forced into selection (sibling-coord + sequencing are mode-2-rich domains). At stages where mode-2 is out-of-scope (per-PR / pre-merge), no stage-bias is applied. Until posture-auditor entries are added to the registry, this nudges the existing domain auditors toward the lenses most likely to surface mode-2 findings within their domain.
+- **Stage-mode-mix sensitivity fallback (when Pool B selects 0):** at stages where mode-2 is in scope (pre-plan / plan-v1) AND Pool B yields zero posture-auditors, Architecture auditor gets **+3** (frame-level decomposition is its strongest probe) and at least one auditor whose triggers include `workflow` or `coordination` is forced into selection (sibling-coord + sequencing are mode-2-rich domains). This is the legacy mode-2-via-domain-stretching fallback path preserved for domain-heavy plans where posture selection underfires.
 - Break ties by adversarial relevance to the plan's domain.
+
+### Pool B — Posture (LENS-class; stage-gated selection)
+
+Posture auditors are NOT selected by keyword-trigger — their TSV triggers column is empty by design. Selection happens by **stage from Step 0**:
+
+| Stage                    | Pool B selection                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| pre-plan-write           | **all 5 posture auditors** (mode-2 dominant — the framing surface is wide-open)                                                      |
+| plan-v1 cross-audit      | **3-5 posture auditors** (mode-2 + mode-1 mix; PREMISE + SCOPE always; REFRAME / DEFAULT / SEQUENCE if plan has those decision-axes) |
+| plan-v2 / plan-locked    | **0-1 posture auditors** (mode-2 only if BLOCKER class suspected; default 0; mode-2 cost > reframe cost)                             |
+| per-PR audit             | **0 posture auditors** (mode-1 only — gate is "is the implementation correct?")                                                      |
+| pre-merge Lane D         | **0 posture auditors** (mode-1 only — gate is "is this ship-safe-as-is?")                                                            |
+| post-merge retrospective | **1-2 posture auditors** (SCOPE + SEQUENCE for cycle-learning; results file as next-cycle backlog, NOT as in-cycle revert)           |
+
+**Selection heuristic at plan-v1** (3-5 axis pick): if plan mentions premise-class language ("we assume X" / "given Y") → PREMISE; if plan has bundle composition decisions → SCOPE; if plan has architectural choices with named candidates → REFRAME; if plan has "default" language or fallback paths → DEFAULT; if plan has merge-order / branch-shape / dependency-chain language → SEQUENCE.
+
+**Total commissioned auditors per cycle:** Pool A (3-5 typical) + Pool B (0-5 stage-dependent) = 3-10 typical range. Independent caps; pools don't compete for slots.
 
 ## Step 3 — Present the recommendation
 
