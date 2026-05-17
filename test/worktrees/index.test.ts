@@ -22,9 +22,18 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
+  linkCanonicalNodeModules,
   listWorktrees,
   provisionWorktree,
   removeWorktree,
@@ -418,5 +427,149 @@ describe("listWorktrees", () => {
     const detached = list.find((e) => e.sessionId === "deadbeef");
     expect(detached).toBeDefined();
     expect(detached?.branch).toBeNull();
+  });
+});
+
+describe("linkCanonicalNodeModules", () => {
+  it("returns skip when canonical has no node_modules", () => {
+    const r = getRepo();
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+
+    const result = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(result.kind).toBe("skip");
+    if (result.kind === "skip") {
+      expect(result.reason).toBe("canonical-has-no-node-modules");
+    }
+  });
+
+  it("creates symlink when worktree node_modules is absent", () => {
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+    writeFileSync(join(canonicalNm, ".keep"), "");
+
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+
+    const result = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(result.kind).toBe("ok");
+
+    const worktreeNm = join(worktreePath, "node_modules");
+    expect(lstatSync(worktreeNm).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(worktreeNm)).toBe(canonicalNm);
+  });
+
+  it("returns already-linked on idempotent re-call", () => {
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+
+    const first = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(first.kind).toBe("ok");
+
+    const second = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(second.kind).toBe("already-linked");
+    if (second.kind === "already-linked") {
+      expect(second.existingTarget).toBe(canonicalNm);
+    }
+  });
+
+  it("returns error when worktree node_modules is a real directory (operator collision)", () => {
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+    mkdirSync(join(worktreePath, "node_modules"));
+
+    const result = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.detail).toContain("not a symlink");
+    }
+  });
+
+  it("returns error when worktree symlink points to a different target", () => {
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+    const otherNm = join(r.base, "other-node-modules");
+    mkdirSync(otherNm);
+
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+    symlinkSync(otherNm, join(worktreePath, "node_modules"), "dir");
+
+    const result = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.detail).toContain("different target");
+    }
+  });
+
+  it("handles trailing slash on canonical path (TA-6 path-shape fuzz)", () => {
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+
+    const result = linkCanonicalNodeModules(`${r.dir}/`, worktreePath);
+    expect(result.kind).toBe("ok");
+    const wtnm = join(worktreePath, "node_modules");
+    expect(lstatSync(wtnm).isSymbolicLink()).toBe(true);
+  });
+
+  it("treats realpath-equivalent existing target as already-linked (TA-6 realpath divergence)", () => {
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+
+    // alias points to the same canonical via a different path; existing
+    // worktree symlink uses the alias-routed path, so literal readlink !=
+    // canonicalNm but realpath does.
+    const aliasParent = join(r.base, "alias");
+    mkdirSync(aliasParent);
+    const aliasCanonical = join(aliasParent, "canonical");
+    symlinkSync(r.dir, aliasCanonical, "dir");
+
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+    const aliasNm = join(aliasCanonical, "node_modules");
+    symlinkSync(aliasNm, join(worktreePath, "node_modules"), "dir");
+
+    const result = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(result.kind).toBe("already-linked");
+    if (result.kind === "already-linked") {
+      expect(result.existingTarget).toBe(aliasNm);
+    }
+  });
+
+  it("idempotent shape on sequential parallel-style calls (TA-SCOPE-1)", () => {
+    // Sync primitive so true concurrency requires multi-process; this test
+    // covers the audit's race-shape concern via the sequential idempotent
+    // path (one creates, second sees the result). True multi-process race
+    // is covered by the symlinkSync EEXIST catch in the primitive itself,
+    // which falls through to a re-probed already-linked when the racer's
+    // result matches what we'd have written.
+    const r = getRepo();
+    const canonicalNm = join(r.dir, "node_modules");
+    mkdirSync(canonicalNm);
+    const worktreePath = `${r.dir}-94a8058c`;
+    mkdirSync(worktreePath);
+
+    const first = linkCanonicalNodeModules(r.dir, worktreePath);
+    const second = linkCanonicalNodeModules(r.dir, worktreePath);
+    const third = linkCanonicalNodeModules(r.dir, worktreePath);
+    expect(first.kind).toBe("ok");
+    expect(second.kind).toBe("already-linked");
+    expect(third.kind).toBe("already-linked");
+    // Final state: exactly one symlink
+    expect(lstatSync(join(worktreePath, "node_modules")).isSymbolicLink()).toBe(
+      true,
+    );
   });
 });

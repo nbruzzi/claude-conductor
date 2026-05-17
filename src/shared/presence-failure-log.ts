@@ -89,6 +89,12 @@ export type PresenceFailureKind =
   // `<lifecycle-stage>-incomplete` naming established by `worktree-cleanup-
   // incomplete`. Consumed by the provisioner hook only.
   | "worktree-provision-incomplete"
+  // P0 substrate canary (backlog L:892, 2026-05-17) — node_modules
+  // symlink-clone failed during provisioner post-creation. Surfaced when
+  // `linkCanonicalNodeModules` returns `kind: "error"` (operator-collision
+  // at <worktree>/node_modules, wrong-target stale symlink, or symlinkSync
+  // throw). Consumed by the provisioner hook only.
+  | "worktree-deps-link-failed"
   // P2 — `claimIdentityNamed` audit-trail failure. Per plan
   // giggly-bouncing-spark.md §3 (RE-3 closure): when a takeover succeeds
   // (metadata committed, sentinel renamed) but the post-lock `appendMessage`
@@ -389,6 +395,9 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "worktree-cleanup-failed" ||
     k === "worktree-cleanup-incomplete" ||
     k === "worktree-provision-incomplete" ||
+    // P0 substrate canary (backlog L:892, 2026-05-17) — node_modules
+    // symlink-clone failed during provisioner post-creation.
+    k === "worktree-deps-link-failed" ||
     k === "takeover-audit-failed" ||
     // sibling-coord-gate-awareness Lane C FIND-6 (Bravo).
     k === "standby-suppressed"
