@@ -52,13 +52,21 @@ if [[ ${#FILES[@]} -eq 0 ]]; then
 fi
 
 # --- 3. Find relative imports/exports ---
-# Match `import ... "./..."`, `import ... "../..."`,
-#       `export ... from "./..."`, `export ... from "../..."`,
-#       and side-effect `import "./..."`. Path is the quoted segment.
-IMPORT_REGEX='^[[:space:]]*(import|export)([[:space:]]+type)?[[:space:]].*"(\./|\.\./)[^"]+"'
+# STATIC_REGEX matches statement-form: `import ... "./..."`, `import ... "../..."`,
+# `export ... from "./..."`, `export ... from "../..."`, and side-effect
+# `import "./..."`. Anchored to line-start to avoid catching JSDoc comment
+# strings on the same line.
+STATIC_REGEX='^[[:space:]]*(import|export)([[:space:]]+type)?[[:space:]].*"(\./|\.\./)[^"]+"'
+
+# DYNAMIC_REGEX matches call-site form: `await import("./foo")`,
+# `void import("../bar.ts")`, etc. Not line-anchored — dynamic imports appear
+# mid-expression, often indented inside function bodies. The `\b` boundary
+# prevents matching things like `xxximport(...)`. Path is the quoted segment;
+# the awk filter below extracts it identically for both forms.
+DYNAMIC_REGEX='\bimport[[:space:]]*\([[:space:]]*"(\./|\.\./)[^"]+"'
 
 GREP_EXIT=0
-RAW_HITS=$(grep -HnE "$IMPORT_REGEX" "${FILES[@]}" 2>&1) || GREP_EXIT=$?
+RAW_HITS=$(grep -HnE -e "$STATIC_REGEX" -e "$DYNAMIC_REGEX" "${FILES[@]}" 2>&1) || GREP_EXIT=$?
 
 if [[ $GREP_EXIT -ge 2 ]]; then
   echo "check-import-extensions: error: grep failed (exit $GREP_EXIT)" >&2
