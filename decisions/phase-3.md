@@ -444,3 +444,82 @@ per tight-fold criteria.
 - Related Decision: Step F (`lock-domain.ts` registry) — `per-channel-cursor` + `per-channel-heartbeat` domains cover renamed paths without registry update needed.
 
 ---
+
+## Decision: P0 substrate canary — symlink-clone over `bun install` for cross-edge resolution from per-session worktrees
+
+```yaml
+---
+ts: 2026-05-17T14:00:00Z
+kind: architectural
+severity: major
+phase: 3
+backlog: "wiki/backlog.md:892"
+plan: "~/.claude/plans/twinkling-nibbling-gosling.md"
+prs: ["#62 squash 8cd8b6c", "#63 squash ba3124a"]
+main_ci: ["25992322595 success", "25992988493 success"]
+audit_class: "plan-v1 cross-audit (4-auditor mode-2 + mode-1) + 2× per-PR mode-1"
+---
+```
+
+### Context
+
+`dotfiles-worktree-provisioner` (`src/hooks/checks/dotfiles-worktree-provisioner.ts`) creates per-session worktrees via `git worktree add` but did NOT make cross-edge dependencies resolvable from the new worktree. Fresh worktrees had no `node_modules/`, so all bun-based code that cross-edge-imports `claude-conductor` failed from any session with `CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES=1`. Sev-2 regression for flag-on sessions, latent until L141 cycle recon (2026-05-17 ~00:15Z, primary-source traced by Bravo).
+
+### Decision: symlink-clone (Path A) over `bun install` (Path B)
+
+Add `linkCanonicalNodeModules(canonicalPath, worktreePath)` primitive (`src/worktrees/index.ts`) creating a single symlink at `<worktreePath>/node_modules` → `<canonicalPath>/node_modules`. Hook composes it unconditionally after worktree materialization (Path B Option B per the L93 third-existing-path catch).
+
+### Rationale
+
+Backlog filing recommended candidate (a) `bun install --frozen-lockfile`. Plan v1 adopted that approach. Bravo's plan-v1 mode-2 cross-audit (per the audit-posture framework shipped earlier same session as PR #61 `f3deb74`) caught ARCH PREMISE-1 critical: canonical's `node_modules/claude-conductor/` is already a per-file symlink mirror back to `~/Repos/claude-conductor/` (bun's `file:` protocol shape). Re-running `bun install` in every worktree recomputes a tree the canonical already has — wasted ~10s per session-start + lockfile-divergence risk on dotfiles where `bun.lock` is gitignored.
+
+Alpha's primary-source empirical validation 2026-05-17 ~13:10Z: `ln -s` from a fresh worktree to canonical's `node_modules` + `bun test-resolve.mjs` from a worktree-resident script returns `OK keys=runChannelsCli`. Production-pattern `bun run node_modules/claude-conductor/src/channels/cli.ts ...` also resolves correctly.
+
+Path A trades:
+
+- Build-time: O(microseconds) vs O(10s) per session-start
+- Failure surface: refuse-to-overwrite operator collisions (real dir, different-target symlink) + EEXIST race recovery + `already-linked` idempotent re-call vs Path B's ENOSPC, zombie bun processes, install-corrupt-state, lockfile divergence
+- Operator-mental-model: symlink mirrors canonical's existing resolution shape — `node_modules/claude-conductor/<file>` chains through canonical's symlinks to `~/Repos/claude-conductor/<file>` exactly as canonical does
+
+Mode-2 collapse: 8 mode-2 findings raised across 4 auditors (ARCH/WP/RE/TA); PREMISE-1 acceptance collapsed ~70% of plan-v1 (PREMISE-1-RE / PREMISE-2-RE / REFRAME-1-ARCH / REFRAME-1-RE / SCOPE-1 lockfile / DEFAULT-1 ARCH+WP+RE / DEFAULT-2-WP / SEQUENCE-1 ARCH+RE+WP all moot under Path A).
+
+### Path B Option B (hook integration)
+
+Plan-v2 initial draft placed the link composition on `provisionWorktree`'s `ok` AND `exists` result branches. Bravo's plan-v2 read-through caught a third existing-path: the hook's outer `existsSync(worktreePath)` early-return at L93 (steady-state session-resume — the most common case). Alpha ratified **Option B** (lift link composition OUTSIDE the conditional) so all three terminal materialization states converge before the link call. Hook flow: set-sentinel → materialize-worktree (existsSync-early OR provision) → link → verify.
+
+### Audit-posture framework first-cycle ratification
+
+This cycle was the framework's empirical proving ground. Framework (memories `feedback-audit-upstream-vs-downstream-posture.md` + `feedback-audit-request-framing-by-stage.md` + `feedback-audit-findings-prefix-distinguishes-mode.md`) shipped on this session's first PR (#61 `f3deb74`, discipline-debt cleanup of yesterday's codification). The very next plan-v1 cycle (this P0) exercised the framework's `/audit` skill Step 0 stage-mode-mix selection, Step 2 sensitivity (Architecture +3 + workflow forced in), Step 4 mode-2-invitation block, Step 5 mode-separation directive.
+
+Results:
+
+- **1 load-bearing mode-2 finding** (ARCH PREMISE-1) → collapsed 70% of plan-v1
+- **1 false-positive caught by cross-auditor** (TA-5 sibling-check vs ARCH-4): ARCH claimed presence-failure-log test didn't pin the kind union; TA-5 correctly identified the SLICE_2_KINDS pattern at L211-220 + flagged the new `SLICE_3_KINDS` array
+- **11 load-bearing mode-1 findings folded** + 6 minor
+- **REPLAN-class catches:** 1 (PREMISE-1 — the entire approach pivoted from `bun install` to symlink-clone)
+- **Aggregate score:** 6.625/10 (range 6.0 RE — 7.5 WP)
+
+Framework earned its weight cycle 1. Pre-emptively naming mode-2 axes in the plan §"Mode-2 framing notes (pre-audit)" subsection invited the right kind of upstream challenge rather than burying it.
+
+### Out-of-scope (deferred follow-ups)
+
+- **Per-file symlink mirror as alternative implementation** — instead of one big symlink at `node_modules/`, replicate canonical's mirror structure file-by-file in worktree. More complex, isolated per-worktree, but pays construction cost of canonical's. Defer until concrete operator concern surfaces.
+- **Canonical's `node_modules` doesn't exist yet** — first-ever invocation pre-`bun install` at canonical. Plan handles via primitive's `kind: "skip"` + hook breadcrumb. Long-term: dotfiles-onboarding skill should ensure `bun install` runs on dotfiles canonical at first session.
+- **Plugin paired-helper `src/shared/plugin-root.ts`** (backlog L:890). Independent next slice; cross-edge symmetry with `dotfiles-root.ts`.
+- **Bun workspace setup** (original backlog candidate c). Proper architectural fix. Defer indefinitely — Path A subsumes the substrate canary use case.
+
+### Cross-references
+
+- Plan: `~/.claude/plans/twinkling-nibbling-gosling.md` v2
+- Backlog (closed via this Decision): `~/Documents/Obsidian Vault/wiki/backlog.md:892`
+- PR #62 squash `8cd8b6c` — primitive lane (Alpha)
+- PR #63 squash `ba3124a` — hook lane (Bravo)
+- PR #61 squash `f3deb74` — audit-posture framework codification (prerequisite for this cycle's audit method)
+- Memory: `feedback-audit-upstream-vs-downstream-posture.md` (framework primary)
+- Memory: `feedback-audit-request-framing-by-stage.md` (per-stage templates)
+- Memory: `feedback-audit-findings-prefix-distinguishes-mode.md` (PREMISE/REFRAME/SCOPE/DEFAULT/SEQUENCE prefix convention)
+- Memory: `feedback-bun-exports-map-gates-everything.md` (related: exports-map gating that motivated the canary class)
+- Memory: `feedback-cross-platform-tmpdir-divergence.md` (macOS `/var ↔ /private/var` realpath fallback in `samePath`)
+- Channel: `2026-05-17_03-21` — Alpha (sid 207c3247) + Bravo (sid f3da24e2) coordination throughout
+
+---
