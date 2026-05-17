@@ -229,7 +229,7 @@ for c in data["candidateChannels"]:
     ;;
   derive-failed)
     printf '\n⚠ Step 4a: handoff resolution failed — skipping channel open.\n%s\n\n' "$resolution"
-    return 0 2>/dev/null || exit 0
+    channel_id=""  # signals "no channel open" to the downstream guards below
     ;;
   *)
     printf '\n⚠ Step 4a: unexpected resolution kind `%s`; falling back to from-handoff.\n' "$resolution_kind"
@@ -237,16 +237,22 @@ for c in data["candidateChannels"]:
     ;;
 esac
 
-# Create if missing; otherwise join.
-if ! CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts meta "$channel_id" > /dev/null 2>&1; then
-  CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts create "$channel_id" "$channel_id"
-else
-  CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts join "$channel_id"
-fi
+# Skill markdown isn't a single shell invocation — each fenced block is
+# reasoned about separately. Guard create/join + status-post on a non-empty
+# channel_id so a `derive-failed` resolution (channel_id="") doesn't try to
+# meta/create/join an empty id. Step 4a aborts cleanly; downstream Step 4b
+# still runs but with no channel context.
+if [ -n "$channel_id" ]; then
+  if ! CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts meta "$channel_id" > /dev/null 2>&1; then
+    CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts create "$channel_id" "$channel_id"
+  else
+    CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts join "$channel_id"
+  fi
 
-# Post a "status: joined — parallel context load" message so any peer sees us.
-printf '%s' "joined channel in parallel context-load mode; no writes this session" \
-  | CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts send "$channel_id" status
+  # Post a "status: joined — parallel context load" message so any peer sees us.
+  printf '%s' "joined channel in parallel context-load mode; no writes this session" \
+    | CLAUDE_SESSION_ID="$session_id" bun run src/channels/cli.ts send "$channel_id" status
+fi
 ```
 
 Surface the channel ID in the briefing: "Channel `<id>` — peer status: `<live|online|stale|unknown>` (from `/channel peers`)." If channel creation fails, flag the error and continue — the parallel briefing still completes.

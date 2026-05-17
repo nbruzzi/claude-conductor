@@ -70,11 +70,7 @@ export type ChannelResolutionResult =
     }
   | {
       kind: "derive-failed";
-      reason:
-        | "file-not-found"
-        | "handoff-name-shape"
-        | "body-parse-failed"
-        | "io-error";
+      reason: "file-not-found" | "handoff-name-shape" | "io-error";
       detail: string;
     };
 
