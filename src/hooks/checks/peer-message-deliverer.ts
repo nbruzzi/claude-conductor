@@ -45,7 +45,6 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isValidSessionId } from "../../active-sessions/index.ts";
 import {
   isChannelMessage,
   resolveChannelsDir,
@@ -62,7 +61,7 @@ import {
 } from "../../channels/peer-message-cursors.ts";
 import { renderKindPrefix } from "../../channels/render.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
-import { extractSessionId } from "../session-id.ts";
+import { extractValidSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
 
@@ -179,8 +178,8 @@ function newestMtime(messages: readonly ChannelMessage[]): number {
 
 export async function check(input: HookInput): Promise<HookResult> {
   try {
-    const sessionId = extractSessionId(input.raw);
-    if (sessionId === undefined || !isValidSessionId(sessionId)) return pass();
+    const sessionId = extractValidSessionId(input.raw);
+    if (sessionId === undefined) return pass();
 
     const contexts = getIdentityContextForSession(sessionId);
     if (contexts.length === 0) return pass();

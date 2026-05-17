@@ -13,11 +13,51 @@
 import { isValidSessionId } from "../active-sessions/index.ts";
 import type { HookInput } from "./types.ts";
 
+/**
+ * Extract the raw `session_id` field without validating it.
+ *
+ * Returns the string verbatim if present + non-empty; otherwise undefined.
+ * Does NOT enforce `isValidSessionId` — a value like `"../etc/passwd"` would
+ * pass this check unchanged and could escape any path constructed from it.
+ *
+ * @deprecated for end-consumers — prefer `extractValidSessionId` which
+ *   composes this extraction with `isValidSessionId` so the path-traversal
+ *   class is rejected at the API boundary instead of relying on every caller
+ *   remembering to gate downstream. The raw form survives for tests that
+ *   exercise extraction logic independently of validation (see
+ *   test/hooks/session-id.test.ts).
+ */
 export function extractSessionId(
   raw: Record<string, unknown>,
 ): string | undefined {
   const v = raw["session_id"];
   return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Extract + validate the `session_id` field — safe-by-default.
+ *
+ * Wraps `extractSessionId` with `isValidSessionId`. Returns the validated
+ * string on success, or `undefined` when the field is missing, non-string,
+ * empty, or fails the strict-id regex.
+ *
+ * Observability: emits a stderr breadcrumb on the "extracted-but-rejected"
+ * path so silent validation drops are visible. The bare missing-field case
+ * stays silent (normal for sessionless tool calls). Mirrors
+ * `resolveSessionIdOrNull`'s `logRejected` convention; the raw id is never
+ * logged — only its length — to avoid leaking ids into aggregators.
+ *
+ * Use this from any new consumer; the raw `extractSessionId` exists only for
+ * test infrastructure that asserts extraction-only behavior.
+ */
+export function extractValidSessionId(
+  raw: Record<string, unknown>,
+): string | undefined {
+  const extracted = extractSessionId(raw);
+  if (extracted === undefined) return undefined;
+  if (isValidSessionId(extracted)) return extracted;
+  logRejected("raw.session_id", extracted);
+  return undefined;
 }
 
 /**

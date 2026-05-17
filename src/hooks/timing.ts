@@ -24,8 +24,7 @@
 import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isValidSessionId } from "../active-sessions/index.ts";
-import { extractSessionId } from "./session-id.ts";
+import { extractValidSessionId } from "./session-id.ts";
 
 function logPath(): string {
   return (
@@ -60,10 +59,11 @@ export function recordCheckTiming(
       ms: Math.round(ms * 100) / 100,
     };
     // Defense-in-depth: session-id is written verbatim into a JSONL log line.
-    // Gate via isValidSessionId to reject path-traversal AND log-injection
-    // (newlines/CR would corrupt the JSONL parser on read). Sub-step 0.10 RE-2.
-    const sessionId = extractSessionId(rawInput);
-    if (sessionId && isValidSessionId(sessionId)) record.session_id = sessionId;
+    // `extractValidSessionId` rejects path-traversal AND log-injection at the
+    // API boundary (newlines/CR would corrupt the JSONL parser on read).
+    // Sub-step 0.10 RE-2 / L:768.
+    const sessionId = extractValidSessionId(rawInput);
+    if (sessionId) record.session_id = sessionId;
     if (toolName) record.tool_name = toolName;
     if (exitCode !== undefined) record.exit_code = exitCode;
 
