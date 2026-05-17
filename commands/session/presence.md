@@ -55,7 +55,8 @@ behaviour (artifact resolution, atomic writes, liveness classification) stays
 consistent with the hooks.
 
 ```bash
-eval "$(bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/cli/resolve-dotfiles-root.ts" --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || true)"
+CLAUDE_DOTFILES_ROOT_RESOLVED="$(bun run "${CLAUDE_PLUGIN_ROOT:-$HOME/claude-conductor}/src/cli/resolve-dotfiles-root.ts" --print --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null)" \
+  || { echo "[prelude] resolve-dotfiles-root failed; falling back" >&2; CLAUDE_DOTFILES_ROOT_RESOLVED=""; }
 cd "${CLAUDE_DOTFILES_ROOT_RESOLVED:-${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}}"
 CLAUDE_SESSION_ID="<session-id>" bun run src/active-sessions/cli.ts <subcommand> [args...]
 ```
