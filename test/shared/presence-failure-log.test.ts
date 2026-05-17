@@ -233,6 +233,27 @@ describe("presence-failure-log", () => {
     });
   }
 
+  // P0 substrate canary (backlog L:892, 2026-05-17) — new kind from
+  // `linkCanonicalNodeModules` primitive composed by the provisioner hook
+  // when symlink creation fails. Mirrors the SLICE_2 round-trip pattern.
+  const SLICE_3_KINDS = ["worktree-deps-link-failed"] as const;
+
+  for (const kind of SLICE_3_KINDS) {
+    it(`round-trips kind=${kind} (P0 substrate canary)`, () => {
+      const ev = sampleEvent({
+        source: "dispatcher",
+        kind,
+        detail: `P0 substrate canary ${kind} fixture`,
+      });
+      appendPresenceFailure(ev);
+
+      const events = readPresenceFailures();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.kind).toBe(kind);
+      expect(events[0]?.source).toBe("dispatcher");
+    });
+  }
+
   it("serializeWithinCap is idempotent on short lines", () => {
     const ev = sampleEvent();
     const a = INTERNAL.serializeWithinCap(ev);

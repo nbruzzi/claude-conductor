@@ -35,7 +35,15 @@
  */
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readlinkSync,
+  realpathSync,
+  symlinkSync,
+  type Stats,
+} from "node:fs";
+import { join } from "node:path";
 
 export type WorktreePath = string;
 
@@ -67,6 +75,12 @@ export type WorktreeEntry = {
   readonly sessionId: string;
   readonly branch: string | null;
 };
+
+export type LinkResult =
+  | { readonly kind: "ok" }
+  | { readonly kind: "already-linked"; readonly existingTarget: string }
+  | { readonly kind: "skip"; readonly reason: "canonical-has-no-node-modules" }
+  | { readonly kind: "error"; readonly detail: string };
 
 const SID_PREFIX_LEN = 8;
 const FEATURE_FLAG_ENV = "CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES";
@@ -236,6 +250,96 @@ export function listWorktrees(
   return parseWorktreePorcelain(stdout, realCanonical, expectedPrefix);
 }
 
+/**
+ * Symlink `<worktreePath>/node_modules` → `<canonicalPath>/node_modules`.
+ *
+ * Backlog `wiki/backlog.md:892` substrate canary fix. `git worktree add`
+ * does not create or populate `node_modules/`, so cross-edge bun imports
+ * (e.g., `import "claude-conductor/channels/cli"`) fail from the worktree.
+ *
+ * The canonical's `node_modules/claude-conductor/` is already a per-file
+ * symlink mirror back to `~/Repos/claude-conductor/` (bun's `file:` protocol
+ * shape). A single symlink at `<worktreePath>/node_modules` lets the worktree
+ * reuse the canonical's resolution surface — microseconds vs `bun install`'s
+ * ~10s cold cost, and eliminates lockfile-divergence concerns entirely.
+ *
+ * Idempotent: calling twice with the same args returns `already-linked` on
+ * the second call. Safe for concurrent callers (filesystem `symlinkSync`
+ * is atomic; two racers either both succeed (one creates, one returns
+ * already-linked) or one races to create and the other returns already-linked
+ * after observing the result).
+ *
+ * Refuses to overwrite an existing non-symlink or a symlink to a different
+ * target — operator-created collisions are surfaced via `kind: "error"`
+ * rather than silently destroyed. Operators can manually `rm node_modules`
+ * before re-invocation if intentional.
+ *
+ * Path equality compares the literal `existingTarget` (what readlink returns
+ * for the existing symlink) against `canonicalNm` (what we'd write). On
+ * macOS the operator's canonical path and a symlink-tree's literal target
+ * can differ (`/var` vs `/private/var`); a realpath-fallback compare
+ * handles this without forcing the caller to normalize. See
+ * `feedback-cross-platform-tmpdir-divergence.md`.
+ */
+export function linkCanonicalNodeModules(
+  canonicalPath: string,
+  worktreePath: string,
+): LinkResult {
+  const canonicalNm = join(canonicalPath, "node_modules");
+  if (!existsSync(canonicalNm)) {
+    return { kind: "skip", reason: "canonical-has-no-node-modules" };
+  }
+
+  const worktreeNm = join(worktreePath, "node_modules");
+  const worktreeNmStat = tryLstat(worktreeNm);
+  if (worktreeNmStat !== null) {
+    if (!worktreeNmStat.isSymbolicLink()) {
+      return {
+        kind: "error",
+        detail: `worktree node_modules exists and is not a symlink: ${worktreeNm}`,
+      };
+    }
+    const existingTarget = tryReadlink(worktreeNm);
+    if (existingTarget === null) {
+      return {
+        kind: "error",
+        detail: `worktree node_modules is a symlink but readlink failed: ${worktreeNm}`,
+      };
+    }
+    if (samePath(existingTarget, canonicalNm)) {
+      return { kind: "already-linked", existingTarget };
+    }
+    return {
+      kind: "error",
+      detail: `worktree node_modules is a symlink to a different target: ${worktreeNm} -> ${existingTarget} (expected -> ${canonicalNm})`,
+    };
+  }
+
+  try {
+    symlinkSync(canonicalNm, worktreeNm, "dir");
+    return { kind: "ok" };
+  } catch (err: unknown) {
+    // Race: a parallel caller (different OS process, different Claude session
+    // hitting the same fresh worktree) won the symlink creation between our
+    // tryLstat probe and this symlinkSync. Re-probe and return the equivalent
+    // already-linked result if their write matches what we'd have written.
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      const existingTarget = tryReadlink(worktreeNm);
+      if (existingTarget !== null && samePath(existingTarget, canonicalNm)) {
+        return { kind: "already-linked", existingTarget };
+      }
+      return {
+        kind: "error",
+        detail: `race: worktree node_modules appeared with unexpected state during symlink creation at ${worktreeNm}`,
+      };
+    }
+    return {
+      kind: "error",
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // ─── Internal helpers ───────────────────────────────────────────────
 
 function isFeatureEnabled(override: boolean | undefined): boolean {
@@ -258,6 +362,39 @@ function decodeStdio(buf: Buffer | string | null | undefined): string {
   if (buf === null || buf === undefined) return "";
   if (typeof buf === "string") return buf.trim();
   return buf.toString("utf-8").trim();
+}
+
+function tryLstat(p: string): Stats | null {
+  try {
+    return lstatSync(p);
+  } catch {
+    return null;
+  }
+}
+
+function tryReadlink(p: string): string | null {
+  try {
+    return readlinkSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compare two paths for equivalence with a realpath fallback. macOS-style
+ * `/var` ↔ `/private/var` divergence (and other operator-symlinked roots)
+ * means literal string compare can return false-mismatch for two paths that
+ * resolve to the same inode. Tries literal compare first (cheap), then
+ * realpath compare on mismatch (defensive). Either side's realpath failure
+ * falls through to false — the caller treats that as "not equal" which is
+ * the conservative outcome (refuse to overwrite).
+ */
+function samePath(a: string, b: string): boolean {
+  if (a === b) return true;
+  const realA = tryRealpath(a);
+  const realB = tryRealpath(b);
+  if (realA === null || realB === null) return false;
+  return realA === realB;
 }
 
 function tryRealpath(p: string): string | null {
