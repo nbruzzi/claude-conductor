@@ -369,12 +369,78 @@ function sid(): string {
   );
 }
 
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+/** Default time-to-first-byte deadline for stdin reads (L:145 / TA-2 closure).
+ *  Override via env var `CLAUDE_CONDUCTOR_STDIN_TTFB_TIMEOUT_MS` (tests use 500). */
+const DEFAULT_STDIN_TTFB_TIMEOUT_MS = 3000;
+
+function resolveStdinTimeoutMs(): number {
+  const raw = process.env["CLAUDE_CONDUCTOR_STDIN_TTFB_TIMEOUT_MS"];
+  if (raw === undefined) return DEFAULT_STDIN_TTFB_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_STDIN_TTFB_TIMEOUT_MS;
+}
+
+/** Raised by `readStdin` when no bytes arrive within the TTFB deadline.
+ *  Callers (currently `send`) translate to a `die()` with operator remediation. */
+class StdinTimeoutError extends Error {
+  readonly elapsedMs: number;
+  constructor(elapsedMs: number) {
+    super(
+      `no stdin received within ${elapsedMs}ms — either pipe a body via stdin or pass --body-file <path>`,
+    );
+    this.name = "StdinTimeoutError";
+    this.elapsedMs = elapsedMs;
   }
-  return Buffer.concat(chunks).toString("utf-8");
+}
+
+/**
+ * Drain stdin into a UTF-8 string with a time-to-first-byte deadline.
+ *
+ * Heredoc input to `bun run ... send <id> <kind> <<EOF ... EOF` previously
+ * hung indefinitely on Bun (`for await` on `process.stdin` never observes EOF
+ * until shell tear-down). This guard rejects with `StdinTimeoutError` if no
+ * byte arrives within the TTFB window; once any byte arrives the timer is
+ * cleared and natural drain semantics apply (no full-drain deadline — slow
+ * pipelines that stream continuously are unaffected).
+ *
+ * Backlog: L:145 lean (a). Closes TA-2 known-follow-up at the send-case
+ * body-order comment below. The original "50ms latency per send" estimate
+ * in that comment overstated the cost — `Promise.race` against a setTimeout
+ * with `.unref()` adds zero observable latency on the happy path.
+ */
+async function readStdin(): Promise<string> {
+  const timeoutMs = resolveStdinTimeoutMs();
+  const chunks: Buffer[] = [];
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const start = performance.now();
+
+  const ttfbTimer = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new StdinTimeoutError(Math.round(performance.now() - start)));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+
+  const drain = (async () => {
+    for await (const chunk of process.stdin) {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks).toString("utf-8");
+  })();
+
+  try {
+    return await Promise.race([drain, ttfbTimer]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function printJson(v: unknown): void {
@@ -849,9 +915,13 @@ export async function runChannelsCli(
         // closed/ignored stdin (verified empirically), so there is no
         // reliable way to detect "stdin piped with data" before reading.
         // When --body-file is set, file content wins silently; stdin is
-        // not read. Async-readable + timeout detection is feasible but
-        // adds 50ms latency per send and is deferred to a future revision
-        // (TA-2 known-follow-up in plan §Known follow-ups).
+        // not read.
+        //
+        // TA-2 follow-up: CLOSED 2026-05-17 (slice 4 Bravo lane, L:145).
+        // Async-readable + TTFB timeout now lives in `readStdin` above;
+        // happy-path latency is zero (Promise.race against an unref'd
+        // setTimeout), refuting the original 50ms estimate. Heredoc-hang
+        // surface fails loud after 3s via `StdinTimeoutError` caught below.
 
         let body: string;
         if (bodyFilePath !== null) {
@@ -864,7 +934,21 @@ export async function runChannelsCli(
             );
           }
         } else {
-          body = (await readStdin()).trim();
+          try {
+            body = (await readStdin()).trim();
+          } catch (err) {
+            if (!(err instanceof StdinTimeoutError)) throw err;
+            die(
+              ctx,
+              `empty stdin (${err.elapsedMs}ms TTFB) — pipe a body via stdin or pass --body-file <path>`,
+              {
+                code: 2,
+                category: "VALIDATION",
+                remediation:
+                  "pipe a body: printf '%s' \"<text>\" | channels send <id> <kind>\n  or pass --body-file: channels send <id> <kind> --body-file <path>",
+              },
+            );
+          }
           if (body.length === 0) {
             die(
               ctx,
