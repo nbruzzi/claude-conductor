@@ -90,6 +90,9 @@ describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", ()
   it("heartbeatMtime is a function", () => {
     expect(typeof api.heartbeatMtime).toBe("function");
   });
+  it("isChannelMessage is a function", () => {
+    expect(typeof api.isChannelMessage).toBe("function");
+  });
   it("isValidIdentity is a function", () => {
     expect(typeof api.isValidIdentity).toBe("function");
   });
@@ -117,6 +120,12 @@ describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", ()
   });
   it("readMessages is a function", () => {
     expect(typeof api.readMessages).toBe("function");
+  });
+  it("readMessagesAfter is a function", () => {
+    expect(typeof api.readMessagesAfter).toBe("function");
+  });
+  it("readMessagesTail is a function", () => {
+    expect(typeof api.readMessagesTail).toBe("function");
   });
   it("readMetadata is a function", () => {
     expect(typeof api.readMetadata).toBe("function");

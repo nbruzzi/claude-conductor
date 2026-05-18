@@ -1537,6 +1537,58 @@ export function readMessages(channelId: string): ChannelMessage[] {
   return out;
 }
 
+/** Read the most recent `limit` messages in order. Exposed for external
+ *  consumers (e.g., dashboard channel-stream adapter) that need a bounded
+ *  tail of a large JSONL file without loading the full transcript into
+ *  caller-side memory.
+ *
+ *  v1 impl filters from `readMessages(channelId)` — still loads the full
+ *  file into the process before slicing. For very-large channels (10K+
+ *  messages or >10MB JSONL), a reverse-stream-by-bytes optimization is a
+ *  follow-up that can land without changing this signature. Defer-trigger:
+ *  perf observability flags channel-file read time exceeding a budget
+ *  threshold. Tracking: dashboard spec §6.1 / §13 ring-buffer cap.
+ *
+ *  `limit <= 0` returns `[]`. `limit > total` returns all messages.
+ *  Inherits `readMessages` corrupt-line tolerance + RE-3 boundary guard. */
+export function readMessagesTail(
+  channelId: string,
+  limit: number,
+): ChannelMessage[] {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] readMessagesTail: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (limit <= 0) return [];
+  const all = readMessages(channelId);
+  return all.slice(-limit);
+}
+
+/** Read messages with `ts > afterTs` (strict-greater, ISO-8601 lexicographic
+ *  compare). Exposed for external consumers that need to read incrementally
+ *  past a last-seen timestamp without re-reading the full transcript.
+ *
+ *  ISO-8601 ordering is lexicographic for the `YYYY-MM-DDTHH:MM:SS.sssZ`
+ *  shape conductor emits — string `>` is sufficient; no Date parse needed.
+ *  Exclusive boundary mirrors the SSE `lastEmittedOffset` semantics in the
+ *  dashboard spec §3.2 / §4.7 (dedup state machine).
+ *
+ *  v1 impl filters from `readMessages(channelId)` — same full-file caveat
+ *  as `readMessagesTail`. Empty channel / no-match returns `[]`. Inherits
+ *  corrupt-line tolerance + RE-3 boundary guard. */
+export function readMessagesAfter(
+  channelId: string,
+  afterTs: string,
+): ChannelMessage[] {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] readMessagesAfter: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  return readMessages(channelId).filter((m) => m.ts > afterTs);
+}
+
 /** Strict ChannelMessage shape validator. Exported per Phase 4 Step A Layer 1
  *  RE-1 / ARCH-4 convergent fold (2026-05-14) — `peer-message-deliverer` hook
  *  consumes this primitive instead of re-implementing a weaker `typeof === "object"`
