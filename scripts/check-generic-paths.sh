@@ -14,6 +14,14 @@
 #
 # Run:    bun run check-generic-paths
 #         bash scripts/check-generic-paths.sh
+#         bash scripts/check-generic-paths.sh --include-untracked
+# Flags:
+#   --include-untracked  Also scan files in the working tree that are not yet
+#                        tracked by git (i.e. `git ls-files --others`). Honors
+#                        the same EXCLUDE_PATHSPECS as the tracked scan and
+#                        `--exclude-standard` (.gitignore + global excludes).
+#                        Use during local dev to catch leaks BEFORE staging;
+#                        CI runs without the flag (tracked-only is the gate).
 # Exit:   0 = clean
 #         1 = violations
 #         2+ = error (e.g. not in a git repo)
@@ -42,11 +50,23 @@ set -e
 set -u
 set -o pipefail
 
-# --- 0. --help / -h handler ---
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  grep '^#' "$0" | grep -v '^#!' | sed 's/^# \?//'
-  exit 0
-fi
+# --- 0. --help / -h + --include-untracked flag parsing ---
+INCLUDE_UNTRACKED=0
+for arg in "$@"; do
+  case "$arg" in
+    --help | -h)
+      grep '^#' "$0" | grep -v '^#!' | sed 's/^# \?//'
+      exit 0
+      ;;
+    --include-untracked)
+      INCLUDE_UNTRACKED=1
+      ;;
+    *)
+      echo "check-generic-paths: error: unknown argument '$arg' (try --help)" >&2
+      exit 2
+      ;;
+  esac
+done
 
 # --- 1. Resolve repo root regardless of cwd ---
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
@@ -140,9 +160,30 @@ P4_REGEX='[a-f0-9]{7,40}'
 
 # --- 4. Collect tracked files (bash 3.2+ portable; NOT mapfile) ---
 FILES=()
+TRACKED_COUNT_PRE=0
 while IFS= read -r -d '' f; do
   FILES+=("$f")
+  TRACKED_COUNT_PRE=$((TRACKED_COUNT_PRE + 1))
 done < <(git ls-files -z -- "${EXCLUDE_PATHSPECS[@]}")
+
+# Optionally append untracked files (CLI-3b — Phase 0.10 follow-on).
+# `--exclude-standard` honors .gitignore + global excludes; the same
+# EXCLUDE_PATHSPECS apply (a top-level CONTRIBUTING.md staged as untracked
+# should also be excluded). Pass `--others` to scope to untracked only —
+# `--modified`/`--cached` would re-cover tracked files we already have.
+# `[ -f "$f" ]` filters to regular files (and symlinks-to-regular-files,
+# which grep can read); symlinks-to-directories like `node_modules ->
+# canonical/node_modules` are excluded — grep returns exit 2 on a dir
+# without `-r`, which would mis-classify the whole scan as a script error.
+UNTRACKED_SCANNED_COUNT=0
+if [[ "$INCLUDE_UNTRACKED" == "1" ]]; then
+  while IFS= read -r -d '' f; do
+    if [[ -f "$f" ]]; then
+      FILES+=("$f")
+      UNTRACKED_SCANNED_COUNT=$((UNTRACKED_SCANNED_COUNT + 1))
+    fi
+  done < <(git ls-files --others --exclude-standard -z -- "${EXCLUDE_PATHSPECS[@]}")
+fi
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
   echo "check-generic-paths: clean (0 files to scan)"
@@ -268,17 +309,24 @@ FILTERED_HITS=$(printf '%s\n' "$RAW_HITS" | awk -v p3_allow="$P3_ALLOWLIST_STR" 
 ' || true)
 
 # --- 7. Clean exit if no surviving hits ---
-TRACKED_COUNT="${#FILES[@]}"
-UNTRACKED_COUNT=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+TRACKED_COUNT="$TRACKED_COUNT_PRE"
+# Count untracked-not-scanned only when the flag isn't set (informational
+# hint for the operator). When the flag IS set, the untracked files were
+# folded into FILES[] and the count is reported via UNTRACKED_SCANNED_COUNT.
+if [[ "$INCLUDE_UNTRACKED" == "1" ]]; then
+  UNTRACKED_NOT_SCANNED_COUNT=0
+else
+  UNTRACKED_NOT_SCANNED_COUNT=$(git ls-files --others --exclude-standard -- "${EXCLUDE_PATHSPECS[@]}" 2>/dev/null | wc -l | tr -d ' ')
+fi
 
 if [[ -z "$FILTERED_HITS" ]]; then
   msg="check-generic-paths: clean (0 violations across ${TRACKED_COUNT} tracked files"
-  if [[ "$UNTRACKED_COUNT" != "0" ]]; then
-    # Untracked files are not currently scanned (Phase 1 backlog item).
-    # Tracked-only is intentional for v0.1.0; once code is staged it lands
-    # in the gate. Future `--include-untracked` flag deferred per Slice 7.1
-    # CLI-3 follow-up.
-    msg="${msg}; ${UNTRACKED_COUNT} untracked file(s) not scanned"
+  if [[ "$INCLUDE_UNTRACKED" == "1" ]]; then
+    msg="${msg} + ${UNTRACKED_SCANNED_COUNT} untracked files (--include-untracked)"
+  elif [[ "$UNTRACKED_NOT_SCANNED_COUNT" != "0" ]]; then
+    # Tracked-only is intentional for CI (the gate). Use --include-untracked
+    # locally during dev to catch leaks before staging — see flag docstring.
+    msg="${msg}; ${UNTRACKED_NOT_SCANNED_COUNT} untracked file(s) not scanned"
   fi
   msg="${msg})"
   echo "$msg"
