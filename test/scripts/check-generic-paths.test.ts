@@ -37,12 +37,15 @@ function commit(dir: string, msg = "init"): void {
   Bun.spawnSync(["git", "commit", "-q", "-m", msg], { cwd: dir });
 }
 
-function runScript(cwd: string): {
+function runScript(
+  cwd: string,
+  args: readonly string[] = [],
+): {
   exitCode: number;
   stdout: string;
   stderr: string;
 } {
-  const result = Bun.spawnSync(["bash", SCRIPT_PATH], { cwd });
+  const result = Bun.spawnSync(["bash", SCRIPT_PATH, ...args], { cwd });
   return {
     exitCode: result.exitCode ?? -1,
     stdout: new TextDecoder().decode(result.stdout),
@@ -253,5 +256,70 @@ describe("scripts/check-generic-paths.sh", () => {
     const { exitCode, stdout } = runScript(repo);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("clean");
+  });
+
+  /* ── CLI-3b — --include-untracked flag (slice 6 / B2) ─────────────── */
+
+  it("does NOT flag P3 leak in untracked file by default (tracked-only gate)", () => {
+    writeFileSync(join(repo, "ok.ts"), "export const x = 1;\n");
+    commit(repo);
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "new-thing.ts"),
+      'const home = "~/.claude/leak/";\n',
+    );
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+    expect(stdout).toContain("1 untracked file(s) not scanned");
+  });
+
+  it("flags P3 leak in untracked file when --include-untracked is set", () => {
+    writeFileSync(join(repo, "ok.ts"), "export const x = 1;\n");
+    commit(repo);
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "new-thing.ts"),
+      'const home = "~/.claude/leak/";\n',
+    );
+    const { exitCode, stderr } = runScript(repo, ["--include-untracked"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("src/new-thing.ts");
+    expect(stderr).toContain("error[P3]");
+  });
+
+  it("reports the untracked-included count in the clean summary", () => {
+    writeFileSync(join(repo, "tracked.ts"), "export const x = 1;\n");
+    commit(repo);
+    writeFileSync(join(repo, "untracked.ts"), "export const y = 2;\n");
+    const { exitCode, stdout } = runScript(repo, ["--include-untracked"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("tracked files + 1 untracked files");
+    expect(stdout).toContain("--include-untracked");
+  });
+
+  it("honors EXCLUDE_PATHSPECS for untracked files (top-level README.md not scanned)", () => {
+    writeFileSync(join(repo, "ok.ts"), "export const x = 1;\n");
+    commit(repo);
+    // Untracked top-level README.md with a /Users/<name>/ leak (P2). The
+    // EXCLUDE_PATHSPECS list at script lines 62-88 excludes top-level
+    // docs; the flag must honor the same excludes on the untracked side
+    // (matches CONTENT-CHARACTERIZATION semantics, not staging-state).
+    writeFileSync(
+      join(repo, "README.md"),
+      "# Example\n\nSee /Users/alice/ for details.\n",
+    );
+    const { exitCode, stdout } = runScript(repo, ["--include-untracked"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("errors on unknown argument with helpful hint", () => {
+    writeFileSync(join(repo, "ok.ts"), "export const x = 1;\n");
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo, ["--bogus-flag"]);
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("unknown argument");
+    expect(stderr).toContain("--help");
   });
 });
