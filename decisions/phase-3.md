@@ -1069,3 +1069,104 @@ affects:
 - New backlog filings (vault, slice 5 cohort-pass follow-ups subsection): singular kill-switch normalization (14 consumers) + HOME-empty observability parity + telemetry log rotation
 
 ---
+
+## 2026-05-18 — Slice 6: Phase 0.10 follow-ons cohort-pass + worktree-gc substrate fix (`mirrored-stitching-orchid`)
+
+```yaml
+---
+title: "Slice 6 — Phase 0.10 cohort-pass + worktree-gc substrate fix"
+date: 2026-05-18
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    conductor/src/channels/index.ts,
+    conductor/src/hooks/registry.ts,
+    conductor/src/hooks/checks/dotfiles-worktree-gc.ts,
+    conductor/src/shared/presence-failure-log.ts,
+    conductor/scripts/check-generic-paths.sh,
+    conductor/scripts/check-import-extensions.sh,
+    conductor/docs/conventions/error-code-scheme.md,
+    conductor/test/channels/metadata-validator.test.ts,
+    conductor/test/channels/metadata-version-migration.test.ts,
+    conductor/test/channels/api-channelid-guards.test.ts,
+    conductor/test/hooks/types.test.ts,
+    conductor/test/hooks/checks/dotfiles-worktree-gc.test.ts,
+    conductor/test/scripts/check-generic-paths.test.ts,
+    conductor/test/scripts/check-import-extensions.test.ts,
+    conductor/CONTRIBUTING.md,
+    conductor/commands/session/channel.md,
+    conductor/commands/session/handoff.md,
+    conductor/commands/session/handoff-resume.md,
+    conductor/commands/session/presence.md,
+    dotfiles/src/hooks/dispatcher.ts,
+    dotfiles/src/__tests__/hooks/dispatcher-unknown-tool-warn.test.ts,
+    dotfiles/src/__tests__/install-sh/install.test.ts,
+    vault/wiki/backlog.md,
+  ]
+---
+```
+
+**Context:** Slice 6 of the cohort-pass strategy — **second** deliberate "shrink ONE cluster" application, validating the pattern across a different cluster type than slice 5. Target: Phase 0 sub-step 0.10 follow-ons cluster (18 open at start, next-largest section after Self-Monitoring). Outcome: cluster 18 → ~9 open (-9 net; 8 work-PR closures + 1 stale-close (CLI-6) + 0 new follow-up filings in same section, but +1 spawned substrate-fix PR from observed bug). Cycle character: lighter pre-LOCK audit cadence than slice 5 (5 folds vs 7 — methodology maturing); two parallel-session shared-tree race recoveries cost ~5 min rework; a new substrate fix shipped after observing live-sibling worktree reap during a 3-session cycle (Alpha + Bravo + Charlie); cohort-pass strategy escalated from "complement" to "default cycle shape" based on two-cycle reproduction.
+
+**10 PRs shipped (8 work-PRs + 1 A2 cross-edge prereq + 1 substrate-fix from observed bug) + this retro:**
+
+| PR   | Lane  | Item   | Squash    | Repo      | Subject                                                                          | Main-CI               |
+| ---- | ----- | ------ | --------- | --------- | -------------------------------------------------------------------------------- | --------------------- |
+| #80  | Alpha | A1     | `bd60fa5` | conductor | TS-N1 — ChannelMetadata.version invariant + asymmetric schema gate               | `26034607823` SUCCESS |
+| #81  | Bravo | B1     | `99a555a` | conductor | TS-N3 — KnownToolName exhaustiveness type-test                                   | SUCCESS               |
+| #82  | Bravo | B2     | `6290d44` | conductor | CLI-3b — check-generic-paths --include-untracked flag                            | SUCCESS               |
+| #83  | Bravo | B3     | `750bf23` | conductor | CLI-8 — dotfiles version-compat preflight + docs                                 | SUCCESS               |
+| #84  | Alpha | A2-pre | `fab755b` | conductor | A2 cross-edge prereq — re-export KNOWN_TOOL_NAMES runtime tuple                  | `26034604613` SUCCESS |
+| #85  | Alpha | A3     | `41ba74a` | conductor | RE-3 — isValidArtifactId guards at 13 module-API entry points                    | `26039158005` SUCCESS |
+| #86  | Alpha | (sub)  | `b732e35` | conductor | fix(worktree-gc) — sid-prefix liveness fallback prevents live-sibling reap       | `26043108423` SUCCESS |
+| #87  | Alpha | A4     | (pending) | conductor | CLI-11 — detector error-code numbering (CGP-001..004 + CIE-001) + convention doc | (in progress)         |
+| #128 | Bravo | B4     | `8ccb43e` | dotfiles  | TA-3-impl + TA-12 + TA-13 + TA-14 install-sh behavioral test cluster             | `26037570080` SUCCESS |
+| #129 | Alpha | A2     | `a4420a3` | dotfiles  | TS-N2 — dispatcher unknown-toolName warn with emit-once dedup                    | `26039143967` SUCCESS |
+
+**Decisions captured in this slice:**
+
+1. **Cohort-pass strategy escalated from complement to DEFAULT cycle shape (revised):** prior framing in `feedback-cohort-pass-cluster-pressure-release-valve.md` called cohort-pass a complement to per-slice 4-axis rubric, with cohort-pass-as-default explicitly listed as an anti-pattern. Slice 6 evidence flipped that: two consecutive cohort-pass cycles (slice 5 Self-Monitoring 26→17 + slice 6 Phase 0.10 18→9) shipped 9 + 10 PRs at zero-unfixed-failure cadence; per-cycle ROI on cohort-pass exceeded the average 4-axis cycle. Default-flip is empirical, not theoretical. 4-axis cycles now the fallback condition (no cluster has critical mass / critical isolated bug preempts / heterogeneous Watch List). Memory revised inline; re-flip would require evidence of cohort-pass quality dropping cycle-over-cycle.
+
+2. **5 stale-premise catches at hydration phase via primary-source verify pre-plan-write:** slice 5 caught 5, slice 6 also caught 5. Specifically: (a) CLI-6 RESOLVED stale-close — `dependencies-rationale.md` already had the comprehensive header described in fix; (b) TS-N1 anchors moved — ChannelMetadata 69→184, validateChannelMetadata 235→574, and the cited marker-validator files (config-protection-store + fact-force-scope-store) had been MOVED out of the plugin entirely; (c) TS-N2 line off (366→475); (d) SE-P1-5 line off (622-631 → 653-664); (e) TS-N3 confirmed no existing test/hooks/types.test.ts. Without primary-source verify, CLI-6 would have shipped as wrong-target work + TS-N1 would have shipped against the wrong sibling pattern (the new pattern is `kind_version: 1` on `digest.ts` + `live-update.ts` body schemas, not the gone marker validators).
+
+3. **Plan-v1 cross-audit fold count dropped slice-to-slice (5 vs 7):** slice 5 had 12 + 7 = 19 folds pre-LOCK; slice 6 had 5. Both cycles' folds were substantive (FOLD-1 bootstrap-deadlock catch on A1 asymmetric validator semantics; FOLD-2 emit-once dedup on A2 dispatcher warn; FOLD-3 hard-cutover decision-surface on A4; FOLD-4 B3 scope reframe from docs-only to feature-detection; FOLD-5 typecheck-include pre-impl verify on B1). The decreasing fold-count signals plan-v1 quality is improving cycle-over-cycle. Pattern: as plan-write maturity improves, the right comparison metric is folds-PER-PR-of-scope, not folds-absolute; slice 6's 5 folds / 8 work-PRs is comparable to slice 5's 19 folds / 9 work-PRs.
+
+4. **`import.meta.main` guard pattern on script-entry modules unlocks INTERNAL helper testability:** A2's dispatcher.ts has a top-level `main().catch(...)` invocation that runs when any module imports it. Tests that need to import an `INTERNAL` helper (slice-5 RE-6 precedent) would inadvertently trigger dispatcher main() with test-runner argv. Fix: wrap the production-entry in `if (import.meta.main) { ... }`. Pattern: every script-entry TS file with a top-level `main()` invocation should add this guard so the file is importable in tests without spurious execution. Generalizable beyond dispatcher.ts.
+
+5. **Feature-detection (option c) is the right cross-repo compat mechanism vs SHA-pin / version-marker file:** B3 plan-v1 framed CLI-8 as "add docs + 'command not found' handler" (docs-only). FOLD-4 reframed: the underlying choice (how does plugin signal compat with dotfiles?) had three options. (a) SHA-pin a known-good dotfiles commit in plugin docs (rigid; goes stale fast). (b) version-marker file in dotfiles substrate consumed by plugin slash-commands (new state shape — would escalate B3 to mode-2). (c) feature-detection at slash-command boundary via `bun run <CLI> --help | grep <expected-verb>` (most adaptive; no new state shape; explicit diagnostic on shape drift). Bravo recommended (c); Alpha concurred; B3 impl matched. Pattern: when cross-repo compat is the design surface, prefer feature-detection over compile-time pinning — adapts to substrate evolution without churning the plugin.
+
+6. **Parallel-session shared-tree branch race struck twice + recovered via per-session worktree migration:** Race 1 (~11:45Z): Alpha's `git checkout -b alpha/a1-...` in canonical conductor tree got swapped to Bravo's branch between checkout and commit (Bravo's concurrent `git checkout bravo/b1-...` in the SAME tree). Recovery via `git branch -f alpha/a1 <sha>` ref-move. Race 2 (~11:48Z, post race-1 ref-only recovery, pre push): Bravo's reset of bravo/b1 to main + checkout of alpha/a1 in canonical restored tree HEAD; local working-tree content reverted in the interim. Push succeeded (pushes branch ref, not working-tree state); PR content unaffected. Lesson: per-session worktrees at paths OUTSIDE the provisioner-managed pattern (`~/Repos/<repo>-<lane>-<slug>/` not `~/.claude-<repo>-<sid>/`) are race-immune AND survive future sibling-spawns. Memorialize-then-violate class: race-memory was loaded but applied only after race-2 hit; should have migrated immediately after race-1.
+
+7. **Substrate bug observed + fixed in same cycle (sid-prefix liveness fallback for dotfiles-worktree-gc):** during the 3-session Alpha+Bravo+Charlie cycle (Charlie spawned mid-slice for unrelated Linear research), the dotfiles-worktree-gc reaped BOTH Alpha's and Bravo's worktrees despite both sessions being alive + heartbeating. Root cause: `byDotfilesRoot` map in gc can miss when (a) heartbeat overwrite wiped `dotfilesRoot` sentinel, OR (b) raw-vs-realpath drift between sentinel write-time and read-time. Both miss-classes route to `matched === undefined` → reap. Fix (PR #86, +150 LOC across gc + presence-failure-log kind extension + tests): defense-in-depth sid-prefix scan over the same `anchors` array. If any anchor heartbeat shares the worktree's 8-char sid-prefix AND is live (ageMs < GC_WINDOW_MS, not likelyDead), skip reap + emit new `worktree-gc-liveness-fallback-fired` breadcrumb. Happy path unchanged. Pattern: substrate bugs surfaced mid-cycle by observation deserve same-cycle close-out, not next-cycle deferral. New memory: `feedback-worktree-provisioner-reaps-live-siblings.md`.
+
+8. **Hard-cutover on detector code rename validated by primary-source zero-external-consumer verify (A4 / FOLD-3):** plan-v2 §A4 + FOLD-3 pre-locked hard cutover (vs dual-emit grace) after primary-source verify: `grep -rn 'error\[P[1-9]\]\|error\[T[1-9]\]' .github/ scripts/` returned ZERO external consumers of the old codes outside the detector scripts themselves. Phase 0 → v0.1.0 boundary is the tolerable churn window per CLI-11 backlog entry's framing. Pattern: when renaming a public-API surface, primary-source-verify the consumer set first — if zero, hard cutover is correct; if non-zero, dual-emit grace is required. The framing-decision moves from "design taste" to "empirical state of the system."
+
+**Cycle metrics:**
+
+- **PRs shipped:** 10 + 1 retro = 11. Cross-cycle (slices 1-6): **27 + 10 = 37 PRs / 37 main-CI green / 0 unfixed failures**.
+- **Plan-v1 cross-audit:** 1 (Bravo SHIP-WITH-5-FOLDS; all 5 incorporated → v2 LOCK + plan-v2 §Bravo plan-v1 cross-audit verdict block).
+- **Per-PR cross-audits:** 5 (Alpha → B1 + B2 + B3 + B4 + #86 substrate-fix; Bravo → A1 + A2 + A3 + A4 + A2-pre). All SHIP-CLEAN, 0 audit folds incorporated post-impl.
+- **Mode-2 catches:** 1 reliability (A1 FOLD-1 asymmetric semantics catches bootstrap deadlock). 1 architecture (B3 FOLD-4 scope reframe). 1 cross-audit recovery (none this slice — fold count dropped vs slice 5).
+- **Backlog deltas:** -9 closed (Phase 0.10 §TS-N1, §TS-N2, §TS-N3, §RE-3, §CLI-3b, §CLI-6 stale-close, §CLI-8, §CLI-11, §TA-3-impl + §TA-12 + §TA-13 + §TA-14). +0 new filings (this slice surfaced 1 substrate bug → PR #86 closed it same-cycle; would-have-been-filing converted to immediate fix).
+- **New memories filed (Alpha cycle):** 1 — `feedback-worktree-provisioner-reaps-live-siblings.md` (substrate bug observation + workaround pattern; superseded by PR #86 fix but memory retained as the audit-trail of the discovery + the workaround for any similar future incident).
+- **New memories revised (Alpha cycle):** 2 — `feedback-cohort-pass-cluster-pressure-release-valve.md` (default-cycle-shape escalation); `feedback-parallel-session-shared-tree-branch-race.md` (added §Slice 6 update with 4 new operator-discipline rules + PR #86 substrate-fix cross-ref).
+- **Nick interventions:** 1 procedural ("did Charlie notify you?" — surfaced Charlie's research filings sat unread in channel; recovered by reading + acking) + 1 strategic ("two parallel-session races struck") which produced PR #86 + the memory revisions.
+- **Cross-session integration with Bravo:** clean throughout — 5 PRs Bravo-side (B1 + B2 + B3 + B4 + closed all his backlog atoms via vault commits 46ccc63 + 0550e48 + c9bc7b3 + eae766d); explicit-defer mode on A2-pre/A3 squash (Bravo audited SHIP-CLEAN); zero protocol-class interventions needed from Nick.
+- **Cross-session integration with Charlie:** clean — Charlie operated in parallel-mode on unrelated Linear research; filed 4 backlog items (a-d at lines 939/941/943/945) with proper scope-prefix; sibling-collision discipline observed (vault-only writes, no overlap with my + Bravo's commits).
+
+**Why this slice matters (cohort-pass as default cycle shape):** slice 5 was the first deliberate cohort-pass application; slice 6 was the validation across a different cluster type (Phase 0.10 vs Self-Monitoring). Two consecutive cycles' results (9 + 10 PRs, both at zero-unfixed-failure cadence, both with substantive cluster shrinkage) plus the lighter audit-fold count in slice 6 (methodology maturing) signal cohort-pass is the default cycle shape going forward. 4-axis fallback only when (i) no cluster has critical mass, (ii) a critical isolated bug preempts, or (iii) the cluster lacks architectural cohesion. Memory updated inline.
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/mirrored-stitching-orchid.md` (single shared plan for both lanes; 5 audit folds incorporated)
+- Cohort target: Phase 0 sub-step 0.10 follow-ons section of `wiki/backlog.md` (cluster shrunk 18 → 9 open)
+- Substrate-fix-spawned-mid-cycle: PR #86 closes the dotfiles-worktree-gc live-sibling-reap bug observed during the Alpha+Bravo+Charlie 3-session cycle
+- Cohort-pass-as-default-cycle-shape memory revision: `feedback-cohort-pass-cluster-pressure-release-valve.md`
+- Race-recovery operator-discipline rules added: `feedback-parallel-session-shared-tree-branch-race.md` §Slice 6 update
+- New memory: `feedback-worktree-provisioner-reaps-live-siblings.md`
+- Channel: `2026-05-18_10-50` — Alpha (sid `50f9662b…`) + Bravo (sid `b1183eb9…`) + Charlie (sid `49fe352b…`) coordination
+- Detector code-scheme convention doc: `docs/conventions/error-code-scheme.md` (introduced in PR #87 A4)
+
+---
