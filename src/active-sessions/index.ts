@@ -92,6 +92,22 @@ function defensiveAgeMs(now: number, mtimeMs: number): number | null {
   return Math.max(0, now - mtimeMs);
 }
 
+/**
+ * Caller-stack capture for slice-7 A2 telemetry breadcrumbs (plan v1.3
+ * Points 2/3/5/7). Takes the top 4 non-native frames from `new Error().stack`
+ * after dropping `Error` + this helper itself. Used to disambiguate which
+ * caller path triggered a sensitive event (clear/unregister/reap/reset)
+ * during post-incident triage. Joined with " | " for single-line log shape.
+ */
+function callerTop4(): string {
+  const stack = (new Error().stack ?? "").split("\n").slice(2);
+  return stack
+    .filter((f) => !f.includes("at native:") && !f.includes("(native:"))
+    .slice(0, 4)
+    .map((f) => f.trim())
+    .join(" | ");
+}
+
 export type OwnerRecord = {
   sessionId: string;
   pid: number;
@@ -414,6 +430,26 @@ export function touchHeartbeat(args: {
     heartbeatPath(artifactId, sessionId),
     `${JSON.stringify(record)}\n`,
   );
+
+  // Slice 7 A2 — Point 4: anomaly log when canonical-anchor heartbeat
+  // exists WITHOUT a dotfilesRoot field. Anchor-gated via artifactId-eq
+  // (per plan v1.4 FOLD-6 — macOS realpath-drift makes path-string-eq
+  // fragile; canonicalClaudeHomeArtifactId() is robust). Anchor-only
+  // scope eliminates 99% of noise.
+  if (
+    existing !== null &&
+    existing.dotfilesRoot === undefined &&
+    artifactId === canonicalClaudeHomeArtifactId()
+  ) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId,
+      source: "active-sessions-registry",
+      kind: "heartbeat-no-dotfilesroot-on-existing",
+      artifactPath,
+      detail: `existing.touchedAt=${String(existing.touchedAt)} existing.createdAt=${String(existing.createdAt)} pid=${process.pid}`,
+    });
+  }
 }
 
 function writeAtomic(path: string, body: string): void {
@@ -519,6 +555,21 @@ function tryReapHeartbeat(
 ): boolean {
   try {
     unlinkSync(path);
+    // Slice 7 A2 — Point 5: emit AFTER successful unlinkSync. Single
+    // instrumentation covers ALL 3 reap call sites atomically
+    // (listLivePeers opportunistic-GC + gcStaleHeartbeats sweeper +
+    // unregisterActiveSession explicit). Reaper-vs-reapee semantics
+    // per plan v1.3: event.sessionId IS the reapee (matches existing
+    // registry-contention precedent above); redundant reaper_sid in
+    // detail enables single-sid grep to find both roles.
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId,
+      source: "active-sessions-registry",
+      kind: "heartbeat-reaped",
+      artifactPath: path,
+      detail: `target_sid=${sessionId} reaper_sid=${process.env["CLAUDE_SESSION_ID"] ?? "unknown"} pid=${process.pid} caller_top4=${callerTop4()}`,
+    });
     return true;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -691,8 +742,20 @@ export function removeOwnHeartbeat(
   sessionId: string,
 ): void {
   if (!isValidArtifactId(artifactId) || !isValidSessionId(sessionId)) return;
+  const path = heartbeatPath(artifactId, sessionId);
   try {
-    unlinkSync(heartbeatPath(artifactId, sessionId));
+    unlinkSync(path);
+    // Slice 7 A2 — Point 6: success-path emit. Stop-hook self-removal
+    // is single-caller (`session-presence-unregister.ts:41`); no
+    // caller-stack capture needed.
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId,
+      source: "active-sessions-registry",
+      kind: "heartbeat-removed",
+      artifactPath: path,
+      detail: `pid=${process.pid} self-stop`,
+    });
   } catch {
     /* already gone or never existed */
   }
@@ -891,6 +954,25 @@ export function resetArtifactRegistry(artifactId: string): {
   const heartbeatsRemoved = heartbeats.map((h) => h.sessionId);
   const metaRemoved = existsSync(metaPath(artifactId));
 
+  // Slice 7 A2 — Point 7 (v1.4 NEW per FOLD-4): emit BEFORE the
+  // rename-to-quarantine (which precedes rm) so we capture the state
+  // being destroyed. Post-rmSync emit would be trivially empty.
+  // Shape per Q3 disposition: count + first-8-of-each-sid-prefix list
+  // capped at 10 entries (operator-friendly; bounds log-bloat on
+  // pathological reset-of-large-fleet).
+  const sidPrefixSample = heartbeats
+    .slice(0, 10)
+    .map((h) => h.sessionId.slice(0, 8))
+    .join(",");
+  appendPresenceFailure({
+    timestamp: new Date().toISOString(),
+    sessionId: null,
+    source: "active-sessions-registry",
+    kind: "artifact-reset",
+    artifactPath,
+    detail: `artifactId=${artifactId} heartbeats_count=${String(heartbeatsRemoved.length)} sid_prefix_sample=[${sidPrefixSample}] pid=${process.pid} caller_top4=${callerTop4()}`,
+  });
+
   // Rename under a quarantine suffix before rm. renameSync is atomic and
   // operates on the named entry — if the dir was swapped for a symlink
   // between the lstat/realpath guards and this point, we move the symlink
@@ -1033,6 +1115,18 @@ export function setSentinelDotfilesRoot(args: {
   }
 
   writeAtomic(path, `${JSON.stringify(record)}\n`);
+
+  // Slice 7 A2 — Point 1: telemetry for every sentinel set (including
+  // idempotent re-pins). pid + host enable lsof/ps cross-reference for
+  // session-id correspondence during triage.
+  appendPresenceFailure({
+    timestamp: new Date().toISOString(),
+    sessionId,
+    source: "active-sessions-registry",
+    kind: "sentinel-dotfilesroot-set",
+    artifactPath: join(effectiveHome(), ".claude"),
+    detail: `dotfilesRoot=${canonical} prior=${existing?.dotfilesRoot ?? "null"} pid=${process.pid} host=${hostname()}`,
+  });
 }
 
 /**
@@ -1089,6 +1183,19 @@ export function clearSentinelDotfilesRoot(sessionId: string): void {
 
   const existing = readOwnerRecord(path);
   if (existing === null) return;
+
+  // Slice 7 A2 — Point 2: emit BEFORE the dotfilesRoot===undefined
+  // early-return so idempotent no-op clears are observable too (TS-6 fold
+  // from plan v1.3 — `existing` already non-null here, narrow holds).
+  appendPresenceFailure({
+    timestamp: new Date().toISOString(),
+    sessionId,
+    source: "active-sessions-registry",
+    kind: "sentinel-dotfilesroot-cleared",
+    artifactPath: join(effectiveHome(), ".claude"),
+    detail: `prior=${existing.dotfilesRoot ?? "null"} pid=${process.pid} caller_top4=${callerTop4()}`,
+  });
+
   if (existing.dotfilesRoot === undefined) return;
 
   const now = getWallClockNow();
@@ -1127,5 +1234,18 @@ export function unregisterActiveSession(sessionId: string): number {
       cleared++;
     }
   }
+
+  // Slice 7 A2 — Point 3: emit IF cleared > 0 (avoid no-op spam).
+  if (cleared > 0) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      sessionId,
+      source: "active-sessions-registry",
+      kind: "session-unregistered",
+      artifactPath: null,
+      detail: `cleared=${cleared} pid=${process.pid} caller_top4=${callerTop4()}`,
+    });
+  }
+
   return cleared;
 }
