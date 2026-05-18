@@ -180,4 +180,78 @@ describe("scripts/check-generic-paths.sh", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("clean");
   });
+
+  it("flags isolated hex SHA in source code (P4)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "fixture.ts"),
+      "export const SHA = abc1234;\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("error[P4]");
+    expect(stderr).toContain("src/fixture.ts");
+    expect(stderr).toContain("potential anonymization leak");
+  });
+
+  it("does NOT flag hex inside lowercase word (FP class: 'feedbac' in 'feedback')", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "fp.ts"),
+      "export const label = 'feedback-driven';\nexport const succeeded = true;\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("does NOT flag backtick-quoted hex (intentional code reference)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "quoted.ts"),
+      "/**\n * Fixed in commit `fec3849`, see history.\n */\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("does NOT flag hex in JSDoc narration (Layer 3 generic for P4)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "narrated.ts"),
+      "/**\n * Example: branch refs/heads/worktree/abc12345 has the right shape.\n */\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("does NOT flag P4 alone in test fixtures (test/ allowlist)", () => {
+    mkdirSync(join(repo, "test"), { recursive: true });
+    writeFileSync(
+      join(repo, "test", "fixture.test.ts"),
+      "const SID = '11111111-1111-4111-8111-111111111111';\nconst SHA = abc1234567;\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("does NOT flag P4 alone in markdown files (documentation, not runtime)", () => {
+    mkdirSync(join(repo, "commands"), { recursive: true });
+    writeFileSync(
+      join(repo, "commands", "doc.md"),
+      "# Example\n\nFixed at commit abc1234567 per the slice-4 retrospective.\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
 });

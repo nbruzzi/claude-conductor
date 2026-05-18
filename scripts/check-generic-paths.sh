@@ -8,6 +8,9 @@
 #   P2 — hardcoded /Users/<name>/ absolute paths
 #   P3 — \.claude/ literal under src/ outside explicit bypasser allowlist
 #        (per Decision N — paths.ts isolation discipline, sub-step 0.10)
+#   P4 — 7-40 char hex string ([a-f0-9]) — potential SHA / commit / cache key
+#        leak. FP-class filter excludes substring matches inside lowercase
+#        words (e.g., "feedbac" inside "feedback") via surrounding-char check.
 #
 # Run:    bun run check-generic-paths
 #         bash scripts/check-generic-paths.sh
@@ -133,6 +136,7 @@ P3_FILE_ALLOWLIST=(
 P1_REGEX='[Nn][Bb][Rr][Uu][Zz][Zz][Ii]'
 P2_REGEX='/Users/[a-zA-Z][a-zA-Z0-9._-]*/'
 P3_REGEX='\.claude/'
+P4_REGEX='[a-f0-9]{7,40}'
 
 # --- 4. Collect tracked files (bash 3.2+ portable; NOT mapfile) ---
 FILES=()
@@ -151,7 +155,7 @@ fi
 # misclassify as error. Direct grep returns 0 (matches), 1 (clean), 2+ (error).
 # Single grep pass over P1+P2+P3; per-pattern allowlist applied in awk.
 GREP_EXIT=0
-RAW_HITS=$(grep -HnIE -e "$P1_REGEX" -e "$P2_REGEX" -e "$P3_REGEX" "${FILES[@]}" 2>&1) || GREP_EXIT=$?
+RAW_HITS=$(grep -HnIE -e "$P1_REGEX" -e "$P2_REGEX" -e "$P3_REGEX" -e "$P4_REGEX" "${FILES[@]}" 2>&1) || GREP_EXIT=$?
 
 if [[ $GREP_EXIT -ge 2 ]]; then
   echo "check-generic-paths: error: grep failed (exit $GREP_EXIT)" >&2
@@ -211,6 +215,40 @@ FILTERED_HITS=$(printf '%s\n' "$RAW_HITS" | awk -v p3_allow="$P3_ALLOWLIST_STR" 
     has_p2 = (content ~ /\/Users\/[a-zA-Z][a-zA-Z0-9._-]*\//)
     has_p3 = (content ~ /\.claude\//)
 
+    # P4 — 7-40 char hex with FP-class exclusion. Only check when no
+    # higher-priority pattern matched on this line. Loop because a single
+    # line may contain multiple hex candidates; we keep going until we find
+    # one with non-letter, non-backtick boundaries (real leak), or exhaust
+    # them all (all FP-class → suppress).
+    has_p4 = 0
+    if (!has_p1 && !has_p2 && !has_p3) {
+      rem = content
+      while ((mp = match(rem, /[a-f0-9]{7,40}/)) > 0) {
+        me = mp + RLENGTH
+        pc = (mp > 1) ? substr(rem, mp - 1, 1) : ""
+        nc = (me <= length(rem)) ? substr(rem, me, 1) : ""
+        if (pc !~ /[a-z`]/ && nc !~ /[a-z`]/) { has_p4 = 1; break }
+        rem = substr(rem, me)
+      }
+      if (!has_p4) next
+
+      # Layer 3 (P4 extension) — hex strings on comment-narration lines are
+      # documentation/examples, not runtime substrate. Match existing comment
+      # prefixes (`*`, `//`, `#`, `/*`).
+      if (content ~ /^[[:space:]]*\*.*[a-f0-9]{7,40}/) next
+      if (content ~ /^[[:space:]]*\/\*.*[a-f0-9]{7,40}/) next
+      if (content ~ /^[[:space:]]*\/\/.*[a-f0-9]{7,40}/) next
+      if (content ~ /^[[:space:]]*#.*[a-f0-9]{7,40}/) next
+
+      # P4 file-type filter — markdown (docs), test/ (fixtures), CI
+      # workflows (action SHAs), smoke/integration scripts (synthetic SIDs)
+      # all legitimately contain hex strings. Suppress P4-alone in those.
+      if (file ~ /\.md$/) next
+      if (file ~ /^test\//) next
+      if (file ~ /^\.github\/workflows\//) next
+      if (file ~ /^scripts\/smoke-/) next
+    }
+
     # P3 file-type filter — markdown files are documentation, not runtime
     # path-construction. P1/P2 still fire on markdown (substrate identifier
     # + absolute /Users/ leaks ARE bugs); P3 alone on .md is suppressed.
@@ -251,13 +289,14 @@ fi
 P1_COUNT=$(printf '%s\n' "$FILTERED_HITS" | grep -cE "$P1_REGEX" || true)
 P2_COUNT=$(printf '%s\n' "$FILTERED_HITS" | grep -cE "$P2_REGEX" || true)
 P3_COUNT=$(printf '%s\n' "$FILTERED_HITS" | grep -cE "$P3_REGEX" || true)
+P4_COUNT=$(printf '%s\n' "$FILTERED_HITS" | grep -cE "$P4_REGEX" || true)
 TOTAL=$(printf '%s\n' "$FILTERED_HITS" | wc -l | tr -d ' ')
 FILE_COUNT=$(printf '%s\n' "$FILTERED_HITS" | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
 
 # Compiler-style output to stderr. Pattern priority for classification:
-# P1 (nbruzzi) > P2 (/Users/<name>/) > P3 (\.claude/) — a single line that
-# matches multiple patterns is reported under the most-specific class.
-printf '%s\n' "$FILTERED_HITS" | awk -v p1="$P1_REGEX" -v p2="$P2_REGEX" -v p3="$P3_REGEX" -v gha="${GITHUB_ACTIONS:-}" '
+# P1 (nbruzzi) > P2 (/Users/<name>/) > P3 (\.claude/) > P4 (hex string) — a
+# single line that matches multiple patterns is reported under the most-specific class.
+printf '%s\n' "$FILTERED_HITS" | awk -v p1="$P1_REGEX" -v p2="$P2_REGEX" -v p3="$P3_REGEX" -v p4="$P4_REGEX" -v gha="${GITHUB_ACTIONS:-}" '
 {
   # Parse "file:line:content"
   match($0, /^[^:]+:[0-9]+:/)
@@ -277,6 +316,9 @@ printf '%s\n' "$FILTERED_HITS" | awk -v p1="$P1_REGEX" -v p2="$P2_REGEX" -v p3="
   } else if ($0 ~ p3) {
     pid = "P3"
     msg = "\\.claude/ literal under src/ outside the 12-file bypasser allowlist — route through paths.ts (channelsDir/todosDir/activeSessionsDir/etc.), or add this file to P3_FILE_ALLOWLIST in scripts/check-generic-paths.sh with rationale"
+  } else if ($0 ~ p4) {
+    pid = "P4"
+    msg = "potential anonymization leak — 7-40 char hex string ([a-f0-9]{7,40}) bordered by non-letter, non-backtick chars. Verify it is not a real SHA / commit / cache key; if it is an intentional reference, quote in backticks (`<sha>`) to mark as documentation, or rewrite using a parameterized constant"
   } else {
     pid = "??"
     msg = "unknown-pattern"
@@ -292,5 +334,5 @@ printf '%s\n' "$FILTERED_HITS" | awk -v p1="$P1_REGEX" -v p2="$P2_REGEX" -v p3="
 }
 ' >&2
 
-echo "check-generic-paths: ${TOTAL} violation(s) across ${FILE_COUNT} file(s) (P1: ${P1_COUNT}, P2: ${P2_COUNT}, P3: ${P3_COUNT})" >&2
+echo "check-generic-paths: ${TOTAL} violation(s) across ${FILE_COUNT} file(s) (P1: ${P1_COUNT}, P2: ${P2_COUNT}, P3: ${P3_COUNT}, P4: ${P4_COUNT})" >&2
 exit 1
