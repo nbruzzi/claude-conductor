@@ -88,7 +88,7 @@ describe("scripts/check-generic-paths.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[P1]");
+    expect(stderr).toContain("error[CGP-001]");
     expect(stderr).toContain("src/foo.ts");
     expect(stderr).toContain("hardcoded user identifier");
   });
@@ -102,7 +102,7 @@ describe("scripts/check-generic-paths.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[P2]");
+    expect(stderr).toContain("error[CGP-002]");
     expect(stderr).toContain("src/bar.ts");
     expect(stderr).toContain("non-portable");
   });
@@ -140,7 +140,7 @@ describe("scripts/check-generic-paths.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[P3]");
+    expect(stderr).toContain("error[CGP-003]");
     expect(stderr).toContain("src/hooks/checks/newcheck.ts");
     expect(stderr).toContain("route through paths.ts");
   });
@@ -168,7 +168,7 @@ describe("scripts/check-generic-paths.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[P1]");
+    expect(stderr).toContain("error[CGP-001]");
     expect(stderr).toContain("commands/session/fakehandoff.md");
   });
 
@@ -193,7 +193,7 @@ describe("scripts/check-generic-paths.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[P4]");
+    expect(stderr).toContain("error[CGP-004]");
     expect(stderr).toContain("src/fixture.ts");
     expect(stderr).toContain("potential anonymization leak");
   });
@@ -285,7 +285,7 @@ describe("scripts/check-generic-paths.sh", () => {
     const { exitCode, stderr } = runScript(repo, ["--include-untracked"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("src/new-thing.ts");
-    expect(stderr).toContain("error[P3]");
+    expect(stderr).toContain("error[CGP-003]");
   });
 
   it("reports the untracked-included count in the clean summary", () => {

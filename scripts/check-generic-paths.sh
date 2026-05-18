@@ -40,9 +40,13 @@
 # New files using \.claude/ must either route through paths.ts or join the
 # allowlist explicitly (forces the conversation per ARCH-3).
 #
-# Output: compiler-style `<file>:<line>:<col>: error[<P1|P2|P3>]: <msg>` to
+# Output: compiler-style `<file>:<line>:<col>: error[CGP-001..004]: <msg>` to
 # stderr; clean message to stdout. Under GITHUB_ACTIONS=true, also emits
 # `::error file=...,line=...::` workflow commands for PR annotations.
+# Error-code convention: <DETECTOR-PREFIX>-<NNN>; see
+# docs/conventions/error-code-scheme.md. Renamed from P1..P4 in slice 6
+# A4 (CLI-11 closure) — Phase 0 → v0.1.0 boundary churn window per the
+# zero-external-consumer primary-source verification.
 #
 # Bash 3.2+ portable (do NOT use mapfile, which requires bash 4.4+).
 
@@ -354,18 +358,19 @@ printf '%s\n' "$FILTERED_HITS" | awk -v p1="$P1_REGEX" -v p2="$P2_REGEX" -v p3="
   file = parts[1]
   line = parts[2]
 
-  # Determine pattern + remediation (priority P1 > P2 > P3)
+  # Determine pattern + remediation (priority CGP-001 > CGP-002 > CGP-003 > CGP-004).
+  # Error-code convention: <DETECTOR-PREFIX>-<NNN>; see docs/conventions/error-code-scheme.md.
   if ($0 ~ p1) {
-    pid = "P1"
+    pid = "CGP-001"
     msg = "hardcoded user identifier '\''nbruzzi'\'' (substrate leak) — parameterize via effectiveHome() from src/shared/home.ts, or extend Layer 1 allowlist in scripts/check-generic-paths.sh if intentional fixture"
   } else if ($0 ~ p2) {
-    pid = "P2"
+    pid = "CGP-002"
     msg = "hardcoded /Users/<name>/ absolute path (non-portable) — use path.join(homedir(), ...) or process.env.HOME-based construction"
   } else if ($0 ~ p3) {
-    pid = "P3"
+    pid = "CGP-003"
     msg = "\\.claude/ literal under src/ outside the 12-file bypasser allowlist — route through paths.ts (channelsDir/todosDir/activeSessionsDir/etc.), or add this file to P3_FILE_ALLOWLIST in scripts/check-generic-paths.sh with rationale"
   } else if ($0 ~ p4) {
-    pid = "P4"
+    pid = "CGP-004"
     msg = "potential anonymization leak — 7-40 char hex string ([a-f0-9]{7,40}) bordered by non-letter, non-backtick chars. Verify it is not a real SHA / commit / cache key; if it is an intentional reference, quote in backticks (`<sha>`) to mark as documentation, or rewrite using a parameterized constant"
   } else {
     pid = "??"
