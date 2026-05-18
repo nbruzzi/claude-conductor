@@ -34,6 +34,11 @@ import type {
 import { HOOK_EVENTS } from "./types.ts";
 
 export type { HookProfile, KnownToolName };
+/** Re-export of the runtime tuple (slice 6 / A2 cross-edge — dotfiles
+ *  dispatcher uses this for TS-N2 unknown-toolName warn). Type-only
+ *  `KnownToolName` re-export above is unchanged; this is the value
+ *  companion for runtime membership checks. */
+export { KNOWN_TOOL_NAMES } from "./types.ts";
 
 export const ALL_PROFILES: HookProfile[] = ["minimal", "standard", "strict"];
 
