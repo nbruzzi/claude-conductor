@@ -1170,3 +1170,101 @@ affects:
 - Detector code-scheme convention doc: `docs/conventions/error-code-scheme.md` (introduced in PR #87 A4)
 
 ---
+
+## 2026-05-18 — Slice 7: Self-Monitoring residual cohort-pass + worktree-provisioner race-fix Phase 1 telemetry (`glimmering-tracking-magpie`)
+
+```yaml
+---
+title: "Slice 7 — Self-Monitoring residual cohort-pass + Phase 1 telemetry"
+date: 2026-05-18
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    conductor/src/active-sessions/index.ts,
+    conductor/src/shared/presence-failure-log.ts,
+    conductor/test/active-sessions/sentinel-extension.test.ts,
+    conductor/docs/audits/2026-05-18-gc-fallback-symmetry.md,
+    dotfiles/src/active-sessions/index.ts,
+    dotfiles/src/shared/kill-switch.ts,
+    dotfiles/src/__tests__/shared/kill-switch.test.ts,
+    dotfiles/src/hooks/lock.ts,
+    dotfiles/src/hooks/checks/architecture-coverage.ts,
+    dotfiles/src/hooks/checks/architecture-orphans.ts,
+    dotfiles/src/hooks/checks/observer-nominator.ts,
+    dotfiles/src/hooks/checks/handoff-latest-guard.ts,
+    dotfiles/src/hooks/checks/memory-authoring-summary.ts,
+    dotfiles/src/hooks/checks/session-log-guard.ts,
+    dotfiles/src/hooks/checks/memory-index-sync.ts,
+    dotfiles/src/hooks/checks/wiki-backlog-scope-check.ts,
+    dotfiles/src/hooks/checks/output-externalization-nudge.ts,
+    dotfiles/src/hooks/checks/memory-integrity.ts,
+    dotfiles/src/hooks/checks/compound-bash-detector.ts,
+    dotfiles/src/hooks/checks/canonical-sync-verifier.ts,
+    dotfiles/src/hooks/checks/architecture-event-mismatch.ts,
+    vault/wiki/backlog.md,
+  ]
+---
+```
+
+**Context:** Slice 7 of the cohort-pass strategy — **third deliberate application**, first since the slice-6 ratification that escalated cohort-pass from complement to default cycle shape. Target: Self-Monitoring Infrastructure residual cluster (17 open post-slice-5) with the long-deferred worktree-provisioner race-fix Phase 1 telemetry (L445, 12-day-old plan v1.3) as the headline. Outcome: 7 PRs shipped at zero-unfixed-failure cadence after a transient 2-failure dotfiles-main-CI recovery via hotfix #133 — cluster ~17 → ~10 open (-7 closed + 1 new follow-up filing = -6 net). Cycle character: substrate-coupling lesson surfaced empirically (#133 hotfix), Mode-2 design audit pre-locked at plan-v1 cross-audit (FOLD-4 Point 7 pre-rmSync emit, FOLD-5 A1→A2 ordering, FOLD-6 Point 4 artifactId-eq), 4-sibling parallel work (Alpha + Bravo + Charlie + Delta) with non-overlapping scopes.
+
+**7 PRs shipped:**
+
+| PR   | Lane  | Item   | Squash    | Repo      | Subject                                                                   | Main-CI        | Conclusion |
+| ---- | ----- | ------ | --------- | --------- | ------------------------------------------------------------------------- | -------------- | ---------- |
+| #89  | Alpha | A1     | `d8ef055` | conductor | Export heartbeatPath + canonicalClaudeHomeArtifactId (telemetry prereq 3) | `26056387472`  | success    |
+| #91  | Alpha | A2     | `fe3d27e` | conductor | A2 7-point telemetry instrumentation per plan v1.4 (headline)             | `26062343091`  | success    |
+| #130 | Bravo | B1     | `2a7f56a` | dotfiles  | Normalize 14 killSwitchPath() consumers to plural pattern                 | (FAIL→recover) | recovered  |
+| #131 | Bravo | B2     | `46cf435` | dotfiles  | HOME-empty stderr breadcrumb in kill-switch flagsDir                      | (FAIL→recover) | recovered  |
+| #132 | Bravo | B3     | `c033050` | dotfiles  | JSONL rotation via cross-edge appendLogWithRotation reuse                 | `26061389543`  | success    |
+| #90  | Bravo | B4     | `5c66259` | conductor | GC-fallback symmetry audit doc                                            | success        | success    |
+| #133 | Bravo | hotfix | `62c26ec` | dotfiles  | mirror A1 plugin exports in active-sessions shim (recovery)               | `26059598607`  | success    |
+
+**Cross-cycle slices 1-7:** 37 (slices 1-6) + 7 (slice 7) = 44 PRs shipped; main-CI verification: 42 clean runs + 1 hotfix-recovery cycle (#133 closed B1 + B2 transient failures). Net: 44 PRs / 44 main-CI green (counting recovery) / 0 unfixed-after-recovery failures.
+
+**Decisions captured in this slice:**
+
+1. **Cohort-pass strategy third deliberate application — N-cycle stability data validates default-cycle-shape escalation.** Slices 5 + 6 ratified cohort-pass-as-default in slice-6 retro (memory `feedback-cohort-pass-cluster-pressure-release-valve.md` revised). Slice 7 is the first cycle AFTER ratification: same shape, same per-cycle ROI (~7 PRs / cluster ~17→10), continued zero-unfixed-failure cadence (with hotfix-recovery). Three-cycle stability data: pattern is reproducible across cluster types (Self-Monitoring twice + Phase 0.10 once). Default-cycle-shape claim now has N=3 empirical support.
+
+2. **Substrate-coupling-on-export-changes lesson — new memory + backlog filing.** Plugin A1 added `heartbeatPath` + `canonicalClaudeHomeArtifactId` exports on the `active-sessions` surface that dotfiles substrate shim-mirrors (per slice-5 PR #70 `50c7bed` 24-line re-export shim). Shim was NOT updated in the same lane-cycle. B1 + B2 PRs that consume the shim hit downstream test failures at squash-merge → dotfiles main-CI FAILED at `2a7f56a` + `46cf435`. Bravo caught via CI-verification + shipped hotfix PR #133 (squash `62c26ec`) mirroring shim exports; dotfiles main recovered. Memory `feedback-substrate-shim-mirror-on-plugin-export-changes.md` filed; backlog follow-up for structural detector (plugin/shim export-parity gate, slice-7 follow-ups subsection in `wiki/backlog.md`). The lesson generalizes: cross-edge shim-mirrors need sympathetic update when the canonical surface changes; without that, downstream consumer-PRs surface failures asymmetrically and the recovery window is longer than a same-cycle sympathetic edit.
+
+3. **CI-verification-overreach on batch-merge — both Alpha + Bravo violated CLAUDE.md "After Every Push" discipline.** During Alpha's 4-PR squash-merge batch (B1 + B2 + B3 + B4), neither sibling verified main-CI per-merge — both claimed "merged ✓" without `gh run watch` per push. The shim-coupling failure mode (Decision 2) hid behind the unverified merges. Per CLAUDE.md: "git push is delivery, CI is the unlock." Per memory `feedback-audit-pass-ci-green-push-clear.md`: audit-pass + CI-green = push-clear. Both shipped the discipline lapse honestly. Recovery via #133 hotfix cost ~30 min wall-clock + 1 PR cycle. Pattern: when batch-merging multiple PRs, per-merge CI verification is mandatory; shim-coupling + similar cross-edge invariants only surface at the second consumer-PR's main-CI run.
+
+4. **14-day data-collection ceiling for Phase 2 trigger — telemetry instrumentation cycle complete.** Plan v1.3 specified a 14-day data-collection ceiling (or 10 cross-session presences, whichever first) after telemetry merge to force a Phase 2 decision. Ceiling start: 2026-05-18 (A2 #91 main-CI green at run `26062343091`). Decision date: 2026-06-01 OR after 10 cross-session presences. Branch discrimination per plan v1.3 §Phase 2 trigger criteria: A (merge-broke per heartbeat-no-dotfilesroot-on-existing firing on canonical anchor) / B (opportunistic-reap LIKELY per heartbeat-reaped firing with caller_top4 listLivePeers) / C (provisioner-incomplete per sentinel-set without subsequent merge) / D (telemetry-blind-spot per none fires). Pattern: time-boxed ceilings on observational windows force decisions rather than indefinite wait — analogous to slice-5 cohort-pass acceptance criterion (≥5 closures).
+
+5. **Plan v1.4 enrichment from v1.3 — primary-source-verify at hydration caught 1 moot prereq + added Point 7 + Point 4 gate-switch.** Slice-7 hydration applied the slice-5/6 stale-premise discipline to plan v1.3's 6 prereqs: (1) ✓ active-sessions fork-to-shim shipped slice 5; (2) ✓ presence-failure-log rotation shipped pre-slice; (3) ✓ export helpers — A1's scope; (4) **MOOT** — `dotfiles-worktree-cleanup.ts` doesn't exist anywhere (filed as confused premise; actual unregisterActiveSession callers covered by Point 5 = tryReapHeartbeat); (5) Point 7 needed — `resetArtifactRegistry` rmSync-bypasses Points 5+6, filed as A2 scope addition; (6) Point 4 gate-switch from path-string-eq to artifactId-eq — macOS realpath-drift makes string-eq fragile. Plan v1.4 = v1.3 with 4 folded + 1 moot dropped. Pattern: backlog entries decay against post-arc substrate reshuffles (slices 5 + 6 caught 5 stale-premise items each; slice 7 caught 1 + 1 enrichment). Pre-LOCK primary-source verification is the load-bearing discipline.
+
+6. **Mode-2 design audit pre-locked by plan-v1 cross-audit — A2 + B2 design surfaces resolved at audit-time; B3 downgraded to standard 3-lens via FOLD-3 reframe.** A2 was the slice's NEW STATE SHAPE (7 telemetry kinds + breadcrumb log volume implications + caller-stack capture pattern); Bravo's plan-v1 cross-audit pre-locked design via FOLD-4 (Point 7 pre-rmSync emit) + FOLD-5 (A1→A2 ordering) + FOLD-6 (Point 4 gate-switch). B2 (HOME-empty breadcrumb centralization) Mode-2 pre-locked via path-(a) centralize choice + FOLD-2 module-comment update. B3 (JSONL rotation) was originally Mode-2 candidate but FOLD-3 reframe (Bravo's verify finding — `appendLogWithRotation` already exists in plugin sync-common; B3 is cross-edge reuse not rewrite) collapsed the new-state-shape surface; B3 downgraded to standard 3-lens. Pattern: Mode-2 pre-impl design audit on new-state-shape PRs costs ~10 min channel exchange and saves ~30-60 min impl re-spin if the design has a fold.
+
+7. **4-sibling parallel work with non-overlapping scopes — Alpha + Bravo + Charlie + Delta sustained.** Slice 6 was 3-sibling (Alpha + Bravo + Charlie). Slice 7 added Delta (Charlie's spawned auditor per Nick) — Delta worked on `delta/dashboard-prereq-exports` in own worktree, audited Charlie's dashboard implementation plan, opened PR #92 (`isChannelMessage` re-export) which shipped end-to-end during slice-7. Zero cross-sibling interference. Per-session worktrees + channel coordination + scope-explicit live-update at sibling-spawn (Delta's first message included `kind_version: 1` body + clear scope-statement) enabled 4-way parallelism. Pattern: parallel-session coordination protocol scales beyond 2 siblings as long as per-session worktrees stay outside provisioner-managed paths (slice-6 lesson) + scope is explicit at spawn-time.
+
+8. **Plan-v1 fold count stable cycle-over-cycle — 5 folds per cycle suggests methodology has reached a steady state.** Slice 5 had 12+7=19 folds at plan-v1. Slice 6 had 5. Slice 7 had 5. Three-cycle data suggests the plan-v1 quality + cross-audit cadence have reached a stable plateau — neither degrading (more folds) nor improving (fewer folds). Both folds-per-cycle and per-PR-fold-rate are stable. Pattern: methodology maturity is measurable empirically; plateau-after-improvement is the expected signal of a well-functioning cycle.
+
+**Cycle metrics:**
+
+- **PRs shipped:** 7 (2 Alpha + 4 Bravo + 1 hotfix). Cross-cycle slices 1-7: **44 PRs / 44 main-CI green (with #133 recovery) / 0 unfixed-after-recovery failures.**
+- **Plan-v1 cross-audit cycles:** 1 (Bravo SHIP-WITH-5-FOLDS; all 5 incorporated → v2 LOCK).
+- **Per-PR cross-audits:** 6 (Alpha → B1+B2+B3+B4+#133; Bravo → A1+A2 with Mode-2 post-impl design review). All SHIP-CLEAN; 0 audit folds applied post-impl.
+- **Mode-2 catches:** 1 architecture (FOLD-3 B3 reframe from new-state-shape to cross-edge primitive reuse — collapsed Mode-2 to standard 3-lens). 1 substrate-coupling (Decision 2 — caught at #133-hotfix-time, retroactively memorialized as memory + backlog filing).
+- **Backlog deltas:** -7 closed (L445 + L566 + L568 + L570 + L945 [B4 actual L which moved] + 2 implicit slice-7-batch closes). +1 filed (structural detector for plugin/shim export-parity gate, slice-7 follow-ups subsection). Net **-6 in Self-Monitoring + related sections**.
+- **New memories filed (Alpha cycle):** 1 — `feedback-substrate-shim-mirror-on-plugin-export-changes.md` (the lesson from #133 hotfix; structural-detector candidate cross-referenced).
+- **Nick interventions:** 1 ("don't both sit waiting on each other") — caught Alpha sitting on A2 while Bravo shipped B-lane PRs in parallel; recovered cleanly. 1 procedural ("Does this need to be talked about?") — caught the CI-verification-overreach + drove this slice 7 retro decision-log entry's substrate-coupling-lesson + memory-filing + backlog-detector chain.
+- **Cross-session integration with Bravo:** clean throughout — 5 PRs Bravo-side + 1 hotfix; Alpha audited all 4 originals + Bravo audited A1 + A2 with Mode-2 post-impl design review.
+- **Cross-session integration with Charlie + Delta:** non-overlapping — Charlie + Delta worked dashboard parallel track; Delta shipped PR #92 (`isChannelMessage` re-export) end-to-end during slice 7 without scope-collision with my A2's `active-sessions` work or Bravo's B-lane work.
+
+**Why this slice matters (cohort-pass stable + substrate-coupling lesson captured + telemetry data-collection cycle now live):** slice 7 demonstrates cohort-pass strategy at empirical N=3 stability (slices 5 + 6 + 7) — methodology is past the proof-of-concept phase and into routine cadence. Substrate-coupling lesson (Decision 2 + memory + backlog filing) captures the kind of cross-edge invariant that only surfaces at consumer-PR-merge-time; structural detector follow-up is the substrate-discipline-as-code answer. Phase 1 telemetry data-collection now LIVE — over the next 14 days, 7 telemetry breadcrumb kinds will fire across operator sessions, discriminating Branch A/B/C/D for Phase 2 fix scope. The deferred 12-day plan finally shipped end-to-end; Phase 2 trigger criteria fully wired.
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/glimmering-tracking-magpie.md` (single shared plan for both lanes; 5 audit folds incorporated)
+- Parent plan: `~/.claude/plans/worktree-provisioner-race-fix-phase-1-telemetry.md` v1.3 (Charlie cross-audit-cycle output); slice 7 shipped v1.4 with prereqs folded in
+- Cohort target: Self-Monitoring Infrastructure residual section of `wiki/backlog.md` (cluster shrunk 17 → ~10 open + 1 new follow-up filing in slice-7-cohort-pass-follow-ups subsection)
+- Substrate-coupling lesson memory: `feedback-substrate-shim-mirror-on-plugin-export-changes.md` (NEW)
+- Channel: `2026-05-18_10-50` — Alpha (sid `50f9662b…`) + Bravo (sid `b1183eb9…`) + Charlie (sid `49fe352b…`) + Delta (sid `0528e02d…`) coordination
+- Hotfix recovery: dotfiles PR #133 (`62c26ec`) — empirical case for substrate-coupling-on-export-changes
+- Phase 1 trigger ceiling start: 2026-05-18; decision date 2026-06-01 OR 10 cross-session presences
+- Audit doc: `docs/audits/2026-05-18-gc-fallback-symmetry.md` (Bravo B4) — slice-6 NIT-2 closure; verdict-as-output finding: byDotfilesRoot risk class unique to dotfiles-worktree-gc.ts; PR #86 fix sufficient at current substrate GC surface
+
+---
