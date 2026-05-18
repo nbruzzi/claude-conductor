@@ -80,6 +80,13 @@ export {
   closeChannel,
   createChannel,
   heartbeatMtime,
+  /** Strict ChannelMessage shape validator. Exposed on the curated
+   *  surface so external consumers (dashboard channel-stream adapter,
+   *  any other paired-cross-edge-contract-test consumer) can validate
+   *  a JSON.parse'd JSONL line at the import boundary without dropping
+   *  to the full `./channels` flat root. Sibling pattern: `parseDigestBody`
+   *  for kind-aware body validation. Per `feedback-cross-edge-contract-via-paired-tests`. */
+  isChannelMessage,
   joinChannel,
   listChannels,
   makeSendOutMutator,
@@ -87,6 +94,15 @@ export {
   pruneArchive,
   readBodyFile,
   readMessages,
+  /** Read messages with `ts > afterTs` (strict-greater, ISO-8601 lex
+   *  compare). Exposed for incremental-read consumers (dashboard
+   *  channel-stream adapter past last-seen-ts). Exclusive boundary
+   *  mirrors the SSE `lastEmittedOffset` semantics. */
+  readMessagesAfter,
+  /** Read the most recent `limit` messages. Exposed for tail-N readers
+   *  (dashboard `/api/channel/[id]?from=<ts>` paged route). v1 impl
+   *  loads full file; reverse-stream optimization is a follow-up. */
+  readMessagesTail,
   readMetadata,
   resolveArchiveDir,
   resolveChannelsDir,
