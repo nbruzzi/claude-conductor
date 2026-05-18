@@ -111,7 +111,21 @@ export type PresenceFailureKind =
   // peer genuinely crashed AFTER posting a standby kind); without it,
   // operators have no way to distinguish "reminder correctly suppressed"
   // from "reminder mistakenly suppressed." Source: `channels-identity`.
-  | "standby-suppressed";
+  | "standby-suppressed"
+  // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan
+  // v1.4 = v1.3's 6 instrumentation points + new Point 7 for
+  // `resetArtifactRegistry` rmSync-bypass). Consumed exclusively by
+  // `active-sessions/index.ts`. Per plan v1.3 §Phase 2 trigger criteria,
+  // pattern of these firings discriminates Branch A (merge-broke) vs
+  // B (opportunistic-reap LIKELY) vs C (provisioner-incomplete) vs
+  // D (telemetry-blind-spot). 14-day data-collection ceiling.
+  | "sentinel-dotfilesroot-set"
+  | "sentinel-dotfilesroot-cleared"
+  | "session-unregistered"
+  | "heartbeat-no-dotfilesroot-on-existing"
+  | "heartbeat-reaped"
+  | "heartbeat-removed"
+  | "artifact-reset";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -402,7 +416,15 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "worktree-deps-link-failed" ||
     k === "takeover-audit-failed" ||
     // sibling-coord-gate-awareness Lane C FIND-6 (Bravo).
-    k === "standby-suppressed"
+    k === "standby-suppressed" ||
+    // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan v1.4).
+    k === "sentinel-dotfilesroot-set" ||
+    k === "sentinel-dotfilesroot-cleared" ||
+    k === "session-unregistered" ||
+    k === "heartbeat-no-dotfilesroot-on-existing" ||
+    k === "heartbeat-reaped" ||
+    k === "heartbeat-removed" ||
+    k === "artifact-reset"
   );
 }
 
