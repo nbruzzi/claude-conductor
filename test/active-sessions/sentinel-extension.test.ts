@@ -299,3 +299,184 @@ describe("setSentinelDotfilesRoot — L588 realpath canonicalization", () => {
     rmSync(targetBase, { recursive: true, force: true });
   });
 });
+
+/* ─── Slice 7 A2 — telemetry instrumentation tests (T1-T11) ────────── */
+
+describe("Slice 7 A2 — telemetry instrumentation (plan v1.4)", () => {
+  it("T1 — setSentinelDotfilesRoot emits sentinel-dotfilesroot-set with prior + pid + host", () => {
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: DOTFILES_ROOT });
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: DOTFILES_ROOT_2 });
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "sentinel-dotfilesroot-set",
+    );
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    const second = events[events.length - 1];
+    expect(second?.detail ?? "").toContain("dotfilesRoot=");
+    expect(second?.detail ?? "").toContain("prior=");
+    expect(second?.detail ?? "").toContain("pid=");
+    expect(second?.detail ?? "").toContain("host=");
+  });
+
+  it("T2 — clearSentinelDotfilesRoot emits sentinel-dotfilesroot-cleared with prior + caller_top4", () => {
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: DOTFILES_ROOT });
+    clearSentinelDotfilesRoot(SID);
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "sentinel-dotfilesroot-cleared",
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.detail ?? "").toContain("prior=");
+    expect(events[0]?.detail ?? "").toContain("caller_top4=");
+  });
+
+  it("T2b — clearSentinelDotfilesRoot emits even on no-op idempotent clear (no prior dotfilesRoot)", () => {
+    touchHeartbeat({
+      artifactId: canonicalArtifactId(),
+      sessionId: SID,
+      artifactPath: join(process.env["HOME"] ?? "", ".claude"),
+      now: Date.now(),
+    });
+    clearSentinelDotfilesRoot(SID);
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "sentinel-dotfilesroot-cleared",
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.detail ?? "").toContain("prior=null");
+  });
+
+  it("T3 — unregisterActiveSession emits session-unregistered with cleared count", () => {
+    touchHeartbeat({
+      artifactId: canonicalArtifactId(),
+      sessionId: SID,
+      artifactPath: join(process.env["HOME"] ?? "", ".claude"),
+      now: Date.now(),
+    });
+    unregisterActiveSession(SID);
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "session-unregistered",
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.detail ?? "").toContain("cleared=1");
+    expect(events[0]?.detail ?? "").toContain("caller_top4=");
+  });
+
+  it("T4 — unregisterActiveSession does NOT emit when nothing cleared", () => {
+    unregisterActiveSession(SID);
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "session-unregistered",
+    );
+    expect(events.length).toBe(0);
+  });
+
+  it("T5 — touchHeartbeat emits anomaly when canonical-anchor heartbeat exists without dotfilesRoot", () => {
+    const anchorArtifactId = canonicalArtifactId();
+    const anchorPath = join(process.env["HOME"] ?? "", ".claude");
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: SID,
+      artifactPath: anchorPath,
+      now: Date.now() - 1000,
+    });
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: SID,
+      artifactPath: anchorPath,
+      now: Date.now(),
+    });
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "heartbeat-no-dotfilesroot-on-existing",
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.detail ?? "").toContain("existing.touchedAt=");
+    expect(events[0]?.detail ?? "").toContain("existing.createdAt=");
+  });
+
+  it("T6 — touchHeartbeat does NOT emit anomaly when artifact is non-canonical", () => {
+    const nonCanonicalArtifactId = artifactIdFromPath(
+      join(process.env["HOME"] ?? "", ".claude-dotfiles"),
+    );
+    const path = join(process.env["HOME"] ?? "", ".claude-dotfiles");
+    mkdirSync(path, { recursive: true });
+    touchHeartbeat({
+      artifactId: nonCanonicalArtifactId,
+      sessionId: SID,
+      artifactPath: path,
+      now: Date.now() - 1000,
+    });
+    touchHeartbeat({
+      artifactId: nonCanonicalArtifactId,
+      sessionId: SID,
+      artifactPath: path,
+      now: Date.now(),
+    });
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "heartbeat-no-dotfilesroot-on-existing",
+    );
+    expect(events.length).toBe(0);
+  });
+
+  it("T7 — tryReapHeartbeat emits heartbeat-reaped with target_sid + reaper_sid + caller_top4 (via unregisterActiveSession)", () => {
+    touchHeartbeat({
+      artifactId: canonicalArtifactId(),
+      sessionId: SID,
+      artifactPath: join(process.env["HOME"] ?? "", ".claude"),
+      now: Date.now(),
+    });
+    unregisterActiveSession(SID);
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "heartbeat-reaped",
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.detail ?? "").toContain(`target_sid=${SID}`);
+    expect(events[0]?.detail ?? "").toContain("reaper_sid=");
+    expect(events[0]?.detail ?? "").toContain("caller_top4=");
+  });
+
+  it("T9 — regression: setSentinelDotfilesRoot then touchHeartbeat does NOT emit anomaly (merge preserved)", () => {
+    const anchorArtifactId = canonicalArtifactId();
+    const anchorPath = join(process.env["HOME"] ?? "", ".claude");
+    setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: DOTFILES_ROOT });
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: SID,
+      artifactPath: anchorPath,
+      now: Date.now(),
+    });
+    const events = readPresenceFailures();
+    expect(
+      events.find((e) => e.kind === "sentinel-dotfilesroot-set"),
+    ).toBeDefined();
+    expect(
+      events.find((e) => e.kind === "heartbeat-no-dotfilesroot-on-existing"),
+    ).toBeUndefined();
+  });
+
+  it("T11 — resetArtifactRegistry emits artifact-reset BEFORE rmSync with sid_prefix_sample + heartbeats_count", async () => {
+    const { resetArtifactRegistry } =
+      await import("../../src/active-sessions/index.ts");
+    const anchorArtifactId = canonicalArtifactId();
+    const anchorPath = join(process.env["HOME"] ?? "", ".claude");
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: SID,
+      artifactPath: anchorPath,
+      now: Date.now(),
+    });
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: SID2,
+      artifactPath: anchorPath,
+      now: Date.now(),
+    });
+    resetArtifactRegistry(anchorArtifactId);
+    const events = readPresenceFailures().filter(
+      (e) => e.kind === "artifact-reset",
+    );
+    expect(events.length).toBe(1);
+    expect(events[0]?.detail ?? "").toContain(`artifactId=${anchorArtifactId}`);
+    expect(events[0]?.detail ?? "").toContain("heartbeats_count=2");
+    // readdir order is not guaranteed; assert both prefixes present.
+    expect(events[0]?.detail ?? "").toContain(SID.slice(0, 8));
+    expect(events[0]?.detail ?? "").toContain(SID2.slice(0, 8));
+    expect(events[0]?.detail ?? "").toContain("sid_prefix_sample=[");
+  });
+});
