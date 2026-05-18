@@ -8,6 +8,34 @@ Pick up where a previous session left off using a handoff document.
 
 ---
 
+## Preflight: dotfiles substrate reachable
+
+Run BEFORE any other step (including Step 0 argument parsing). Abort with the diagnostic if the preflight fails — do NOT proceed silently.
+
+```bash
+DOTFILES_ROOT="${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
+CHANNELS_CLI="${DOTFILES_ROOT}/src/channels/cli.ts"
+TODOS_CLI="${DOTFILES_ROOT}/src/todos/cli.ts"
+ACTIVE_SESSIONS_CLI="${DOTFILES_ROOT}/src/active-sessions/cli.ts"
+missing=()
+[ ! -f "$CHANNELS_CLI" ] && missing+=("$CHANNELS_CLI")
+[ ! -f "$TODOS_CLI" ] && missing+=("$TODOS_CLI")
+[ ! -f "$ACTIVE_SESSIONS_CLI" ] && missing+=("$ACTIVE_SESSIONS_CLI")
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "[handoff-resume] dotfiles substrate CLI(s) not reachable:" >&2
+  for m in "${missing[@]}"; do echo "    $m" >&2; done
+  echo "  This slash command shells out to dotfiles substrate (CLI-1 / Decision N)." >&2
+  echo "  Expected layout: ~/.claude-dotfiles checked out alongside ~/claude-conductor (sibling-clone)." >&2
+  echo "  Resolution:" >&2
+  echo "    (a) clone dotfiles: git clone <your-dotfiles-fork-url> ~/.claude-dotfiles" >&2
+  echo "    (b) point at existing checkout: export CLAUDE_DOTFILES_ROOT=/path/to/dotfiles" >&2
+  echo "  See CONTRIBUTING.md §'Dotfiles version compatibility' for details (CLI-8 / slice 6)." >&2
+  exit 1
+fi
+```
+
+---
+
 ## Step 0: Parse arguments
 
 Check for a mode argument on the slash-command invocation.

@@ -89,6 +89,20 @@ The eight components split into two **defaultSuffix** classes:
 
 The bundled session slash commands (`commands/session/*.md`) shell out to dotfiles' channel/todos/active-sessions CLI via `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}`. Default works for the sibling-clone install layout (`~/claude-conductor` and `~/.claude-dotfiles` as siblings). Non-default installs export `CLAUDE_DOTFILES_ROOT` once. CLI-1 (sub-step 0.10) — see Decision N.
 
+### Dotfiles version compatibility
+
+The plugin pins its dotfiles substrate via `package.json` `file:..` (sibling-clone install layout) — there is no SemVer over the cross-repo edge yet. Instead, each slash command runs a **feature-detection** preflight: it verifies the expected CLI entry-point exists and accepts the verbs the command will call.
+
+Detection happens at slash-command invocation, not at install. The preflight is a single `bun run "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/src/<area>/cli.ts" --help` invocation (read-only, no side-effects); a non-zero exit short-circuits the command with a diagnostic naming:
+
+1. The expected CLI path (with `CLAUDE_DOTFILES_ROOT` interpolated)
+2. The dotfiles ref the plugin's session commands were authored against (`commit SHA` or `HEAD` if unpinned — see `commands/session/*.md` preflight blocks)
+3. The remediation: update the dotfiles checkout, or set `CLAUDE_DOTFILES_ROOT` to point at a compatible ref
+
+This is option (c) "feature-detection" from slice 6 plan v2 §B3 FOLD-4 — chosen over (a) freeze a specific dotfiles SHA in this file or (b) version-marker file in dotfiles substrate. Feature-detection has the smallest coupling: no symbol the plugin pins on (just observed CLI shape), no SemVer ceremony, and the failure mode is a specific operator-readable diagnostic instead of `command not found`.
+
+CLI-8 (sub-step 0.10 / slice 6 / B3).
+
 ### Local actionlint
 
 CI runs `actionlint` via `reviewdog/action-actionlint` (SHA-pinned per Decision Q). To run the same check locally before pushing:

@@ -16,6 +16,27 @@ This command is the user-facing surface over `src/active-sessions/cli.ts`.
 
 ---
 
+## Preflight: dotfiles substrate reachable
+
+Run BEFORE any other step. Abort with the diagnostic if the preflight fails — do NOT proceed silently.
+
+```bash
+DOTFILES_ROOT="${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}"
+CLI="${DOTFILES_ROOT}/src/active-sessions/cli.ts"
+if [ ! -f "$CLI" ]; then
+  echo "[presence] dotfiles active-sessions CLI not found at $CLI" >&2
+  echo "  This slash command shells out to dotfiles substrate (CLI-1 / Decision N)." >&2
+  echo "  Expected layout: ~/.claude-dotfiles checked out alongside ~/claude-conductor (sibling-clone)." >&2
+  echo "  Resolution:" >&2
+  echo "    (a) clone dotfiles: git clone <your-dotfiles-fork-url> ~/.claude-dotfiles" >&2
+  echo "    (b) point at existing checkout: export CLAUDE_DOTFILES_ROOT=/path/to/dotfiles" >&2
+  echo "  See CONTRIBUTING.md §'Dotfiles version compatibility' for details (CLI-8 / slice 6)." >&2
+  exit 1
+fi
+```
+
+---
+
 ## Step 0: Parse arguments
 
 The invocation is one of:
