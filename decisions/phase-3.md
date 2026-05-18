@@ -887,3 +887,89 @@ affects:
 - Slice 1 memory applied: `feedback-test-boundary-taxonomy-helper-vs-binary.md` (Stop hook tests use transcript-tail-based-spawn-equivalent in-process — pattern matched correctly to the helper-function side of the taxonomy)
 
 ---
+
+## Decision: Sharded-swinging-locket slice 4 — 4-axis pickup, 6 PRs across plugin + dotfiles (Items 1+3+5 Alpha + 2+4 Bravo + 6 Alpha-extension)
+
+```yaml
+---
+ts: 2026-05-18T00:35:00Z
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    plugin/src/channels/cli.ts,
+    plugin/src/channels/handoff-resolver.ts,
+    plugin/commands/session/handoff-resume.md,
+    plugin/test/skills/structure.test.ts,
+    plugin/test/channels/cli-stdin-timeout.test.ts,
+    plugin/test/channels/handoff-resolver-picker-liveness.test.ts,
+    dotfiles/src/hooks/dispatcher.sh,
+    dotfiles/install.sh,
+    dotfiles/settings.json,
+    dotfiles/RECOVERY.md,
+    dotfiles/src/__tests__/hooks/dispatcher-sh-wrapper.test.ts,
+    dotfiles/src/__tests__/hooks/checks/destructive-cmd.test.ts,
+    dotfiles/src/__tests__/hooks/checks/no-any.test.ts,
+    dotfiles/src/__tests__/hooks/checks/no-enum.test.ts,
+    dotfiles/src/__tests__/hooks/checks/prefer-bun.test.ts,
+    dotfiles/src/__tests__/hooks/checks/sensitive-files.test.ts,
+  ]
+---
+```
+
+**Context:** Slice 4 of the sharded-swinging-locket cycle — 4-axis backlog pickup applied for the 4th consecutive time. Alpha lane (Items 1+3+5) + Bravo lane (Items 2+4) + mid-cycle Item 6 follow-up as the unblocker for an install.sh substrate gap that surfaced during Item 1 impl. Cycle character: bidirectional ratification of the sibling-unavailable autonomy-merge convention from slice-3 — Alpha exercised it (Items 1+3+5, Nick-explicit-go + 75min Bravo silence), Bravo armed-but-preempted (Items 2+4 threshold at 00:58Z; Alpha audit-ratified at 00:29Z, 29min before trigger).
+
+**6 PRs shipped:**
+
+| PR   | Lane  | Item | Squash    | Repo     | Subject                                                                                    | Main-CI run   | Conclusion |
+| ---- | ----- | ---- | --------- | -------- | ------------------------------------------------------------------------------------------ | ------------- | ---------- |
+| #117 | Alpha | 1    | `e734bd9` | dotfiles | L:463 — dispatcher.sh wrapper for `CLAUDE_CONDUCTOR_DISABLE_HOOKS=*` recovery sentinel     | `26005467200` | success    |
+| #75  | Alpha | 3    | `aee4190` | plugin   | L:142 — summarizeChannelForHandoff + Step 1a picker channel-liveness                       | `26005468567` | success    |
+| #118 | Alpha | 5    | `04bf80f` | dotfiles | L:529 — dedicated test files for cluster-1 substrate checks (5 files)                      | `26005469380` | success    |
+| #119 | Alpha | 6    | `30afb0c` | dotfiles | install.sh + L:909 worktree-node_modules SE-4 escape-scan exclusion                        | `26006004887` | success    |
+| #76  | Bravo | 2    | `bfc9be4` | plugin   | L:503 — structural test slice for 6 plugin skill-class artifacts (DEADLINE 2026-05-20 met) | `26007294457` | success    |
+| #77  | Bravo | 4    | `8affef7` | plugin   | L:145 — readStdin time-to-first-byte timeout (TA-2 closure)                                | `26007295446` | success    |
+
+**Decisions captured in this slice:**
+
+1. **Item 1 dispatcher.sh sentinel semantic — Q1 self-fold pre-impl (channel ts 22:17Z):** Alpha's plan v1 leaned "bail on any non-empty `CLAUDE_CONDUCTOR_DISABLE_HOOKS` value." Primary-source read of `parseDisableHooksEnv` showed `*` is NOT a recognized wildcard. Original lean would have regressed named-disable behavior (`=fact-force` wrongly bypassing dispatcher). Corrected to literal `*` sentinel only — narrow exception; named-disable semantics preserved. Pattern: primary-source-verify a planned default-action against the existing parser before locking the lean.
+
+2. **Item 4 scope refinement — `--body-file` already shipped:** plan v1 cited "Lean (a)+(b): fail-loud after 3s + add `--body-file` flag." Pre-impl primary-source check confirmed `--body-file` is already shipped (cli.ts:533 + PR #70 + L:517 RESOLVED). Item 4 scope reduced to lean (a) only — the TA-2 known-follow-up at cli.ts:847-854 explicitly lane-opened "Async-readable + timeout detection." Pattern: pre-impl scope verification can shrink work without missing the intent.
+
+3. **TA-2 latency estimate refuted empirically:** original TA-2 comment said timeout detection "adds 50ms latency per send." Implementation refuted: `Promise.race` against an unref'd `setTimeout` adds zero observable happy-path latency (timer cleared synchronously on first chunk + `.unref()` ensures it doesn't hold event loop alive). Pattern: TA-style follow-up estimates should be re-validated at impl time; the framing assumption may be wrong.
+
+4. **Item 6 filed mid-cycle + shipped same-cycle:** install.sh + L:909 worktree-node_modules tension surfaced during Item 1 impl (worktree-commits hit 21/32 install.sh test failures). Alpha filed as backlog entry mid-cycle, offered as Item 6; Bravo declined (Item 2 deadline pressure); Alpha picked up as Alpha-lane extension. PR #119 shipped as bounded SE-4 exception (node_modules-internal-only with realpath-under-canonical-node_modules sub-gate). Bravo retroactive audit observed-not-blocked; regression test for safety-invariant filed as follow-up backlog rather than same-PR fold (per autonomy-merge timing).
+
+5. **2nd instance of sibling-unavailable autonomy-merge precedent (Alpha-side, executed):** Alpha autonomy-merged Items 1+3+5 at 23:08Z with Nick-explicit-go after Bravo's 75-min silence. Bravo had joined the wrong channel (derived `2026-05-17_21-30` instead of cycle `2026-05-17_22-00`) until Nick's "check for communication" prompt routed correctly. Self-audit substituted for sibling cross-audit per slice-3's threshold (3-lens SHIP-CLEAN + CI green + ≥75min peer silence + Nick-explicit-go). Bravo retroactively ratified SHIP-CLEAN-IMPLIED 0/0/0 at 00:31Z; no follow-up PRs filed. Pattern: autonomy-merge convention holds bidirectionally.
+
+6. **2nd instance of sibling-unavailable autonomy-merge precedent (Bravo-side, armed-but-preempted):** Bravo set up symmetric gate at 00:31Z — autonomy-squash threshold at 00:58Z if Alpha stayed silent past 75min. Threshold-clock Monitor armed for empirical observability + channel-surfaced for peer awareness. Alpha's audit ratification arrived at 00:29Z (29min under threshold). Pattern: arming the gate + channel-surfacing it accelerates peer re-engagement vs ambiguous "waiting" state. Gate Monitor stopped on peer return.
+
+7. **L141 mismatch handling pattern validated end-to-end:** Bravo's `/handoff-resume parallel` resolved derived channel `2026-05-17_21-30` (empty) vs cycle channel `2026-05-17_17-00` (2 live-tracked peers, both heartbeats ~18min stale). Per L141 default, joined derived; later routed to slice-4 channel `2026-05-17_22-00` via Alpha's channel-surface in the cycle channel. The 5-kind summarizeChannelForHandoff helper Alpha shipped in PR #75 would have made this transition smoother had it been integrated into the resume flow — slice-5 fold candidate.
+
+8. **Lane split shape (Alpha 4 PR / Bravo 2 PR):** Alpha lane = 3 planned items + 1 mid-cycle Item 6 (~1271 LOC across 11 files). Bravo lane = 2 planned items (~444 LOC across 3 files). LOC ratio ~3:1 Alpha:Bravo — Alpha-heavy by count + LOC; Bravo-balanced by per-item depth (Item 2 cross-skill structural audit + Item 4 substrate primitive timeout). The 4-axis pickup rubric naturally bifurcates lane dimensions (count, LOC, complexity, deadline pressure).
+
+**Cycle metrics:**
+
+- **PRs shipped:** 6 (4 Alpha + 2 Bravo). Cross-cycle (slices 1+2+3+4): **17 PRs / 17 main-CI green / 0 unfixed failures**.
+- **Plan-v1 cross-audit cycles:** 2 (Alpha's lane Q1-Q9 self-folded + Bravo accepted without counter-propose; Bravo's lane Q-B1..Q-B6 leans all accepted by Alpha).
+- **Per-PR cross-audits:** 5 (Bravo on Alpha's #119; Alpha on Bravo's #76 + #77; Bravo retroactive on Alpha's #117 + #75 + #118 = SHIP-CLEAN-IMPLIED 0/0/0).
+- **Mode-2 catches:** 4 (Q1 dispatcher.sh sentinel semantic; Item 4 `--body-file` scope refinement; TA-2 latency refutation; install.sh + L:909 substrate-gap filed mid-cycle).
+- **Backlog deltas:** -6 closed (L:142 + L:145 + L:463 + L:503 + L:529 + install.sh-vs-L:909). +1 filed (Bravo's safety-invariant regression test for Item 6). Net **-5 this slice**; cumulative slice 1+2+3+4 = **-17 net** from rubric tail.
+- **New memories filed:** 0 this slice (vs slice-3's 1 + slice-1's 1). Cycle 4 was substrate-pattern-application; the autonomy-merge precedent bidirectional ratification is recorded here (not in standalone memory) per slice-3 precedent for protocol-record items.
+- **Nick interventions:** 1 (slice-opening autonomy direction at session start + "check for communication" routing-fix when Bravo was on wrong channel). 0 protocol-class.
+- **TA-2 closed:** known-follow-up at cli.ts:847-854 deferred since the original Slice 3a body-file plumbing landed (vivid-seeking-crayon plan).
+
+**Why this slice matters (fourth-cycle rubric validation + bidirectional autonomy convention):** 17/17 PRs across slices 1+2+3+4 with 0 unfixed CI failures + 0 Nick protocol-class interventions. Four consecutive successful applications of the 4-axis pickup framework. Slice 4 added the cross-instance autonomy-merge convention as a bidirectional pattern — both Alpha and Bravo have now exercised "sibling-unavailable autonomy-merge" under explicit Nick authorization + 75min peer silence + 3-lens self-audit threshold. The convention is symmetric in design; this slice ratified it empirically. Next-tier candidates for slice 5 likely from L:188 structured-logging (remaining Reliability batch) + L:895 /memory-audit (sibling to slice-3 L:893 Memory cluster).
+
+**Cross-references:**
+
+- Plans: `~/.claude/plans/idempotent-bouncing-cocoa.md` (Alpha lane) + `~/.claude/plans/crisp-watching-beacon.md` (Bravo lane)
+- Backlog entries closed (vault): L:142 + L:145 + L:463 + L:503 + L:529 + install.sh-vs-L:909 substrate-gap entry
+- Backlog entry filed mid-cycle: Item 6 safety-invariant regression test (opportunistic follow-up)
+- Channel: `2026-05-17_22-00` — Alpha (sid `f93c00bc`) + Bravo (sid `d5c6c6d8`) coordination
+- Cycle channels traversed: `2026-05-17_21-30` (Bravo's derived channel, briefly joined per L141 default) → `2026-05-17_17-00` (cycle channel from slice-3, where Alpha left routing-message) → `2026-05-17_22-00` (slice-4 channel)
+- Sibling-unavailable autonomy-merge precedent: slice 3's `decisions/phase-3.md` entry codified the trigger conditions; slice 4 ratified bidirectionally (Alpha-executed + Bravo-armed-preempted)
+- TA-2 closure source: cli.ts:925 comment block + StdinTimeoutError class + send-case catch arm + commit body of squash `8affef7`
+
+---
