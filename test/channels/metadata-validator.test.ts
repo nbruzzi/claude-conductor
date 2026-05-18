@@ -21,6 +21,7 @@ import {
 
 describe("validateChannelMetadata", () => {
   const valid: ChannelMetadata = {
+    version: 1,
     created_at: "2026-04-28T13:00:00Z",
     lifecycle: "parallel",
     handoff_id: "2026-04-28_01-50",
@@ -116,5 +117,48 @@ describe("validateChannelMetadata", () => {
     expect(
       validateChannelMetadata({ ...valid, participants: [] }, "label"),
     ).toEqual({ ...valid, participants: [] });
+  });
+
+  /* ── FOLD-1 asymmetric schema-version semantics (slice 6 plan v2) ── */
+  describe("schema-version field (FOLD-1 asymmetric semantics)", () => {
+    it("accepts missing version field (legacy channels) and injects version: 1", () => {
+      const legacy = {
+        created_at: valid.created_at,
+        lifecycle: valid.lifecycle,
+        handoff_id: valid.handoff_id,
+        participants: valid.participants,
+      };
+      const result = validateChannelMetadata(legacy, "legacy-channel");
+      expect(result.version).toBe(1);
+    });
+
+    it("accepts explicit version: 1", () => {
+      const explicit = { ...valid, version: 1 };
+      expect(validateChannelMetadata(explicit, "explicit").version).toBe(1);
+    });
+
+    it("rejects version: 2 (fail-closed on unknown future version)", () => {
+      expect(() =>
+        validateChannelMetadata({ ...valid, version: 2 }, "future"),
+      ).toThrow(/unsupported schema version 2/);
+    });
+
+    it("rejects non-numeric version (e.g. string '1')", () => {
+      expect(() =>
+        validateChannelMetadata({ ...valid, version: "1" }, "stringy"),
+      ).toThrow(/unsupported schema version/);
+    });
+
+    it("always sets version: 1 on the constructed meta — WRITE-side invariant", () => {
+      const legacy = {
+        created_at: valid.created_at,
+        lifecycle: valid.lifecycle,
+        handoff_id: valid.handoff_id,
+        participants: valid.participants,
+      };
+      const explicit = { ...valid, version: 1 };
+      expect(validateChannelMetadata(legacy, "label").version).toBe(1);
+      expect(validateChannelMetadata(explicit, "label").version).toBe(1);
+    });
   });
 });

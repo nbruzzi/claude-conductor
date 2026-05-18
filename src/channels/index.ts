@@ -182,6 +182,22 @@ export type IdentityClaim = {
 };
 
 export type ChannelMetadata = {
+  /** Schema-evolution gate. Sibling pattern: `kind_version: 1` on
+   *  `digest.ts:51` + `live-update.ts:51` (body-schema versioning).
+   *  Asymmetric semantics (FOLD-1, slice-6 plan v2):
+   *    - READ: `validateChannelMetadata` accepts missing field (legacy
+   *      pre-version channels) AND `version === 1`; injects `version: 1`
+   *      into the returned in-memory ChannelMetadata.
+   *    - WRITE: every persisted metadata.json gets `version: 1` explicitly
+   *      (createChannel emits it; identity mutators inherit via `{...meta}`
+   *      spread on validated input).
+   *    - REJECT: `version >= 2` fails-closed — future schema evolutions
+   *      that change the wire format must bump consumers in lockstep.
+   *  Lazy migration: legacy channels read OK, write-back lands explicit
+   *  field on next mutation (commitIdentityClaim / setIdentityRole / etc).
+   *  Pattern parallels slice-5 RE-2 extractValidSessionId deprecate-keep
+   *  migration: safe-by-default on the read side, strict on the write side. */
+  readonly version: 1;
   created_at: string;
   lifecycle: ChannelLifecycle;
   handoff_id: string;
@@ -594,7 +610,19 @@ export function validateChannelMetadata(
       `[channels] metadata for ${sourceLabel} has an invalid shape`,
     );
   }
+  // Schema-version gate (FOLD-1, slice-6 plan v2). Asymmetric:
+  //   READ accepts `undefined` (legacy pre-version channels) or `1`;
+  //   REJECTS any other value (incl. `2+`, strings, etc.) — fail-closed
+  //   on unknown-future-version. WRITE always emits `1` (see createChannel
+  //   + identity mutators which inherit via `{...meta}` spread).
+  const versionRaw = obj["version"];
+  if (versionRaw !== undefined && versionRaw !== 1) {
+    throw new Error(
+      `[channels] metadata for ${sourceLabel} has unsupported schema version ${JSON.stringify(versionRaw)} (expected 1 or absent)`,
+    );
+  }
   const meta: ChannelMetadata = {
+    version: 1,
     created_at,
     lifecycle,
     handoff_id,
@@ -769,6 +797,7 @@ export async function createChannel(args: {
       throw new Error(`[channels] channel ${channelId} already exists`);
     }
     const meta: ChannelMetadata = {
+      version: 1,
       created_at: new Date().toISOString(),
       lifecycle: "parallel",
       handoff_id: handoffId,
