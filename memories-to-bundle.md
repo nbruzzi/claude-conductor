@@ -275,17 +275,15 @@ Before sub-step 0.6 writes the actual `memories/*.md` files:
 2. **Audit findings integrated** — this revision.
 3. **Verification round** — bounded with hard cap 3 per audit-skill discipline; dispatched to a single Knowledge-System verifier.
 4. **Sub-step 0.6 then writes the rewritten files** using this document as the rewrite spec.
-5. **CI grep on the written files re-validates anonymization.** Executable command (run from `<plugin-root>/`):
+5. **CI re-validates anonymization via the canonical bash+grep gate.** The plugin's actual CI gate is `scripts/check-generic-paths.sh` (wired into `.github/workflows/test.yml` via `bun run check-generic-paths`). It scans P1 (nbruzzi), P2 (/Users/<name>/), P3 (\.claude/), and P4 (7-40 char hex strings with FP-class exclusion for substring matches inside lowercase words and backtick-quoted intentional references). Run locally:
 
    ```bash
-   rg -l --pcre2 \
-     'nick|nbruzzi|/Users/nbruzzi|claude-dotfiles|Obsidian|HeatPrice|NewEnglandOil|MEMA|EMARI|originSessionId|2026-04-(1[5-9]|2[0-9])|\[\[[A-Z][^\]]+\]\]|\b(Bravo|Charlie|Delta|Echo|Foxtrot|Golf|Hotel|India|Juliet|Kilo|Lima|Mike)\b|[a-f0-9]{7,40}' \
-     memories/
+   bun run check-generic-paths
    ```
 
-   Expected output: empty. Any path emitted is a violation. CI fails the build with the offending file list.
+   Expected output: `check-generic-paths: clean (0 violations across N tracked files)`. Any compiler-style `error[P*]:` line emitted to stderr is a violation. CI fails the build with the offending file list + line numbers.
 
-   **Allowlist:** `CHANGELOG.md`, `CONTRIBUTING.md`, `decisions/`, `docs/audits/` are exempt — these are bibliographic and decision-log surfaces where SHAs and dated incidents are load-bearing references, not body content. The `memories/` scope above is intentionally narrow.
+   **Allowlists** (in script body, not separate doc): top-level docs (`CHANGELOG.md`, `CONTRIBUTING.md`, `README.md`, `INDEX.md`, `SECURITY.md`, `LICENSE`), extraction working docs (`agents-to-bundle.md`, `memories-to-bundle.md`, `extraction-manifest.md`), `decisions/`, `docs/`, and `audits/` are excluded via Layer 1 pathspec. The P3 file-allowlist enumerates 12 plugin files with legitimate `\.claude/` references; new entrants either route through `paths.ts` or join the allowlist with rationale. P4 is suppressed in markdown (documentation), test fixtures, CI workflows, and `scripts/smoke-*.sh` (synthetic test SIDs).
 
 6. **Cross-reference graph re-validates: every outbound `[link](*.md)` resolves in `<plugin-root>/memories/`.** Executable command:
 
