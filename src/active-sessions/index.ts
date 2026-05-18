@@ -356,7 +356,7 @@ function heartbeatsDir(artifactId: string): string {
   return join(artifactDir(artifactId), "heartbeats");
 }
 
-function heartbeatPath(artifactId: string, sessionId: string): string {
+export function heartbeatPath(artifactId: string, sessionId: string): string {
   return join(heartbeatsDir(artifactId), sessionId);
 }
 
@@ -953,7 +953,7 @@ export function resetArtifactRegistry(artifactId: string): {
  * anchor at session-start so the resolver's read path is reachable
  * regardless of CWD (REV 0.2 ARCH-1 fix).
  */
-function canonicalClaudeHomeArtifactId(): string {
+export function canonicalClaudeHomeArtifactId(): string {
   // Use effectiveHome() so tests that mutate $HOME for isolation see a
   // tmp-rooted artifact-id (matching what they'd compute via the same
   // helper). Production behavior unchanged — when $HOME is unset/empty,
