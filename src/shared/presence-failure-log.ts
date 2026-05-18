@@ -81,6 +81,7 @@ export type PresenceFailureKind =
   // cleanup hooks landing in Commit 4).
   | "worktree-provision-failed"
   | "worktree-gc-reaped"
+  | "worktree-gc-liveness-fallback-fired"
   | "worktree-cleanup-failed"
   | "worktree-cleanup-incomplete"
   // Phase 3 Slice 2 follow-up — provisioner observability (provisionWorktree
@@ -392,6 +393,7 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     // Phase 3 Slice 2 — worktree lifecycle.
     k === "worktree-provision-failed" ||
     k === "worktree-gc-reaped" ||
+    k === "worktree-gc-liveness-fallback-fired" ||
     k === "worktree-cleanup-failed" ||
     k === "worktree-cleanup-incomplete" ||
     k === "worktree-provision-incomplete" ||

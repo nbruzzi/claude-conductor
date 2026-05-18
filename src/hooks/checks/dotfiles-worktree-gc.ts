@@ -120,6 +120,30 @@ export async function check(input: HookInput): Promise<HookResult> {
         (heartbeatAge !== null && heartbeatAge > GC_WINDOW_MS);
       if (!isStale) continue;
 
+      // Defense-in-depth fallback liveness check (slice 7 — substrate fix
+      // for live-sibling reap observed 2026-05-18 during 3-session
+      // Alpha+Bravo+Charlie cycle). The `byDotfilesRoot` map can miss
+      // when (a) the heartbeat's `dotfilesRoot` sentinel is absent on
+      // the record (heartbeat overwritten without preserving the field),
+      // or (b) raw-vs-realpath resolution drifts between write-time
+      // (setSentinelDotfilesRoot) and read-time (mapByDotfilesRoot's
+      // realpathSync). In either case, the worktree directory's name
+      // embeds an 8-char session-id prefix; if ANY anchor heartbeat
+      // shares that prefix AND is live within GC_WINDOW_MS, the session
+      // whose worktree this is must still be alive — skip the reap and
+      // emit a diagnostic breadcrumb instead.
+      if (sidPrefixHasLiveAnchor(anchors, wt.sessionId)) {
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          sessionId,
+          source: "dispatcher",
+          kind: "worktree-gc-liveness-fallback-fired",
+          artifactPath: wt.path,
+          detail: `sid-prefix ${wt.sessionId} live in anchors but byDotfilesRoot missed — skipping reap (likely cause: raw-vs-realpath drift in dotfilesRoot sentinel, or heartbeat overwrite without preserving the field)`,
+        });
+        continue;
+      }
+
       if (forensicMarkerActive(wt.sessionId)) {
         appendPresenceFailure({
           timestamp: new Date().toISOString(),
@@ -261,6 +285,32 @@ function mapByDotfilesRoot(
     out.set(canonical, a);
   }
   return out;
+}
+
+/**
+ * Defense-in-depth: scan anchor heartbeats for any session whose full
+ * session id starts with the worktree's sid-prefix and whose heartbeat is
+ * fresh (within GC_WINDOW_MS, not flagged likelyDead). Returns `true` when
+ * such a peer exists, signaling "do not reap — the worktree's owning
+ * session is alive even if the byDotfilesRoot map didn't surface it."
+ *
+ * Filed as `feedback-worktree-provisioner-reaps-live-siblings.md` (slice 6
+ * 2026-05-18) — observed when a third sibling spawned during an active
+ * Alpha+Bravo cycle and both prior session worktrees were reaped despite
+ * being alive. Root cause hypotheses: raw-vs-realpath drift in
+ * `dotfilesRoot` sentinel storage, or heartbeat overwrite that wiped the
+ * sentinel field. This helper closes both failure modes.
+ */
+function sidPrefixHasLiveAnchor(
+  anchors: readonly HeartbeatListing[],
+  sidPrefix: string,
+): boolean {
+  for (const a of anchors) {
+    if (!a.sessionId.startsWith(sidPrefix)) continue;
+    if (a.likelyDead) continue;
+    if (a.ageMs >= 0 && a.ageMs < GC_WINDOW_MS) return true;
+  }
+  return false;
 }
 
 function forensicMarkerActive(sidPrefix: string): boolean {

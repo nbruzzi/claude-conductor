@@ -31,6 +31,11 @@ import { join } from "node:path";
 import { check as gcCheck } from "../../../src/hooks/checks/dotfiles-worktree-gc.ts";
 import { readPresenceFailures } from "../../../src/shared/presence-failure-log.ts";
 import { DEFAULT_DISPATCH, type HookInput } from "../../../src/hooks/types.ts";
+import {
+  artifactIdFromPath,
+  setSentinelDotfilesRoot,
+  touchHeartbeat,
+} from "../../../src/active-sessions/index.ts";
 
 const FEATURE_FLAG_ENV = "CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES";
 const SCANNER_SID = "11111111-1111-4111-8111-111111111111";
@@ -203,6 +208,99 @@ describe("dotfiles-worktree-gc hook", () => {
     const events = readPresenceFailures();
     const reapEvent = events.find((e) => e.kind === "worktree-gc-reaped");
     expect(reapEvent).toBeDefined();
+    expect(existsSync(wtPath)).toBe(false);
+  });
+
+  /* ─── Liveness fallback (slice 7 substrate fix) ─────────────────── */
+
+  it("FALLBACK: live anchor heartbeat matching sid-prefix without dotfilesRoot → skip reap + fallback breadcrumb", async () => {
+    // Simulates the failure mode behind
+    // `feedback-worktree-provisioner-reaps-live-siblings.md`:
+    // a heartbeat overwrite wiped the dotfilesRoot sentinel field while
+    // the owning session is still alive. The byDotfilesRoot map misses
+    // (no record carries this worktree's path) but the sid-prefix is
+    // still present in anchors. The fallback must catch it.
+    const sidPrefix = "abc12345";
+    const fullSid = "abc12345-1234-4567-89ab-000000000000";
+    const wtPath = provisionRawWorktree(sidPrefix);
+
+    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
+    const anchorArtifactId = artifactIdFromPath(join(tmpHome, ".claude"));
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: fullSid,
+      artifactPath: join(tmpHome, ".claude"),
+      now: Date.now(),
+    });
+    // NOTE: deliberately not calling setSentinelDotfilesRoot — simulates
+    // the heartbeat-overwrite-wiped-sentinel failure mode.
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // Worktree preserved by fallback (not reaped).
+    expect(existsSync(wtPath)).toBe(true);
+
+    const events = readPresenceFailures();
+    const fallback = events.find(
+      (e) => e.kind === "worktree-gc-liveness-fallback-fired",
+    );
+    expect(fallback).toBeDefined();
+    expect(fallback?.detail).toContain(sidPrefix);
+    // Reap must NOT have fired for this worktree.
+    const reaped = events.find((e) => e.kind === "worktree-gc-reaped");
+    expect(reaped).toBeUndefined();
+  });
+
+  it("FALLBACK: live anchor heartbeat matching sid-prefix with stale dotfilesRoot path → skip reap", async () => {
+    // Simulates the raw-vs-realpath drift failure mode: heartbeat
+    // record's dotfilesRoot points at a path that doesn't match the
+    // worktree path enumerated by listWorktrees. Same fallback should
+    // catch it.
+    const sidPrefix = "def67890";
+    const fullSid = "def67890-2222-4567-89ab-111111111111";
+    const wtPath = provisionRawWorktree(sidPrefix);
+
+    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
+    const anchorArtifactId = artifactIdFromPath(join(tmpHome, ".claude"));
+    touchHeartbeat({
+      artifactId: anchorArtifactId,
+      sessionId: fullSid,
+      artifactPath: join(tmpHome, ".claude"),
+      now: Date.now(),
+    });
+    // dotfilesRoot points at a different path — byDotfilesRoot map
+    // won't contain wtPath as a key. Use a tmpHome-relative path so the
+    // hardcoded-path detector (`check-generic-paths.sh`) stays clean.
+    setSentinelDotfilesRoot({
+      sessionId: fullSid,
+      dotfilesRoot: join(tmpHome, "wrong-path-that-doesnt-match-wtpath"),
+    });
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(true);
+
+    const events = readPresenceFailures();
+    const fallback = events.find(
+      (e) => e.kind === "worktree-gc-liveness-fallback-fired",
+    );
+    expect(fallback).toBeDefined();
+  });
+
+  it("FALLBACK: no live sibling sharing sid-prefix → orphan IS reaped (regression: fallback doesn't over-protect)", async () => {
+    // Same setup as the bare-orphan test (no anchor heartbeat at all),
+    // but with the new fallback in place: confirm the fallback doesn't
+    // accidentally guard against real orphans.
+    const sidPrefix = "ee00ee00";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+
+    const events = readPresenceFailures();
+    expect(events.find((e) => e.kind === "worktree-gc-reaped")).toBeDefined();
+    expect(
+      events.find((e) => e.kind === "worktree-gc-liveness-fallback-fired"),
+    ).toBeUndefined();
     expect(existsSync(wtPath)).toBe(false);
   });
 });
