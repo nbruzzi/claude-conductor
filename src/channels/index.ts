@@ -567,6 +567,14 @@ export async function withMetadataLock<T>(
   id: string,
   fn: () => T | Promise<T>,
 ): Promise<T> {
+  // RE-3 boundary guard (slice 6 / A3) — fail fast on path-traversal
+  // shapes before mkdirSync constructs a filesystem path. Sibling parity
+  // with commitIdentityClaim et al.
+  if (!isValidArtifactId(id)) {
+    throw new Error(
+      `[channels] withMetadataLock: invalid channelId "${id}" — must match isValidArtifactId pattern`,
+    );
+  }
   mkdirSync(channelDir(id), { recursive: true });
   const lockPath = metadataLockPath(id);
   const fd = await acquireLock(lockPath);
@@ -717,6 +725,12 @@ function writeMetadataRaw(
 
 /** Read metadata without mutation. Retries once on race. */
 export function readMetadata(id: string): ChannelMetadata {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(id)) {
+    throw new Error(
+      `[channels] readMetadata: invalid channelId "${id}" — must match isValidArtifactId pattern`,
+    );
+  }
   try {
     return readMetadataRaw(id);
   } catch (err: unknown) {
@@ -776,6 +790,12 @@ function writeBodyFile(id: string, body: string): string {
 }
 
 export function readBodyFile(id: string, ref: string): string | null {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(id)) {
+    throw new Error(
+      `[channels] readBodyFile: invalid channelId "${id}" — must match isValidArtifactId pattern`,
+    );
+  }
   try {
     return readFileSync(join(bodyDir(id), `${ref}.txt`), "utf-8");
   } catch {
@@ -792,6 +812,14 @@ export async function createChannel(args: {
   sessionId: string;
 }): Promise<ChannelMetadata> {
   const { channelId, handoffId, sessionId } = args;
+  // RE-3 boundary guard (slice 6 / A3) — guard before withMetadataLock
+  // (which guards on its own input but defense-in-depth at module-API
+  // entry preserves the call-site provenance in the error message).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] createChannel: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   return withMetadataLock(channelId, () => {
     if (existsSync(metadataPath(channelId))) {
       throw new Error(`[channels] channel ${channelId} already exists`);
@@ -816,6 +844,12 @@ export async function joinChannel(args: {
   sessionId: string;
 }): Promise<ChannelMetadata> {
   const { channelId, sessionId } = args;
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] joinChannel: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   return withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
     if (meta.closed_at) {
@@ -838,6 +872,12 @@ export async function closeChannel(args: {
   sessionId: string;
 }): Promise<ChannelMetadata> {
   const { channelId, sessionId } = args;
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] closeChannel: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   return withMetadataLock(channelId, () => {
     const meta = readMetadataRaw(channelId);
     if (!meta.closed_at) {
@@ -1289,6 +1329,12 @@ export async function appendMessage(args: {
   extraMetadataMutator?: (meta: ChannelMetadata) => ChannelMetadata;
 }): Promise<ChannelMessage> {
   const { channelId } = args;
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] appendMessage: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   if (!existsSync(metadataPath(channelId))) {
     throw new Error(`[channels] channel ${channelId} does not exist`);
   }
@@ -1458,6 +1504,12 @@ export function makeSendOutMutator(
 
 /** Read all messages in order. Skips corrupt lines with a single warning. */
 export function readMessages(channelId: string): ChannelMessage[] {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] readMessages: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   const path = messagesPath(channelId);
   if (!existsSync(path)) return [];
 
@@ -1530,6 +1582,12 @@ export function isChannelMessage(v: unknown): v is ChannelMessage {
  * `utimesSync` is needed.
  */
 export function touchHeartbeat(channelId: string, sessionId: string): void {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] touchHeartbeat: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   mkdirSync(heartbeatDir(channelId), { recursive: true });
   writeFileSync(
     heartbeatPath(channelId, sessionId),
@@ -1545,6 +1603,12 @@ export function heartbeatMtime(
   channelId: string,
   sessionId: string,
 ): number | null {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] heartbeatMtime: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   try {
     return statSync(heartbeatPath(channelId, sessionId)).mtimeMs;
   } catch {
@@ -1568,6 +1632,12 @@ export function readHeartbeatBody(
   channelId: string,
   sessionId: string,
 ): number | null {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] readHeartbeatBody: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   let raw: string;
   try {
     raw = readFileSync(heartbeatPath(channelId, sessionId), "utf-8");
@@ -1592,6 +1662,12 @@ export function readHeartbeatBody(
  *  Step G dual-read: UNIONs NEW `heartbeats/` + LEGACY `heartbeat/` entries
  *  so pre-rename peers' heartbeats stay visible during 30-day transition. */
 export function newestHeartbeatMtime(channelId: string): number | null {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] newestHeartbeatMtime: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   let newest: number | null = null;
   for (const dir of [heartbeatDir(channelId), legacyHeartbeatDir(channelId)]) {
     if (!existsSync(dir)) continue;
@@ -1738,6 +1814,12 @@ function lastMessageTs(id: string): string | null {
 
 /** Move a channel dir into .archive/. Used by channel-gc. */
 export function archiveChannel(channelId: string): void {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] archiveChannel: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
   // L143 — clear LATEST first so a brief window where LATEST points at a
   // half-renamed source dir doesn't surface. Concurrent appendMessage on
   // another channel can still race and re-establish LATEST → that channel
