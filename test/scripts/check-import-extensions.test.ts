@@ -96,7 +96,7 @@ describe("scripts/check-import-extensions.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[T1]");
+    expect(stderr).toContain("error[CIE-001]");
     expect(stderr).toContain("src/a.ts");
     expect(stderr).toContain("relative import missing .ts extension");
   });
@@ -120,7 +120,7 @@ describe("scripts/check-import-extensions.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[T1]");
+    expect(stderr).toContain("error[CIE-001]");
   });
 
   // ─── L:761 — dynamic-import coverage (call-site form) ────────────
@@ -135,7 +135,7 @@ describe("scripts/check-import-extensions.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[T1]");
+    expect(stderr).toContain("error[CIE-001]");
     expect(stderr).toContain("src/a.ts");
   });
 
@@ -162,7 +162,7 @@ describe("scripts/check-import-extensions.sh", () => {
     commit(repo);
     const { exitCode, stderr } = runScript(repo);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("error[T1]");
+    expect(stderr).toContain("error[CIE-001]");
     expect(stderr).toContain("src/sub/a.ts");
   });
 });

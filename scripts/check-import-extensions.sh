@@ -17,7 +17,7 @@
 #         1 = violations
 #         2+ = error (e.g. not in a git repo)
 #
-# Output: compiler-style `<file>:<line>:<col>: error[T1]: <msg>` to stderr;
+# Output: compiler-style `<file>:<line>:<col>: error[CIE-001]: <msg>` to stderr;
 # clean message to stdout. Under GITHUB_ACTIONS=true, also emits
 # `::error file=...,line=...::` workflow commands for PR annotations.
 #
@@ -116,10 +116,10 @@ printf '%s\n' "$VIOLATIONS" | awk -v gha="${GITHUB_ACTIONS:-}" '
 
   msg = "relative import missing .ts extension — Bun + TS '\''moduleResolution: Bundler'\'' permit extensionless, but plugin convention requires explicit .ts (or .json) for cross-runtime portability. Add the extension to the import path."
 
-  printf "%s:%s:1: error[T1]: %s\n", file, line, msg
+  printf "%s:%s:1: error[CIE-001]: %s\n", file, line, msg
 
   if (gha == "true") {
-    printf "::error file=%s,line=%s,col=1,title=T1::%s\n", file, line, msg
+    printf "::error file=%s,line=%s,col=1,title=CIE-001::%s\n", file, line, msg
   }
 }
 ' >&2
