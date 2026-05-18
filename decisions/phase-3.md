@@ -973,3 +973,99 @@ affects:
 - TA-2 closure source: cli.ts:925 comment block + StdinTimeoutError class + send-case catch arm + commit body of squash `8affef7`
 
 ---
+
+## 2026-05-18 — Slice 5: Self-Monitoring Infrastructure cohort-pass (`iterative-scribbling-diffie`)
+
+```yaml
+---
+title: "Slice 5 — Self-Monitoring Infrastructure cohort-pass"
+date: 2026-05-18
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    dotfiles/src/shared/kill-switch.ts,
+    dotfiles/src/shared/bash-parser.ts,
+    dotfiles/src/shared/transcript-scanner.ts,
+    dotfiles/src/__tests__/shared/kill-switch.test.ts,
+    dotfiles/src/__tests__/shared/bash-parser.test.ts,
+    dotfiles/src/__tests__/shared/transcript-scanner.test.ts,
+    dotfiles/src/hooks/checks/ci-verification-gate.ts,
+    dotfiles/src/hooks/checks/ci-verification-reminder.ts,
+    dotfiles/src/hooks/checks/ci-verification-auth-warn.ts,
+    dotfiles/src/hooks/checks/ci-verification-pre-push-arm.ts,
+    dotfiles/src/hooks/checks/compound-bash-detector.ts,
+    dotfiles/src/hooks/checks/memory-authoring-summary.ts,
+    dotfiles/src/hooks/checks/observer-nominator.ts,
+    dotfiles/src/hooks/checks/feedback-minimal-output-detector.ts,
+    dotfiles/src/hooks/checks/output-externalization-nudge.ts,
+    dotfiles/src/hooks/checks/test-gate.ts,
+    dotfiles/src/hooks/checks/hindsight-registrations.ts,
+    dotfiles/src/__tests__/hooks/cross-edge-imports.test.ts,
+    dotfiles/src/__tests__/hooks/checks/test-gate.test.ts,
+    dotfiles/architecture.yaml,
+    plugin/scripts/check-generic-paths.sh,
+    plugin/memories-to-bundle.md,
+    vault/wiki/backlog.md,
+  ]
+---
+```
+
+**Context:** Slice 5 of the cohort-pass strategy — first deliberate "shrink ONE cluster by ≥5 items" application. Target: Self-Monitoring Infrastructure cluster (largest at 26 open items, oldest with multi-week cohorts). Outcome: cluster 26 → 17 open (-9 net; 12 closures + 3 new follow-up filings landing in same section). Cycle character: HEAVY pre-LOCK audit cadence (3-lens convergence + Bravo cross-audit → 12 + 7 = 19 audit folds incorporated before any LOC write); per-PR audits caught a memorialize-then-violate anti-pattern (B1 fold-2 reversal); 3rd ratification of sibling-unavailable autonomy-merge precedent (Alpha-side A2 + A3 with Bravo explicit AUDIT-DEFER ack vs prior silence-threshold trigger).
+
+**9 PRs shipped:**
+
+| PR   | Lane  | Item | Squash     | Repo      | Subject                                                                   | Main-CI run   | Conclusion |
+| ---- | ----- | ---- | ---------- | --------- | ------------------------------------------------------------------------- | ------------- | ---------- |
+| #120 | Alpha | A1   | `de24e161` | dotfiles  | Lift `killSwitchPaths` plural helper to `src/shared/kill-switch.ts`       | `26009851212` | success    |
+| #121 | Alpha | A2   | `2d5fb96e` | dotfiles  | Lift `bash-parser` 7 regex constants + helpers to `src/shared/`           | `26009973109` | success    |
+| #122 | Alpha | A3   | `29cb0827` | dotfiles  | Lift `transcript-scanner` (readTail + generic tryParse + stripFencedCode) | `26010054464` | success    |
+| #78  | Bravo | B4   | `8594130f` | conductor | check-generic-paths.sh P4 hex-string detector + FP-class exclusion        | `26010156458` | success    |
+| #123 | Bravo | B5+6 | `f3dd9c62` | dotfiles  | Bundled — stale §§ ref + cross-edge-imports regex extension               | `26010157546` | success    |
+| #124 | Bravo | B7   | `2095e95a` | dotfiles  | Expand test-gate.test.ts to full cluster-1 coverage                       | `26010425147` | success    |
+| #125 | Bravo | B1   | `f72168d2` | dotfiles  | TIER-3a global async cache (1h freshness) for ci-verification-auth-warn   | `26010773395` | success    |
+| #126 | Bravo | B3   | `22975b50` | dotfiles  | Kill-switch usage telemetry across 4 CI-verification checks               | `26011009998` | success    |
+| #127 | Bravo | B2   | `625794a5` | dotfiles  | test-gate SHA cache (package.json + bun.lock keyHash)                     | `26011043059` | success    |
+
+**Decisions captured in this slice:**
+
+1. **Cohort-pass strategy as 1st application:** prior 4 slices (1-4) applied 4-axis pickup (ratified-but-stale / operational-tax / bounded-scope / blast-radius) which picks individual high-ROI items but doesn't shrink cohorts. Slice 5 deliberate target: shrink ONE cluster by ≥5 items. Outcome: 12 closures in Self-Monitoring (26 → 14 + 3 new = 17 net); -9 vs target ≥5. Pattern: cohort-pass complements per-slice 4-axis rubric for cluster-stagnation pressure.
+
+2. **Pre-LOCK 3-lens convergence + Bravo cross-audit caught 19 folds before any LOC write:** Architecture lens (code-architect agent) returned 7 folds (DRY_RUN_PATTERN regex speculative error; TranscriptLine type-export scope; KillSwitchPaths type widening; architecture.yaml updates; etc.). Workflow lens returned 8 folds (lane balance; A1→B2 dependency assumption wrong; B3 mode-2 audit needed; branch naming; pre-flight). Premise lens via primary-source verification caught 5 stale-premise items (L475/477/479/485/487 reference Plugin canonical but truth is substrate post-INVERSIONS Cluster 2). Bravo cross-audit added 7 more folds (B7 file-exists-not-create; B1 cache-key scope global; A2/A3 framing; Lane D pause discipline; dotfiles pre-flight; cross-artifact L-number grep). Total 19 folds incorporated pre-impl. Pattern: heavy pre-impl audit cadence on substrate-fix slices reduces per-PR fold-cycles AND catches stale-premise that would otherwise ship as wrong-target work.
+
+3. **Memorialize-then-violate anti-pattern caught at B1 cross-audit:** Bravo's plan-v1 audit FOLD 2 explicitly prescribed GLOBAL cache key for `gh auth status` (user-wide state, cross-session amortization). Bravo's B1 impl drifted to per-session keying despite his own fold. Alpha mode-1 audit caught the drift; Bravo applied the fix + added a BONUS catch (warn-class outcome guard — only pass-class outcomes get cached, preventing cross-session sessionId leak via cached warn messages). Pattern: cross-audit is NOT just for catching unknowns — it catches the _known_ discipline lapses that the author argued themselves out of during impl. The B1 episode is a textbook `feedback-memorialize-then-violate-anti-pattern.md` instance. Worth a rent-payment annotation on that memory.
+
+4. **3rd ratification of sibling-unavailable autonomy-merge precedent (Alpha-side, A2 + A3, explicit-defer mode):** slice 3 codified the trigger conditions; slice 4 ratified bidirectionally under SILENCE-threshold (75min); slice 5 introduced EXPLICIT-DEFER mode — Bravo posted `A2 mode-1 audit DEFER: your plan-time architecture review + the 3 lens-callouts + 1850/1850 tests + main-CI green all converge. No formal verdict needed. Same default-defer applies to A3 unless you flag a concern at audit-ask time.` Alpha autonomy-squashed A2 + A3 with documented 3-lens self-audit. Pattern: explicit-defer is the cleaner version of silence-threshold — same outcome (sibling-authorized autonomy-squash) but with explicit consent ack on-record rather than silence-as-consent inference.
+
+5. **Mode-2 pre-impl design audit on B3 worked end-to-end:** B3 (kill-switch usage telemetry) was the slice's only NEW-state-shape PR (JSONL emit pattern outside existing sentinel pattern). Per workflow-lens fold 10, B3 audit cadence was elevated to mode-2 (design audit BEFORE impl). Bravo sent design sketch to channel; Alpha returned SHIP-CLEAN-DESIGN with 1 small addendum (whichKillSwitched return-type choice — accepted Bravo's lean). Bravo impl matched design exactly; mode-1 post-impl SHIP-CLEAN with zero re-audit folds. Pattern: mode-2 pre-impl design audit on new-state-shape PRs catches contract issues at design cost (~10 min) instead of impl cost (~30-60 min re-spin).
+
+6. **Pipelined Alpha PR chain (A1 → A2 → A3 stacked) reduced wall-clock vs serial:** A1 had to land first (B3 depends on it); A2 + A3 are file-disjoint vs A1 but share lift-target dir (`src/shared/`). Strategy: branch A2 off A1, A3 off A2; PR each against the prior. When A1 squash-merged, rebase A2 onto main (force-push); when A2 squash-merged, rebase A3 onto main. Each rebase produced "skipped previously applied commit" (clean rebase) — no manual conflict resolution needed. Pattern: pipelined-stacked branches for serial-dependent shared/-lift PRs save ~20-30 min wall-clock vs serial wait-for-squash-then-start.
+
+7. **Stale-premise catching at audit-time prevents wrong-target work:** 5 of 6 initially-targeted CI-verification items (L475/477/479/485/487) referenced "Plugin (`claude-conductor`)" scope-prefix; primary-source verification revealed all 4 CI-verification checks moved plugin → substrate during INVERSIONS arc Cluster 2 (2026-05-07). Without primary-source verification, slice work would have shipped against the wrong repo. Phase 3 vault commit applied scope-reframes to the closure entries (original Plugin scope-prefix preserved in body for audit trail). Pattern: backlog entries decay against post-arc substrate reshuffles; pre-LOCK primary-source verification of file locations is mandatory for substrate-fix slices.
+
+8. **First substrate src/shared/ phase-v consolidation complete for this scope:** before slice 5, substrate `src/shared/` had 3 helpers (home, presence-failure-log, session-id-discovery). Post slice 5: 6 helpers (+ kill-switch + bash-parser + transcript-scanner). 12 inline-duplicated functions across 12 consumer files now route through 3 shared modules. Phase-v consolidation discipline (3-consumer-lift threshold per `feedback-substrate-precedent-as-design-rescue.md`) held for each lift; 14 SINGULAR `killSwitchPath()` consumers explicitly deferred to follow-up backlog (convention-normalize is its own slice).
+
+**Cycle metrics:**
+
+- **PRs shipped:** 9 (3 Alpha + 6 Bravo). Cross-cycle (slices 1+2+3+4+5): **26 PRs / 26 main-CI green / 0 unfixed failures**.
+- **Plan-v1 cross-audit cycles:** 1 (Bravo SHIP-WITH-7-FOLDS; all 7 incorporated → v2 LOCK).
+- **Per-PR cross-audits:** 5 (Alpha → B4 + B5+6 + B1 + B3-design + B2; Bravo → A1 9-lens Lane D STRICT GATE + A2/A3 explicit-defer mode); 1 mode-2 design audit (B3 pre-impl by Alpha).
+- **Mode-2 catches:** 2 architecture (A1 KillSwitchPaths type widening; A2 DRY_RUN_PATTERN regex speculative error caught pre-impl). 1 premise (5 stale-premise items). 1 cross-audit (B1 memorialize-then-violate fold-2 reversal).
+- **Backlog deltas:** -12 closed (L443 + L463 + L465 + L467 + L475 + L477 + L479 + L483 + L485 + L487 + L513 + L529). +3 filed (singular kill-switch normalization / HOME-empty observability for shared kill-switch / kill-switch-telemetry log rotation). Net **-9 in Self-Monitoring cluster** (26 → 17); **-9 total backlog open** (189 → 180).
+- **New memories candidates surfaced (not auto-filed per `feedback-memory-authoring-surface-don't-auto-file.md`):** 3 — (a) cohort-pass strategy as 1st application; (b) memorialize-then-violate rent-payment for B1 cycle; (c) mode-2 pre-impl design audit ROI on new-state-shape PRs.
+- **Nick interventions:** 1 ("fully understand scope before plan" prompt at hydration phase, which caught me jumping to a sub-cluster pick before verifying full 26-item cohort state — recovered cleanly + caught 5 stale-premise items as a result). 0 protocol-class.
+
+**Why this slice matters (cohort-pass as cluster-stagnation pressure release-valve):** prior 4 slices' 4-axis rubric shipped 17 PRs but Self-Monitoring cluster stayed roughly flat (~26 open) because individual high-ROI picks didn't address architectural cohorts. Slice 5's cohort-pass strategy shrinks the cluster by 9 net items (-35% of open count) in one cycle. The cohort-pass also surfaced 3 new follow-ups (substrate convention-normalize / HOME-empty observability / telemetry log rotation) that wouldn't have been visible without the focused architectural pass. Pattern complements per-slice 4-axis rubric: 4-axis picks the best per-cycle item, cohort-pass shrinks cluster long-tails when no individual axis is sufficient. Recommend alternating cohort-pass with 4-axis cycles (1:N ratio TBD by empirical cluster growth observation).
+
+**Cross-references:**
+
+- Plan: `~/.claude/plans/iterative-scribbling-diffie.md` (single shared plan for both lanes; 12 + 7 = 19 audit folds incorporated)
+- Cohort target: Self-Monitoring Infrastructure section of `wiki/backlog.md` (lines 422-572 pre-slice; section shrunk 26 → 17 open + 3 new follow-ups)
+- Backlog mutations (vault): `b848db6` + auto-sync `bc7b5c8`
+- Channel: `2026-05-18_03-00` — Alpha (sid `0dc53626`) + Bravo (sid `0ff99c55`) coordination
+- Sibling-unavailable autonomy-merge precedent: slice 3 codified; slice 4 silence-threshold; slice 5 explicit-defer mode (cleaner consent shape)
+- Architecture lift entries: `c-shared-kill-switch` + `c-shared-bash-parser` + `c-shared-transcript-scanner` added to `architecture.yaml`
+- New backlog filings (vault, slice 5 cohort-pass follow-ups subsection): singular kill-switch normalization (14 consumers) + HOME-empty observability parity + telemetry log rotation
+
+---
