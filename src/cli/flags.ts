@@ -70,6 +70,19 @@ export type FlagSpec = {
    * hazard for paranoid invocations (Decision §9).
    */
   readonly fromSession?: boolean;
+  /**
+   * Accept `--base <branch-name>` (consumes next argv) — value passed
+   * through verbatim; verb-level dispatch validates non-empty + branch
+   * shape. Slice 0 origin: `pr cascade-rebase --base <just-squashed-branch>`
+   * per plan ~/.claude/plans/slice-0-cascade-rebase-2026-05-19.md §D1.
+   */
+  readonly base?: boolean;
+  /**
+   * Accept `--dry-run` (standalone — no value). Slice 0 origin: opt-in
+   * report-without-execute mode for `pr cascade-rebase` per plan §D1 + Q8
+   * (destructive verb wants explicit-preview UX before pulling trigger).
+   */
+  readonly dryRun?: boolean;
 };
 
 export type FlagValues = {
@@ -105,6 +118,14 @@ export type FlagValues = {
    * via `isValidSessionId` and CAS-checks against the held identity claim.
    */
   readonly fromSession: string | undefined;
+  /**
+   * Raw `--base <value>` string when flag was present and accepted,
+   * otherwise `undefined`. Verb-level dispatch validates non-empty +
+   * branch-name shape. Slice 0 (`pr cascade-rebase`).
+   */
+  readonly base: string | undefined;
+  /** True when `--dry-run` was present and accepted. Slice 0 (`pr cascade-rebase`). */
+  readonly dryRun: boolean;
 };
 
 const DEFAULT_SPEC: Required<FlagSpec> = {
@@ -117,6 +138,8 @@ const DEFAULT_SPEC: Required<FlagSpec> = {
   role: false,
   force: false,
   fromSession: false,
+  base: false,
+  dryRun: false,
 };
 
 export type ParsedFlags = {
@@ -155,6 +178,8 @@ export function parseFlags(
   const acceptRole = spec.role ?? DEFAULT_SPEC.role;
   const acceptForce = spec.force ?? DEFAULT_SPEC.force;
   const acceptFromSession = spec.fromSession ?? DEFAULT_SPEC.fromSession;
+  const acceptBase = spec.base ?? DEFAULT_SPEC.base;
+  const acceptDryRun = spec.dryRun ?? DEFAULT_SPEC.dryRun;
 
   const positional: string[] = [];
   const parseErrors: string[] = [];
@@ -167,6 +192,8 @@ export function parseFlags(
   let role: string | undefined = undefined;
   let force = false;
   let fromSession: string | undefined = undefined;
+  let base: string | undefined = undefined;
+  let dryRun = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -217,6 +244,12 @@ export function parseFlags(
       );
       if (consumed.value !== undefined) fromSession = consumed.value;
       i += consumed.advance;
+    } else if (acceptBase && arg === "--base") {
+      const consumed = consumeStringValue(argv, i, "--base", parseErrors);
+      if (consumed.value !== undefined) base = consumed.value;
+      i += consumed.advance;
+    } else if (acceptDryRun && arg === "--dry-run") {
+      dryRun = true;
     } else {
       positional.push(arg);
     }
@@ -240,6 +273,8 @@ export function parseFlags(
       role,
       force,
       fromSession,
+      base,
+      dryRun,
     },
     parseErrors,
   };
