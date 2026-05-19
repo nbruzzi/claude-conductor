@@ -100,3 +100,93 @@ export function isLensClass(v: unknown): v is LensClass {
 export function isLensClassArray(v: unknown): v is readonly LensClass[] {
   return Array.isArray(v) && v.length > 0 && v.every(isLensClass);
 }
+
+/**
+ * Audit-coverage axes per `feedback-audit-convergence-three-axes`. A
+ * verdict body declares which axes the auditor actually applied. The
+ * convergence-check at audit-loop-close uses axis-coverage (not lens-set
+ * parity) to determine whether the PR is converged.
+ *
+ *   - `surface` — cross-edge invariants (caps alignment, type-shape
+ *                 preservation, API stability)
+ *   - `depth`   — invariant-rich logic (state-machine transitions,
+ *                 race classes, parser correctness)
+ *   - `distance` — independent context (outside-pair, cross-pair,
+ *                 fresh-eyes)
+ *
+ * Slice 2 introduction.
+ */
+export const AUDIT_AXES = ["surface", "depth", "distance"] as const;
+export type AuditAxis = (typeof AUDIT_AXES)[number];
+
+/**
+ * Audit verdict outcomes. Closes the audit-loop initiated by `audit-ask`.
+ * Each value defines a discrete next-action for the author per amended
+ * `feedback-audit-loop-closure-3-option-ask`:
+ *
+ *   - `SHIP-CLEAN`       — no folds + no blockers; PR cleared for squash
+ *   - `SHIP-WITH-FOLDS`  — folds proposed; author absorbs + re-audits
+ *                          (or squashes if folds are forward-discipline-only)
+ *   - `NEEDS-REWORK`     — blocker-class issues; PR must NOT squash
+ *                          until reframed
+ *
+ * Slice 2 introduction.
+ */
+export const AUDIT_VERDICTS = [
+  "SHIP-CLEAN",
+  "SHIP-WITH-FOLDS",
+  "NEEDS-REWORK",
+] as const;
+export type AuditVerdict = (typeof AUDIT_VERDICTS)[number];
+
+/**
+ * Finding severity within an audit verdict. UPPERCASE matches AuditVerdict
+ * for cohort-internal consistency (per Slice 2 N3 — cohort-consistency
+ * beats JSON-idiomatic-lowercase). Slice 3 audit-queue may filter on this
+ * (e.g., "show me all BLOCKER findings across the cycle").
+ *
+ *   - `BLOCKER` — PR must not ship until resolved
+ *   - `FOLD`    — author should absorb before squash (or in follow-up)
+ *   - `NIT`     — flag-only; author-judgement whether to address
+ *
+ * Slice 2 introduction.
+ */
+export const FINDING_SEVERITIES = ["BLOCKER", "FOLD", "NIT"] as const;
+export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
+
+/**
+ * Type-guard: `v` is one of the valid `AuditAxis` literals.
+ */
+export function isAuditAxis(v: unknown): v is AuditAxis {
+  return typeof v === "string" && (AUDIT_AXES as readonly string[]).includes(v);
+}
+
+/**
+ * Type-guard: `v` is a NON-EMPTY array of valid `AuditAxis` literals.
+ * Non-empty by design — a verdict without any axis-coverage claim is a
+ * semantic bug (auditor must claim at least one axis to make the
+ * convergence check meaningful). Parser preserves order + duplicates
+ * (per N4); reader-side consumers may sort/dedup.
+ */
+export function isAuditAxisArray(v: unknown): v is readonly AuditAxis[] {
+  return Array.isArray(v) && v.length > 0 && v.every(isAuditAxis);
+}
+
+/**
+ * Type-guard: `v` is one of the valid `AuditVerdict` literals.
+ */
+export function isAuditVerdict(v: unknown): v is AuditVerdict {
+  return (
+    typeof v === "string" && (AUDIT_VERDICTS as readonly string[]).includes(v)
+  );
+}
+
+/**
+ * Type-guard: `v` is one of the valid `FindingSeverity` literals.
+ */
+export function isFindingSeverity(v: unknown): v is FindingSeverity {
+  return (
+    typeof v === "string" &&
+    (FINDING_SEVERITIES as readonly string[]).includes(v)
+  );
+}

@@ -63,6 +63,23 @@ export type { DigestBody } from "./digest.ts";
 export type { AuditAskBody } from "./audit-ask.ts";
 export type { AuditAskTier, AuditClass, LensClass } from "./audit-types.ts";
 
+// Tier 1 Slice 2 2026-05-19 — `audit-verdict` kind body schema type +
+// nested `AuditFinding` + `ThreeOptionAsk` + 3 shared types
+// (`AuditAxis`, `AuditVerdict`, `FindingSeverity`). Consumers (Slice 3
+// audit-queue, dashboard audit-verdict-aggregation) import these from
+// `claude-conductor/channels/api` alongside `parseAuditVerdictBody` +
+// the as-const tuples.
+export type {
+  AuditFinding,
+  AuditVerdictBody,
+  ThreeOptionAsk,
+} from "./audit-verdict.ts";
+export type {
+  AuditAxis,
+  AuditVerdict,
+  FindingSeverity,
+} from "./audit-types.ts";
+
 // ─── Value re-exports ──────────────────────────────────────────────
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
@@ -164,6 +181,20 @@ export {
   isAuditClass,
   isLensClass,
   isLensClassArray,
+} from "./audit-types.ts";
+
+// Tier 1 Slice 2 2026-05-19 — `audit-verdict` kind shared parser +
+// extended audit-discipline type-guards + as-const tuples for the new
+// shared types (AuditAxis + AuditVerdict + FindingSeverity).
+export { parseAuditVerdictBody } from "./audit-verdict.ts";
+export {
+  AUDIT_AXES,
+  AUDIT_VERDICTS,
+  FINDING_SEVERITIES,
+  isAuditAxis,
+  isAuditAxisArray,
+  isAuditVerdict,
+  isFindingSeverity,
 } from "./audit-types.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";

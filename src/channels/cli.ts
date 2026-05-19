@@ -83,6 +83,7 @@ import {
 } from "./peer-message-cursors.ts";
 import { parseDigestBody } from "./digest.ts";
 import { parseAuditAskBody } from "./audit-ask.ts";
+import { parseAuditVerdictBody } from "./audit-verdict.ts";
 import {
   resolveActiveChannelForHandoff,
   summarizeChannelForHandoff,
@@ -137,7 +138,7 @@ const VERB_HELP: Record<string, string> = {
     "create <channel-id> <handoff-id>\n  Create a new channel with metadata for the given handoff id.",
   join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
-  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest, live-update, audit-ask}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.\n  kind=live-update carries the LiveUpdateBody schema (src/channels/live-update.ts) but is currently NOT pre-validated at send time (parser runs at read time per the verification-budget convention).\n  kind=audit-ask validates body against the AuditAskBody schema (src/channels/audit-ask.ts) before send.",
+  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest, live-update, audit-ask, audit-verdict}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.\n  kind=live-update carries the LiveUpdateBody schema (src/channels/live-update.ts) but is currently NOT pre-validated at send time (parser runs at read time per the verification-budget convention).\n  kind=audit-ask validates body against the AuditAskBody schema (src/channels/audit-ask.ts) before send.\n  kind=audit-verdict validates body against the AuditVerdictBody schema (src/channels/audit-verdict.ts) before send.",
   kinds:
     "kinds\n  Print the message-kind reference: semantic gloss + recommended body content\n  per kind + reader verification budget. See also: docs/conventions/message-kinds-and-verification.md.",
   read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen-cursors/<sid>.json (legacy: last-seen/; dual-read fallback ≥30d post-Step-G).\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
@@ -187,6 +188,7 @@ const KINDS_HELP =
   "  digest    — structured summary (mental-model sync). Trust the SHAPE; primary-source-verify any audit-class claim or SHA. Body: JSON conforming to DigestBody (see src/channels/digest.ts).\n" +
   "  live-update— sibling-onboarding scope-assignment from active peer (L152). Trust the SHAPE; primary-source-verify any cited SHA/PR/path. Body: JSON conforming to LiveUpdateBody (see src/channels/live-update.ts).\n" +
   "  audit-ask — author requests audit on PR/plan from target peer (Tier 1 Slice 1). Trust the SHAPE; primary-source-verify target_pr exists + target_peer is a live NATO identity. Body: JSON conforming to AuditAskBody (see src/channels/audit-ask.ts).\n" +
+  "  audit-verdict— auditor reports verdict closing the audit-loop initiated by audit-ask (Tier 1 Slice 2). Trust the SHAPE; primary-source-verify the verdict's lens-set-applied + findings + counts against the actual diff. Body: JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts).\n" +
   "\n" +
   "Send is blocked when this session's role is 'out' unless kind=out\n" +
   "(announcing departure is the one send allowed from an out-role peer).\n" +
@@ -1045,6 +1047,25 @@ export async function runChannelsCli(
               category: "VALIDATION",
               remediation:
                 "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md. Use inferAuditAskTier(loc, invariantRich) from claude-conductor/channels/api to compute the default tier.",
+            },
+          );
+        }
+
+        // Tier 1 Slice 2 2026-05-19 — `audit-verdict` validator gate
+        // (parallel to audit-ask above). Body must JSON.parse into the
+        // AuditVerdictBody shape per src/channels/audit-verdict.ts.
+        // Counts-coherence cross-field validation is enforced inside
+        // the parser (N1) — counts.blocker/fold/nit must equal the
+        // severity-grouped findings length.
+        if (kind === "audit-verdict" && parseAuditVerdictBody(body) === null) {
+          die(
+            ctx,
+            `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, target_pr={repo,number}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}). counts must equal severity-grouped findings length.`,
+            {
+              code: 2,
+              category: "VALIDATION",
+              remediation:
+                "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md.",
             },
           );
         }
