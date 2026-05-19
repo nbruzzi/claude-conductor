@@ -277,14 +277,22 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
   if (typeof aRatify !== "string" || aRatify.trim().length === 0) {
     return null;
   }
+  // B1 fold (Bravo post-impl audit 22:19Z): symmetric trim-check
+  // discipline. a_ratify rejects whitespace-only; b_fold + c_reframe
+  // must match for consistency. Writer posting whitespace-only sub-field
+  // is a bug class — reject as null shape mismatch (mirrors
+  // parseLiveUpdateBody empty-string normalization).
   const bFold = ask["b_fold_if_applicable"];
-  if (bFold !== null && (typeof bFold !== "string" || bFold.length === 0)) {
+  if (
+    bFold !== null &&
+    (typeof bFold !== "string" || bFold.trim().length === 0)
+  ) {
     return null;
   }
   const cReframe = ask["c_reframe_if_applicable"];
   if (
     cReframe !== null &&
-    (typeof cReframe !== "string" || cReframe.length === 0)
+    (typeof cReframe !== "string" || cReframe.trim().length === 0)
   ) {
     return null;
   }

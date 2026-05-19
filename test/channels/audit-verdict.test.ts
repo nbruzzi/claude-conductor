@@ -454,6 +454,32 @@ describe("parseAuditVerdictBody — Section 11: three_option_ask (F1 always-requ
     const withNull = parseAuditVerdictBody(JSON.stringify(SHIP_CLEAN_BODY));
     expect(withNull?.three_option_ask.b_fold_if_applicable).toBeNull();
   });
+  it("T11.7 (B1): b_fold_if_applicable whitespace-only rejected (symmetric trim-check)", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({
+          three_option_ask: {
+            a_ratify: "ratify",
+            b_fold_if_applicable: "   ",
+            c_reframe_if_applicable: null,
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
+  it("T11.8 (B1): c_reframe_if_applicable whitespace-only rejected (symmetric trim-check)", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({
+          three_option_ask: {
+            a_ratify: "ratify",
+            b_fold_if_applicable: null,
+            c_reframe_if_applicable: "   ",
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("parseAuditVerdictBody — Section 12: counts-coherence (N1)", () => {
