@@ -103,6 +103,11 @@ export {
    *  (dashboard `/api/channel/[id]?from=<ts>` paged route). v1 impl
    *  loads full file; reverse-stream optimization is a follow-up. */
   readMessagesTail,
+  /** Lightweight count of complete JSONL records via streaming newline
+   *  scan — `readMessages.length`-equivalent without the full parse cost.
+   *  Exposed for the dashboard Channel composite pagination math (spec
+   *  §6.1). Per L991+ vault backlog 2026-05-19 batch. */
+  messageCount,
   readMetadata,
   resolveArchiveDir,
   resolveChannelsDir,
@@ -135,3 +140,15 @@ export { explicitlyOutPeers } from "./explicitly-out-peers.ts";
 export { parseDigestBody } from "./digest.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";
+
+// Phase 1 v2 / L991+ vault-backlog closure — classifier + wire-shape
+// constant for the channels-module RE-3 boundary throws. Exposed so
+// downstream consumers (dashboard channel-stream adapter today; any
+// other paired-cross-edge-contract-test consumer tomorrow) can classify
+// `invalid channelId` boundary errors without writing inline string-match.
+// Per `feedback-cross-edge-contract-via-paired-tests.md` + vault L991+
+// "paired cross-edge contract test for isInvalidIdError string-match".
+export {
+  INVALID_CHANNEL_ID_MESSAGE_FRAGMENT,
+  isInvalidChannelIdError,
+} from "./boundary-errors.ts";
