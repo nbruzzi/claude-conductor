@@ -55,12 +55,16 @@ import {
   setSentinelDotfilesRoot,
 } from "../../active-sessions/index.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
+// Phase 3 Slice 1 (cycle 2026-05-19) — generic flow extracted to
+// src/worktrees/provision-repo.ts. This hook now builds a dotfiles-
+// RepoProvisionConfig + delegates steps 3-8 to materializeRepoWorktree.
+// verifyProvision (step 9) stays inline here because its 8 facets are
+// dotfiles-coupled (sentinel-readback + cross-edge claude-conductor probe).
 import {
-  linkCanonicalNodeModules,
-  listWorktrees,
-  provisionWorktree,
-  worktreePathForSession,
-} from "../../worktrees/index.ts";
+  materializeRepoWorktree,
+  type RepoProvisionConfig,
+} from "../../worktrees/provision-repo.ts";
+import { linkCanonicalNodeModules } from "../../worktrees/index.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass, warn } from "../types.ts";
@@ -78,100 +82,46 @@ export async function check(input: HookInput): Promise<HookResult> {
     if (process.env[FEATURE_FLAG_ENV] !== "1") return pass();
 
     const dotfilesCanonical = resolveCanonical();
-    const messages: string[] = [];
 
-    // RE-105 soft-ceiling check.
-    const liveWorktrees = listWorktrees(dotfilesCanonical);
-    if (liveWorktrees.length >= SOFT_CEILING) {
-      messages.push(
-        `[${SOURCE}] soft ceiling reached: ${String(liveWorktrees.length)} live worktrees (>= ${String(SOFT_CEILING)}). Provisioning anyway; run \`claude-conductor worktrees gc --force\` if cleanup is needed.`,
-      );
+    // Phase 3 Slice 1 refactor — steps 3-8 (soft-ceiling, mixed-state,
+    // path-compute, anchor-pin, provision, link) delegated to the generic
+    // `materializeRepoWorktree` helper. Behavior preserved — the helper
+    // composes the same flow with the same breadcrumb shapes; presence-
+    // failure-log writes use the same kinds + facets.
+    const config: RepoProvisionConfig = {
+      source: SOURCE,
+      canonical: dotfilesCanonical,
+      softCeiling: SOFT_CEILING,
+      pinAnchor: ({ sessionId: sid, worktreePath }) =>
+        setSentinelDotfilesRoot({ sessionId: sid, dotfilesRoot: worktreePath }),
+      detectMixedState: detectMixedFlagState,
+      linkDeps: linkCanonicalNodeModules,
+    };
+
+    const materialized = materializeRepoWorktree(config, sessionId);
+
+    if (materialized.kind === "feature-disabled") {
+      // Defensive — we already checked the flag above. Keep as belt-and-
+      // suspenders for the case where provisionWorktree's internal flag-read
+      // diverges from this hook's read (e.g., a featureFlagOverride somehow
+      // flips between calls).
+      return pass();
     }
 
-    // RE-8 mixed-state warning.
-    const mixedStateMsg = detectMixedFlagState(sessionId);
-    if (mixedStateMsg !== null) messages.push(mixedStateMsg);
-
-    const worktreePath = worktreePathForSession(sessionId, dotfilesCanonical);
-
-    // ANCHOR-PIN (REV 0.2 ARCH-1) — always before the provision step so the
-    // anchor exists even if provision fails or returns "exists".
-    setSentinelDotfilesRoot({ sessionId, dotfilesRoot: worktreePath });
-
-    // Step 7 — Materialize worktree. Three terminal materialization states
-    // (existsSync-early, provisionWorktree="ok", provisionWorktree="exists")
-    // all converge on "worktreePath is now usable." Path B fold (P0 substrate
-    // canary L:892, 2026-05-17) lifted the link + verify steps OUTSIDE the
-    // conditional so they run uniformly across all three terminal states.
-    if (!existsSync(worktreePath)) {
-      const result = provisionWorktree(sessionId, { dotfilesCanonical });
-      if (result.kind === "feature-disabled") {
-        // Defensive — we already checked the flag above. Keep as belt-and-
-        // suspenders for the case where provisionWorktree's internal flag-read
-        // diverges from this hook's read (e.g., a featureFlagOverride somehow
-        // flips between calls).
-        return pass();
-      }
-      if (result.kind === "error") {
-        appendPresenceFailure({
-          timestamp: new Date().toISOString(),
-          sessionId,
-          source: "dispatcher",
-          kind: "worktree-provision-failed",
-          artifactPath: dotfilesCanonical,
-          detail: result.detail,
-        });
-        messages.push(
-          `[${SOURCE}] provision failed: ${result.detail.slice(0, 240)}; session continues against canonical`,
-        );
-        // Short-circuit: no worktree means nothing to link or verify.
-        return warn(SOURCE, messages.join("\n"));
-      }
-      // result.kind === "ok" || "exists" — worktree path is materialized.
-      messages.push(
-        result.kind === "ok"
-          ? `[${SOURCE}] created ${worktreePath}`
-          : `[${SOURCE}] using existing ${result.path}`,
-      );
-    } else {
-      messages.push(
-        `[${SOURCE}] using existing worktree at ${worktreePath} (idempotent re-run)`,
-      );
+    if (materialized.kind === "provision-failed") {
+      // Short-circuit: no worktree means nothing to link or verify.
+      return warn(SOURCE, materialized.messages.join("\n"));
     }
 
-    // Step 8 — P0 substrate canary fix (backlog L:892). Compose
-    // `linkCanonicalNodeModules` AFTER worktree materialization regardless of
-    // which path got us there (Path B per Bravo cross-audit L93 catch + Alpha
-    // confirmation 2026-05-17 ~13:20Z). Symlink is idempotent via
-    // `already-linked`; race-safe via EEXIST catch in the primitive.
-    const link = linkCanonicalNodeModules(dotfilesCanonical, worktreePath);
-    if (link.kind === "error") {
-      appendPresenceFailure({
-        timestamp: new Date().toISOString(),
-        sessionId,
-        source: "dispatcher",
-        kind: "worktree-deps-link-failed",
-        artifactPath: worktreePath,
-        detail: link.detail,
-      });
-      messages.push(
-        `[${SOURCE}] node_modules symlink failed: ${link.detail.slice(0, 240)}; cross-edge imports will break — investigate and fix with \`ln -s ${dotfilesCanonical}/node_modules ${worktreePath}/node_modules\``,
-      );
-      // Fail-soft: continue to verify so cross-edge-dep-missing fires too,
-      // giving the operator both the "why" (link error) and "what's broken"
-      // (verifyProvision facet) signals in the same session-start surface.
-    } else if (link.kind === "skip") {
-      // Canonical has no `node_modules/` yet — likely first-ever invocation
-      // before any `bun install` ran at canonical. Breadcrumb-only; not a
-      // failure (the operator's next action is "bun install at canonical").
-      messages.push(
-        `[${SOURCE}] canonical has no node_modules — run \`bun install\` at ${dotfilesCanonical} once, then this fix engages on subsequent worktrees`,
-      );
-    }
-    // kind: "ok" and "already-linked" are happy paths — no breadcrumb noise.
+    const { worktreePath, messages: materializeMessages } = materialized;
+    const messages: string[] = [...materializeMessages];
 
     // Step 9 — verifyProvision with `cross-edge-dep-missing` facet extension.
-    // Pins the cross-edge resolution invariant post-link.
+    // Pins the cross-edge resolution invariant post-link. Stays inline here
+    // because the 8 facets are dotfiles-coupled (sentinel-readback +
+    // claude-conductor package.json probe); Slice 2/3 will generalize this
+    // via a verifyExtraFacets callback when the new repo-worktree-provisioner
+    // consumer needs it.
     const verdict = verifyProvision({
       sessionId,
       worktreePath,
