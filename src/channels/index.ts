@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import {
   closeSync,
   constants as fsConstants,
+  createReadStream,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -1587,6 +1588,53 @@ export function readMessagesAfter(
     );
   }
   return readMessages(channelId).filter((m) => m.ts > afterTs);
+}
+
+/** Count of complete (newline-terminated) JSONL records in the channel's
+ *  messages.jsonl. Constant memory via streaming byte-level newline count.
+ *
+ *  Semantically equivalent to `readMessages(channelId).length` but avoids
+ *  the full JSONL parse cost — useful when the caller only needs the
+ *  count (e.g., dashboard Channel composite pagination math per spec §6.1).
+ *  Per L991+ vault backlog "Plugin (`claude-conductor`) — lightweight
+ *  `messageCount(id)` primitive in `channels/api`" (2026-05-19 batch).
+ *
+ *  Counts ONLY complete `\n`-terminated records — a mid-write trailing
+ *  partial line (no final `\n`) is excluded. Mirrors `readMessages`
+ *  semantics where the trailing empty split-element is dropped. Inherits
+ *  the RE-3 boundary guard. Returns 0 for an empty or missing channel
+ *  file (sibling pattern of `readMessages` which returns `[]`).
+ *
+ *  Implementation note: byte-level scan for `0x0A` (LF). UTF-8-correct by
+ *  construction — LF (0x0A) does not appear as a continuation byte in
+ *  any multi-byte UTF-8 sequence, so the count is identical to the JS-
+ *  string `\n` count without requiring full file decode. */
+export async function messageCount(channelId: string): Promise<number> {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] messageCount: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  const path = messagesPath(channelId);
+  if (!existsSync(path)) return 0;
+
+  return new Promise<number>((resolve, reject) => {
+    let count = 0;
+    const stream = createReadStream(path);
+    stream.on("data", (chunk: Buffer | string) => {
+      if (typeof chunk === "string") {
+        for (let i = 0; i < chunk.length; i += 1) {
+          if (chunk.charCodeAt(i) === 0x0a) count += 1;
+        }
+        return;
+      }
+      for (let i = 0; i < chunk.length; i += 1) {
+        if (chunk[i] === 0x0a) count += 1;
+      }
+    });
+    stream.on("end", () => resolve(count));
+    stream.on("error", (err) => reject(err));
+  });
 }
 
 /** Strict ChannelMessage shape validator. Exported per Phase 4 Step A Layer 1
