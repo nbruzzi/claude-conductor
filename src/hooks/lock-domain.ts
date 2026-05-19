@@ -263,6 +263,17 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
       comment:
         "Singleton cursor at `<effectiveHome>/.claude/logs/.worktree-gc-cursor` (5-min rate gate; multi-session race on the cursor self-heals via symmetric write-skip). Iterates `listWorktrees` (read-only `git worktree list --porcelain`) and calls `removeWorktree(sessionId)` (`git worktree remove --force` + `git branch -D worktree/<prefix>`) for stale entries. Self-heals reverse-direction via `unregisterActiveSession(fullSid)` (iterates ALL artifact-ids unlinking heartbeats for `fullSid`) + `clearSentinelDotfilesRoot(fullSid)` (writeAtomic without `dotfilesRoot` field). Multi-source appendPresenceFailure on each branch.",
     },
+    {
+      phase: "repo-worktree-provisioner",
+      event: "session-start",
+      domains: [
+        "per-worktree-dir",
+        "per-worktree-node-modules-symlink",
+        "presence-failure-log",
+      ],
+      comment:
+        "Stream 3 Slice 2 of generic-worktree-provisioner RFC (2026-05-19) — generic per-repo worktree provisioning for non-dotfiles repos declared opt-in in `~/.claude/worktree-provisioner.json` with auto:true. Reads config (3-case fail-discipline: absent/empty → pass; malformed → warn + breadcrumb). Topo-sorts by siblingCloneOf DAG (fails-closed on cycle or absent reference). Delegates per-repo to `materializeRepoWorktree` (the Slice 1 generic helper from `src/worktrees/provision-repo.ts`) which composes `provisionWorktree` (git serializes via its own internal `.git/worktrees/` lockfiles) + `linkCanonicalNodeModules` (symlinkSync filesystem-atomic; EEXIST race recovery). Per-repo source identifier (`repo-worktree-provisioner:<name>`) prefixes all breadcrumbs. Anchor-pin in this slice is no-op (Slice 3+ may add a per-repo sentinel primitive). NO active-sessions registry writes (deferred to Slice 3+ when per-repo anchors materialize). Per-repo presence-failure-log writes from the helper on provision/link errors.",
+    },
   ],
 
   "user-prompt-submit": [
