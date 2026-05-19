@@ -98,7 +98,6 @@ const INDEX_LOCK_FRESH_MS = 60 * 60 * 1000;
 const BUN_TMP_FRESH_MS = 5 * 60 * 1000;
 
 const FORENSIC_MARKER_DIR_NAME = "session-state-forensic";
-const CURSOR_DIR_NAME = ".claude/logs";
 const CURSOR_FILE_PREFIX = ".repo-worktree-gc-cursor.";
 
 export async function check(input: HookInput): Promise<HookResult> {
@@ -272,13 +271,15 @@ function stalenessThresholdMs(repo: RepoConfigEntry): number {
 }
 
 function cursorFilePath(repoName: string): string {
-  // Per-repo cursor: `~/.claude/logs/.repo-worktree-gc-cursor.<repoName>`.
+  // Per-repo cursor: `<effectiveHome>/.claude/logs/.repo-worktree-gc-cursor.<repoName>`.
   // Repo name is operator-controlled; sanitize for filesystem safety
-  // (replace `/` and `\0` with `_`; bound length).
+  // (replace `/` and `\0` with `_`; bound length). Path parts kept
+  // separate (not as `.claude/logs`) per check-generic-paths discipline.
   const safeName = repoName.replace(/[/\\\0]/gu, "_").slice(0, 80);
   return join(
     effectiveHome(),
-    CURSOR_DIR_NAME,
+    ".claude",
+    "logs",
     `${CURSOR_FILE_PREFIX}${safeName}`,
   );
 }
@@ -294,7 +295,7 @@ function recentSweep(cursorPath: string, now: number): boolean {
 
 function touchCursor(cursorPath: string): void {
   try {
-    mkdirSync(join(effectiveHome(), CURSOR_DIR_NAME), { recursive: true });
+    mkdirSync(join(effectiveHome(), ".claude", "logs"), { recursive: true });
     if (existsSync(cursorPath)) {
       const now = new Date();
       utimesSync(cursorPath, now, now);
