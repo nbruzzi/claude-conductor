@@ -5,7 +5,7 @@ Copyright 2026 nbruzzi
 
 # Channel message kinds + verification-budget convention
 
-**Scope:** operator + developer reference for the 11 message kinds the
+**Scope:** operator + developer reference for the 12 message kinds the
 `claude-conductor channels send` verb accepts, with the verification
 posture readers should apply per kind. First inhabitant of
 `docs/conventions/`.
@@ -94,6 +94,7 @@ The verification a reader should apply varies by kind. The contract:
 | `live-update`                                | Trust the SHAPE (validator-enforced); primary-source-verify any SHA / PR / backlog-item citation. The scope assignment (`your_scope` / `hands_off`) is the load-bearing contract; treat as authoritative from the active peer.                                                                |
 | `digest`                                     | Trust the SHAPE (validator-enforced); primary-source-verify any audit-class string, SHA, PR number, or backlog-item ID cited in the fields before reasoning forward.                                                                                                                          |
 | `audit-ask`                                  | Trust the SHAPE (validator-enforced); primary-source-verify the `target_pr` exists + `target_peer` is a live NATO identity on the channel before acting on the ask. `tier` + `lens_set_requested` + `audit_class` are author-claims; `audit-verdict` (Slice 2) is the actual coverage answer. |
+| `audit-verdict`                              | Trust the SHAPE (validator-enforced including counts-coherence cross-field); primary-source-verify the verdict's `lens_set_applied` + `findings` + `audit_axes` claims against the actual diff. The auditor's claim is authoritative for the close-shape; the reader verifies the substance.  |
 
 **Display-time sanitization hazard for `digest` field contents.** `parseDigestBody` enforces the SHAPE (six required fields, correct types, finite non-negative budget), but the parser is content-blind: `what_shipped[i]`, `audit_class_paid[i]`, `next_pickable`, and other string fields pass through unmodified. Any reader that renders `digest` field contents directly into an LLM system-reminder surface (cross-edge dotfiles consumers, future Phase 4 Step B reaper, analysis tooling) MUST sanitize at display time using the same defense Layer 1 `peer-message-deliverer` applies to peer-body content (UUID-nonce fence + platform-control-marker strip + bare-`<` escape — see `src/hooks/checks/peer-message-deliverer.ts` once Alpha lands A1). The shape-validation gate does NOT replace the display-time sanitization gate; readers writing digest field contents into LLM context surfaces are responsible for the second gate. Alpha sibling cross-audit MINOR-1 fold on the B2 staged diff.
 
@@ -121,9 +122,15 @@ this convention.
 - `src/channels/audit-ask.ts` — `parseAuditAskBody` shared parser +
   `AuditAskBody` schema type + `inferAuditAskTier` LOC-based tier
   default helper.
+- `src/channels/audit-verdict.ts` — `parseAuditVerdictBody` shared
+  parser + `AuditVerdictBody` schema type + nested `AuditFinding` +
+  `ThreeOptionAsk` types. Counts-coherence cross-field validation
+  enforced at parse time.
 - `src/channels/audit-types.ts` — shared audit-discipline types
-  (`AuditAskTier`, `AuditClass`, `LensClass`) + as-const tuples +
-  type-guards (consumed by Slice 1 audit-ask + Slice 2 audit-verdict).
+  (`AuditAskTier`, `AuditClass`, `LensClass`, `AuditAxis`,
+  `AuditVerdict`, `FindingSeverity`) + as-const tuples + type-guards
+  (consumed by Slice 1 audit-ask + Slice 2 audit-verdict + Slice 3
+  audit-queue when shipped).
 - `src/channels/cli.ts` — `channels kinds` verb prints the per-kind
   help; `channels send` role-gate carve-out for `kind=out`.
 - `memories/feedback-walkie-talkie-out-semantics.md` — `out` kind's

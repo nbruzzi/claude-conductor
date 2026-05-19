@@ -17,10 +17,17 @@ import { describe, expect, it } from "bun:test";
 
 import {
   AUDIT_ASK_TIERS,
+  AUDIT_AXES,
   AUDIT_CLASSES,
+  AUDIT_VERDICTS,
+  FINDING_SEVERITIES,
   LENS_CLASSES,
   isAuditAskTier,
+  isAuditAxis,
+  isAuditAxisArray,
   isAuditClass,
+  isAuditVerdict,
+  isFindingSeverity,
   isLensClass,
   isLensClassArray,
 } from "../../src/channels/audit-types.ts";
@@ -92,5 +99,72 @@ describe("audit-types — isLensClassArray", () => {
     expect(isLensClassArray(null)).toBe(false);
     expect(isLensClassArray(undefined)).toBe(false);
     expect(isLensClassArray({})).toBe(false);
+  });
+});
+
+describe("audit-types — isAuditAxis (Slice 2)", () => {
+  it("accepts every literal in AUDIT_AXES", () => {
+    for (const a of AUDIT_AXES) {
+      expect(isAuditAxis(a)).toBe(true);
+    }
+  });
+  it("rejects unknown / wrong-case / non-string", () => {
+    expect(isAuditAxis("Surface")).toBe(false);
+    expect(isAuditAxis("breadth")).toBe(false);
+    expect(isAuditAxis(42)).toBe(false);
+    expect(isAuditAxis(null)).toBe(false);
+  });
+});
+
+describe("audit-types — isAuditAxisArray (Slice 2)", () => {
+  it("accepts non-empty arrays of valid axes", () => {
+    expect(isAuditAxisArray(["surface"])).toBe(true);
+    expect(isAuditAxisArray(["surface", "depth"])).toBe(true);
+    expect(isAuditAxisArray([...AUDIT_AXES])).toBe(true);
+  });
+  it("rejects empty array", () => {
+    expect(isAuditAxisArray([])).toBe(false);
+  });
+  it("rejects non-array (string)", () => {
+    expect(isAuditAxisArray("surface")).toBe(false);
+  });
+  it("rejects arrays containing invalid axis", () => {
+    expect(isAuditAxisArray(["surface", "breadth"])).toBe(false);
+  });
+  it("rejects arrays containing non-string", () => {
+    expect(isAuditAxisArray(["surface", 42])).toBe(false);
+  });
+  it("rejects null / undefined / object", () => {
+    expect(isAuditAxisArray(null)).toBe(false);
+    expect(isAuditAxisArray(undefined)).toBe(false);
+    expect(isAuditAxisArray({})).toBe(false);
+  });
+});
+
+describe("audit-types — isAuditVerdict (Slice 2)", () => {
+  it("accepts every literal in AUDIT_VERDICTS", () => {
+    for (const v of AUDIT_VERDICTS) {
+      expect(isAuditVerdict(v)).toBe(true);
+    }
+  });
+  it("rejects unknown / wrong-case / non-string", () => {
+    expect(isAuditVerdict("ship-clean")).toBe(false); // case-mismatch
+    expect(isAuditVerdict("SHIP-DIRTY")).toBe(false);
+    expect(isAuditVerdict(42)).toBe(false);
+    expect(isAuditVerdict(null)).toBe(false);
+  });
+});
+
+describe("audit-types — isFindingSeverity (Slice 2)", () => {
+  it("accepts every literal in FINDING_SEVERITIES", () => {
+    for (const s of FINDING_SEVERITIES) {
+      expect(isFindingSeverity(s)).toBe(true);
+    }
+  });
+  it("rejects unknown / wrong-case / non-string", () => {
+    expect(isFindingSeverity("blocker")).toBe(false); // case-mismatch
+    expect(isFindingSeverity("MAJOR")).toBe(false);
+    expect(isFindingSeverity(42)).toBe(false);
+    expect(isFindingSeverity(null)).toBe(false);
   });
 });

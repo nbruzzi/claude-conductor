@@ -126,6 +126,15 @@ export const CHANNEL_KINDS = [
   // target_pr exists + target_peer is a live NATO identity before
   // acting on the ask. Audit-verdict (Slice 2) closes the loop.
   "audit-ask",
+  // Tier 1 Slice 2 2026-05-19 — audit-verdict closes the audit-loop
+  // initiated by audit-ask. See `src/channels/audit-verdict.ts` for
+  // `AuditVerdictBody` + parser; carries the 3-axis audit-coverage
+  // answer (surface/depth/distance per
+  // `feedback-audit-convergence-three-axes`) + verdict outcome + nested
+  // findings + canonical 3-option close-ask. Readers trust the SHAPE
+  // but primary-source-verify the verdict's claims (lens-set actually
+  // applied; findings actually surfaced).
+  "audit-verdict",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

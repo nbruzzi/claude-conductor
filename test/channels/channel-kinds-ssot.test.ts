@@ -30,7 +30,7 @@ import { CHANNEL_KINDS, type ChannelKind } from "../../src/channels/index.ts";
 import { renderKindPrefix } from "../../src/channels/render.ts";
 
 describe("CHANNEL_KINDS (SSOT)", () => {
-  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask last)", () => {
+  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict last)", () => {
     expect(CHANNEL_KINDS).toEqual([
       // Phase 1 informational + protocol carriers
       "note",
@@ -49,6 +49,8 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       "live-update",
       // Tier 1 Slice 1 cycle 2026-05-19 audit-discipline kind cohort
       "audit-ask",
+      // Tier 1 Slice 2 cycle 2026-05-19 audit-loop-closure
+      "audit-verdict",
     ]);
   });
 
@@ -56,8 +58,9 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // Catches accidental drop (tuple shrinks) or accidental addition
     // (tuple grows) at the SSOT site. Bumped from 4 → 9 with Layer 3
     // walkie-talkie additions; 9 → 10 with Layer 4 `digest`; 10 → 11
-    // with L152 `live-update`; 11 → 12 with Tier 1 Slice 1 `audit-ask`.
-    expect(CHANNEL_KINDS.length).toBe(12);
+    // with L152 `live-update`; 11 → 12 with Tier 1 Slice 1 `audit-ask`;
+    // 12 → 13 with Tier 1 Slice 2 `audit-verdict`.
+    expect(CHANNEL_KINDS.length).toBe(13);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {
