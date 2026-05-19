@@ -28,9 +28,12 @@ const HELP_TEXT = [
   "  claude-conductor pr --help | -h",
   "",
   "Verbs:",
-  "  cascade-rebase --base <branch>  Rebase stacked PRs after a base PR squash-merges.",
+  "  cascade-rebase --base <branch> [--onto <branch>]",
+  "                                  Rebase stacked PRs after a base PR squash-merges.",
   "                                  Sequential rebase + force-push-with-lease, then",
   "                                  parallel CI-watch. HALT-ON-FIRST-CONFLICT.",
+  "                                  --base is stack-detection axis (the just-squashed branch).",
+  "                                  --onto is rebase-target axis (default 'main').",
   "                                  Flags: --dry-run, --json, --quiet",
   "",
   "Run 'claude-conductor pr <verb> --help' for verb-specific help.",
@@ -60,6 +63,7 @@ export async function runPrCli(
     help: true,
     base: true,
     dryRun: true,
+    onto: true,
   });
 
   if (parsed.parseErrors.length > 0) {

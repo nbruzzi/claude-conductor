@@ -30,6 +30,7 @@ function fakeFlags(overrides: Partial<FlagValues> = {}): FlagValues {
     fromSession: undefined,
     base: "alpha/old-base",
     dryRun: false,
+    onto: undefined,
     ...overrides,
   };
 }
@@ -557,6 +558,147 @@ describe("Happy path + halt", () => {
       expect(parsed.reports[2].conclusion).toBe("not-attempted");
     } finally {
       process.stdout.write = orig;
+    }
+  });
+
+  test("T-onto.1 (Delta F-NEW-1) — --onto unset → idx=0 rebase targets origin/main; priorBase is --base value", async () => {
+    const rebaseCalls: readonly string[][] = [];
+    const calls = rebaseCalls as string[][];
+    await runCascadeRebase(
+      [],
+      fakeFlags({ json: true }), // onto undefined → default "main"
+      makeAdapters(
+        {
+          gitHandler: (_cwd, args) => {
+            if (args[0] === "rebase" && args[1] === "--onto") {
+              calls.push([...args]);
+            }
+            return undefined;
+          },
+        },
+        { spawnCiWatch: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
+      ),
+    );
+    // For the 3-PR stack: idx=0 should rebase --onto origin/main origin/alpha/old-base origin/alpha/follow-1
+    const root = calls[0];
+    expect(root).toBeDefined();
+    if (!root) return;
+    expect(root[0]).toBe("rebase");
+    expect(root[1]).toBe("--onto");
+    expect(root[2]).toBe("origin/main");
+    expect(root[3]).toBe("origin/alpha/old-base"); // priorBase = --base
+    expect(root[4]).toBe("origin/alpha/follow-1");
+  });
+
+  test("T-onto.2 (Delta F-NEW-1) — --onto explicit → idx=0 rebase targets that branch", async () => {
+    const calls: string[][] = [];
+    await runCascadeRebase(
+      [],
+      fakeFlags({ json: true, onto: "release/v2" }),
+      makeAdapters(
+        {
+          gitHandler: (_cwd, args) => {
+            if (args[0] === "rebase" && args[1] === "--onto")
+              calls.push([...args]);
+            return undefined;
+          },
+        },
+        { spawnCiWatch: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
+      ),
+    );
+    expect(calls[0]?.[2]).toBe("origin/release/v2");
+  });
+
+  test("T-priorBase (Delta F-NEW-1 point-4) — idx>=1 priorBase uses pre-rebase SHA from preRebaseShas Map, NOT branch-name", async () => {
+    const calls: string[][] = [];
+    let lsRemoteCount = 0;
+    await runCascadeRebase(
+      [],
+      fakeFlags({ json: true }),
+      makeAdapters(
+        {
+          gitHandler: (_cwd, args) => {
+            if (args[0] === "rebase" && args[1] === "--onto")
+              calls.push([...args]);
+            if (args[0] === "ls-remote") {
+              lsRemoteCount += 1;
+              // Each PR gets a distinct pre-rebase SHA
+              return spawnSyncOk(
+                `pre-rebase-sha-${lsRemoteCount}\trefs/heads/x`,
+              );
+            }
+            return undefined;
+          },
+        },
+        { spawnCiWatch: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
+      ),
+    );
+    // idx=0: priorBase = "origin/alpha/old-base" (the --base value)
+    // idx=1: priorBase = "pre-rebase-sha-1" (PR-1's pre-rebase SHA, raw — no origin/ prefix)
+    // idx=2: priorBase = "pre-rebase-sha-2"
+    expect(calls[1]?.[3]).toBe("pre-rebase-sha-1");
+    expect(calls[2]?.[3]).toBe("pre-rebase-sha-2");
+    // And idx=1+ target is the prev PR's headRefName branch (post-rebase)
+    expect(calls[1]?.[2]).toBe("origin/alpha/follow-1");
+    expect(calls[2]?.[2]).toBe("origin/alpha/follow-2");
+  });
+
+  test("T-retarget-failed (Delta M1) — gh pr edit non-zero → conclusion=retarget-failed + halt", async () => {
+    let captured = "";
+    const outSpy = mock((c: string | Uint8Array) => {
+      captured += typeof c === "string" ? c : "";
+      return true;
+    });
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = outSpy as unknown as typeof process.stdout.write;
+    try {
+      const code = await runCascadeRebase(
+        [],
+        fakeFlags({ json: true }),
+        makeAdapters({
+          ghHandler: (a) => {
+            if (a[0] === "auth") return spawnSyncOk("ok");
+            if (a[0] === "pr" && a[1] === "list")
+              return spawnSyncOk(THREE_PR_STACK_JSON);
+            if (a[0] === "pr" && a[1] === "edit")
+              return spawnSyncErr("pr is closed", 1);
+            return undefined;
+          },
+        }),
+      );
+      expect(code).toBe(1);
+      const parsed = JSON.parse(captured.trim());
+      expect(parsed.reports[0].conclusion).toBe("retarget-failed");
+      expect(parsed.reports[1].conclusion).toBe("not-attempted");
+      expect(parsed.reports[2].conclusion).toBe("not-attempted");
+    } finally {
+      process.stdout.write = orig;
+    }
+  });
+
+  test("T-ls-remote-empty-refuses (Delta M2) — empty ls-remote → REFUSE + halt with clear error", async () => {
+    let stderrCap = "";
+    const errSpy = mock((c: string | Uint8Array) => {
+      stderrCap += typeof c === "string" ? c : "";
+      return true;
+    });
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = errSpy as unknown as typeof process.stderr.write;
+    try {
+      const code = await runCascadeRebase(
+        [],
+        fakeFlags({ json: true }),
+        makeAdapters({
+          gitHandler: (_cwd, a) => {
+            if (a[0] === "ls-remote") return spawnSyncOk(""); // empty result
+            return undefined;
+          },
+        }),
+      );
+      expect(code).toBe(1);
+      expect(stderrCap).toContain("not on origin");
+    } finally {
+      process.stderr.write = orig;
     }
   });
 

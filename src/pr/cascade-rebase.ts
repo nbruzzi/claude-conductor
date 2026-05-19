@@ -41,6 +41,7 @@ export type CascadeConclusion =
   | "skipped-already-cascaded"
   | "halted-conflict"
   | "force-push-rejected"
+  | "retarget-failed"
   | "not-attempted"
   | "ci-success"
   | "ci-failure"
@@ -240,33 +241,77 @@ export async function runCascadeRebase(
   }
 
   // ─── Phase 1 — Sequential rebase loop ─────────────────────────
+  // Delta F-NEW-1 (v0.3): `--base` and `--onto` are SEMANTICALLY DISTINCT axes.
+  //   --base = stack-detection axis (the just-squashed branch all root PRs
+  //            were stacked on; passed to `gh pr list --base`)
+  //   --onto = rebase-target axis (where root PR's commits land; default "main")
+  // Earlier conflation (v0.2 impl) produced no-op rebases because target === base.
+  //
+  // For idx=0 (root PR): rebase --onto <onto> <base> <head>
+  //   - exclude commits reachable from <base> (the just-squashed branch, possibly
+  //     deleted from origin — caller responsibility to run before deletion);
+  //   - apply remaining commits onto <onto> (e.g. main with the squash commit).
+  // For idx>=1 (chained PR): rebase --onto <prev-head-branch> <prev-pre-rebase-SHA> <head>
+  //   - <prev-pre-rebase-SHA> must be the SHA stack[idx-1].head pointed at BEFORE
+  //     its own rebase (after the force-push, origin/<prev-head> is the NEW SHA).
+  //   - Use preRebaseShas Map populated in step a of each prior iteration.
+  const onto = flags.onto?.trim() ?? "main";
   const reports: CascadeReport[] = [];
+  const preRebaseShas = new Map<string, string>();
   let haltedIdx = -1;
 
   for (let idx = 0; idx < stack.length; idx++) {
     const pr = stack[idx];
     if (pr === undefined) break;
     const start = now();
-    const target = idx === 0 ? base : (stack[idx - 1]?.headRefName ?? base);
-    const priorBase = idx === 0 ? base : (stack[idx - 1]?.headRefName ?? base);
     const head = pr.headRefName;
 
     // F4 — lease SHA via ls-remote (race-safer than gh-pr-view).
+    // M2 (Delta) — if ls-remote returns empty, REFUSE (NOT silent fallback to
+    // headRefOid from gh-pr-view; gh data can lag origin by seconds).
     const lsRemote = runGit(workingDir, [
       "ls-remote",
       "origin",
       `refs/heads/${head}`,
     ]);
     const lsLine = decodeStdio(lsRemote.stdout).split("\n")[0] ?? "";
-    const leaseSha = lsLine.split("\t")[0] ?? pr.headRefOid;
+    const leaseSha = lsLine.split("\t")[0];
+    if (leaseSha === undefined || leaseSha.length === 0) {
+      process.stderr.write(
+        `claude-conductor pr cascade-rebase: PR #${pr.number} head '${head}' not on origin\n` +
+          `  remediation: 'git push origin ${head}' or verify PR #${pr.number} hasn't been deleted\n`,
+      );
+      reports.push({
+        pr_number: pr.number,
+        pr_url: pr.url,
+        sha_pre_rebase: "",
+        sha_post_rebase: null,
+        conclusion: "not-attempted",
+        elapsed_ms: now() - start,
+      });
+      haltedIdx = idx;
+      break;
+    }
+    preRebaseShas.set(head, leaseSha);
+
+    const target = idx === 0 ? onto : (stack[idx - 1]?.headRefName ?? onto);
+    const priorBase =
+      idx === 0
+        ? base
+        : (preRebaseShas.get(stack[idx - 1]?.headRefName ?? "") ?? base);
 
     // Rebase. --onto <new-base> <old-upstream> <head>.
+    // For idx=0: rebase --onto origin/<onto> origin/<base> origin/<head>
+    // For idx>=1: rebase --onto origin/<prev-head> <prev-pre-rebase-SHA> origin/<head>
+    const onto_ref = `origin/${target}`;
+    const upstream_ref = idx === 0 ? `origin/${priorBase}` : priorBase;
+    const head_ref = `origin/${head}`;
     const rebase = runGit(workingDir, [
       "rebase",
       "--onto",
-      `origin/${target}`,
-      `origin/${priorBase}`,
-      `origin/${head}`,
+      onto_ref,
+      upstream_ref,
+      head_ref,
     ]);
     if (rebase.status !== 0) {
       runGit(workingDir, ["rebase", "--abort"]);
@@ -304,7 +349,20 @@ export async function runCascadeRebase(
       break;
     }
 
-    runGh(["pr", "edit", String(pr.number), "--base", target]);
+    // M1 (Delta) — capture gh pr edit exit code; non-zero → retarget-failed.
+    const retarget = runGh(["pr", "edit", String(pr.number), "--base", target]);
+    if (retarget.status !== 0) {
+      reports.push({
+        pr_number: pr.number,
+        pr_url: pr.url,
+        sha_pre_rebase: leaseSha,
+        sha_post_rebase: postSha,
+        conclusion: "retarget-failed",
+        elapsed_ms: now() - start,
+      });
+      haltedIdx = idx;
+      break;
+    }
 
     reports.push({
       pr_number: pr.number,
@@ -350,6 +408,10 @@ export async function runCascadeRebase(
       return { ...r, conclusion: "ci-failure" };
     }
     const code = ci.value.exitCode;
+    // M3 (Delta) — exit-code convention from `gh pr checks --watch
+    // --exit-status`: 0 = all checks pass; 8 = cancelled (per gh-CLI
+    // source: cmd/pr/checks/checks.go uses exitcode 8 to distinguish
+    // cancelled from failed); any other non-zero = failure (1 typical).
     const conclusion: CascadeConclusion =
       code === 0 ? "ci-success" : code === 8 ? "ci-cancelled" : "ci-failure";
     return { ...r, conclusion };

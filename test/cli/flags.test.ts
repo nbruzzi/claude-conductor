@@ -28,6 +28,7 @@ describe("parseFlags", () => {
         fromSession: undefined,
         base: undefined,
         dryRun: false,
+        onto: undefined,
       });
       expect(result.positional).toEqual(["a", "b", "c"]);
     });
@@ -72,6 +73,7 @@ describe("parseFlags", () => {
         fromSession: undefined,
         base: undefined,
         dryRun: false,
+        onto: undefined,
       });
       expect(result.positional).toEqual(["my-channel"]);
     });
@@ -131,6 +133,7 @@ describe("parseFlags", () => {
         fromSession: undefined,
         base: undefined,
         dryRun: false,
+        onto: undefined,
       });
       expect(result.positional).toEqual([]);
     });
@@ -476,7 +479,7 @@ describe("parseFlags", () => {
      * §D1 + §Files-to-modify §4. Parser is value-extraction only — verb-level
      * dispatch validates non-empty + branch-name shape for --base.
      */
-    const SLICE0_SPEC = { base: true, dryRun: true } as const;
+    const SLICE0_SPEC = { base: true, dryRun: true, onto: true } as const;
 
     // ─── --base ────────────────────────────────────────────────────
 
@@ -564,6 +567,55 @@ describe("parseFlags", () => {
       const result = parseFlags(["pr-cascade", "--dry-run"], { dryRun: false });
       expect(result.flags.dryRun).toBe(false);
       expect(result.positional).toContain("--dry-run");
+    });
+
+    // ─── --onto (Slice 0 v0.3 — Delta F-NEW-1 fold) ────────────────
+
+    it("T-onto.1 — --onto main consumes the next argv as the branch-name value (verbatim)", () => {
+      const result = parseFlags(["pr-cascade", "--onto", "main"], {
+        onto: true,
+      } as const);
+      expect(result.flags.onto).toBe("main");
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["pr-cascade"]);
+    });
+
+    it("T-onto.2 — --onto with branch-name that includes /", () => {
+      const result = parseFlags(["pr-cascade", "--onto", "release/v2"], {
+        onto: true,
+      } as const);
+      expect(result.flags.onto).toBe("release/v2");
+    });
+
+    it("T-onto.3 — --onto combines cleanly with --base + --dry-run + --json", () => {
+      const result = parseFlags(
+        ["--base", "feat-A", "--onto", "main", "--dry-run", "--json"],
+        SLICE0_SPEC,
+      );
+      expect(result.flags.base).toBe("feat-A");
+      expect(result.flags.onto).toBe("main");
+      expect(result.flags.dryRun).toBe(true);
+      expect(result.flags.json).toBe(true);
+      expect(result.parseErrors).toEqual([]);
+    });
+
+    it("T-onto.4 — --onto with no following value emits a parseError", () => {
+      const result = parseFlags(["pr-cascade", "--onto"], {
+        onto: true,
+      } as const);
+      expect(result.flags.onto).toBe(undefined);
+      expect(result.parseErrors).toEqual([
+        "--onto: expected value, got missing value",
+      ]);
+    });
+
+    it("T-onto.5 — when onto: false (default — opt-out), --onto passes through as positional", () => {
+      const result = parseFlags(["pr-cascade", "--onto", "main"], {
+        onto: false,
+      });
+      expect(result.flags.onto).toBe(undefined);
+      expect(result.positional).toContain("--onto");
+      expect(result.positional).toContain("main");
     });
   });
 });

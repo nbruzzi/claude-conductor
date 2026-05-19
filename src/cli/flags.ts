@@ -83,6 +83,13 @@ export type FlagSpec = {
    * (destructive verb wants explicit-preview UX before pulling trigger).
    */
   readonly dryRun?: boolean;
+  /**
+   * Accept `--onto <branch-name>` (consumes next argv) — value passed
+   * through verbatim; verb-level dispatch defaults to "main" when absent.
+   * Slice 0 v0.3 origin (Delta F-NEW-1 fold): semantic separation of
+   * stack-detection axis (`--base`) from rebase-target axis (`--onto`).
+   */
+  readonly onto?: boolean;
 };
 
 export type FlagValues = {
@@ -126,6 +133,12 @@ export type FlagValues = {
   readonly base: string | undefined;
   /** True when `--dry-run` was present and accepted. Slice 0 (`pr cascade-rebase`). */
   readonly dryRun: boolean;
+  /**
+   * Raw `--onto <value>` string when flag was present and accepted,
+   * otherwise `undefined`. Verb-level dispatch defaults to "main" when
+   * absent. Slice 0 v0.3 (`pr cascade-rebase` Delta F-NEW-1 fold).
+   */
+  readonly onto: string | undefined;
 };
 
 const DEFAULT_SPEC: Required<FlagSpec> = {
@@ -140,6 +153,7 @@ const DEFAULT_SPEC: Required<FlagSpec> = {
   fromSession: false,
   base: false,
   dryRun: false,
+  onto: false,
 };
 
 export type ParsedFlags = {
@@ -180,6 +194,7 @@ export function parseFlags(
   const acceptFromSession = spec.fromSession ?? DEFAULT_SPEC.fromSession;
   const acceptBase = spec.base ?? DEFAULT_SPEC.base;
   const acceptDryRun = spec.dryRun ?? DEFAULT_SPEC.dryRun;
+  const acceptOnto = spec.onto ?? DEFAULT_SPEC.onto;
 
   const positional: string[] = [];
   const parseErrors: string[] = [];
@@ -194,6 +209,7 @@ export function parseFlags(
   let fromSession: string | undefined = undefined;
   let base: string | undefined = undefined;
   let dryRun = false;
+  let onto: string | undefined = undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -250,6 +266,10 @@ export function parseFlags(
       i += consumed.advance;
     } else if (acceptDryRun && arg === "--dry-run") {
       dryRun = true;
+    } else if (acceptOnto && arg === "--onto") {
+      const consumed = consumeStringValue(argv, i, "--onto", parseErrors);
+      if (consumed.value !== undefined) onto = consumed.value;
+      i += consumed.advance;
     } else {
       positional.push(arg);
     }
@@ -275,6 +295,7 @@ export function parseFlags(
       fromSession,
       base,
       dryRun,
+      onto,
     },
     parseErrors,
   };
