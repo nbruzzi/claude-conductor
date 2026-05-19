@@ -118,6 +118,14 @@ export const CHANNEL_KINDS = [
   // write-time) and the live channel (volatile) at sibling-join time
   // — removes Nick from the sibling-onboarding critical path.
   "live-update",
+  // Tier 1 Slice 1 2026-05-19 — audit-ask schema for audit-discipline
+  // kind cohort (schemas-first substrate per ratified plan
+  // `~/.claude/plans/claude-conductor-development-plan-2026-05-19.md`).
+  // See `src/channels/audit-ask.ts` for `AuditAskBody` + parser; readers
+  // trust the SHAPE returned by the parser but primary-source-verify
+  // target_pr exists + target_peer is a live NATO identity before
+  // acting on the ask. Audit-verdict (Slice 2) closes the loop.
+  "audit-ask",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

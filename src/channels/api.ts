@@ -54,6 +54,15 @@ export type { NatoIdentity } from "./identity.ts";
 // from `claude-conductor/channels/api` alongside `parseDigestBody`.
 export type { DigestBody } from "./digest.ts";
 
+// Tier 1 Slice 1 2026-05-19 — `audit-ask` kind body schema type +
+// shared audit-discipline types (`AuditAskTier`, `AuditClass`,
+// `LensClass`). Consumers (operator tools, future audit-queue verb in
+// Slice 3, dashboard audit-verdict-aggregation in Phase 4) import
+// these types from `claude-conductor/channels/api` alongside
+// `parseAuditAskBody` + `inferAuditAskTier` + the as-const tuples.
+export type { AuditAskBody } from "./audit-ask.ts";
+export type { AuditAskTier, AuditClass, LensClass } from "./audit-types.ts";
+
 // ─── Value re-exports ──────────────────────────────────────────────
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
@@ -138,6 +147,24 @@ export { explicitlyOutPeers } from "./explicitly-out-peers.ts";
 // audit-class/SHA citations) lives in
 // `docs/conventions/message-kinds-and-verification.md`.
 export { parseDigestBody } from "./digest.ts";
+
+// Tier 1 Slice 1 2026-05-19 — `audit-ask` kind shared parser +
+// tier-default helper + audit-discipline type-guards + as-const tuples.
+// Cross-edge consumers (dotfiles shim, future dashboard audit-verdict-
+// aggregation primitive) import the value bindings from
+// `claude-conductor/channels/api` for runtime use. The M1 fold (Bravo
+// 19:35Z minor) includes the as-const tuples so consumers can iterate
+// the enum sets for rendering / validation without re-defining them.
+export { parseAuditAskBody, inferAuditAskTier } from "./audit-ask.ts";
+export {
+  AUDIT_ASK_TIERS,
+  AUDIT_CLASSES,
+  LENS_CLASSES,
+  isAuditAskTier,
+  isAuditClass,
+  isLensClass,
+  isLensClassArray,
+} from "./audit-types.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";
 
