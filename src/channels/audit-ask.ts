@@ -167,10 +167,16 @@ export function parseAuditAskBody(body: string): AuditAskBody | null {
   const auditClass = obj["audit_class"];
   if (!isAuditClass(auditClass)) return null;
 
+  // A1 fold (Bravo post-impl audit 20:27Z): normalize whitespace on output
+  // so `{ repo: " conductor " }` and `{ repo: "conductor" }` produce the
+  // SAME typed body. Discriminator-like fields on cross-pair audit-routing
+  // must be canonicalized; otherwise the same logical PR can read as two
+  // different audit-asks downstream. Validation already rejects empty
+  // post-trim; output trim is symmetric with that gate.
   return {
     kind_version: 1,
-    target_pr: { repo: repoRaw, number: numberRaw },
-    target_peer: targetPeer,
+    target_pr: { repo: repoRaw.trim(), number: numberRaw },
+    target_peer: targetPeer.trim(),
     tier,
     lens_set_requested: lensSet,
     audit_class: auditClass,

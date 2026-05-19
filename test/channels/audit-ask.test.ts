@@ -158,6 +158,16 @@ describe("parseAuditAskBody — Section 3: target_pr (F2 expanded)", () => {
   it("T3.12 (F2): target_pr=null (typeof null === 'object' footgun) rejected", () => {
     expect(parseAuditAskBody(bodyWith({ target_pr: null }))).toBeNull();
   });
+  it("T3.13 (A1): target_pr.repo whitespace normalized on output", () => {
+    // Bravo post-impl audit A1 fold: ` conductor ` and `conductor` must
+    // produce the SAME typed body so cross-pair audit-routing sees a
+    // canonical discriminator. Empty post-trim is rejected by T3.9/T3.10.
+    const parsed = parseAuditAskBody(
+      bodyWith({ target_pr: { repo: "  conductor  ", number: 95 } }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.target_pr).toEqual({ repo: "conductor", number: 95 });
+  });
 });
 
 describe("parseAuditAskBody — Section 4: target_peer", () => {
@@ -177,6 +187,14 @@ describe("parseAuditAskBody — Section 4: target_peer", () => {
   });
   it("T4.5: number rejected", () => {
     expect(parseAuditAskBody(bodyWith({ target_peer: 42 }))).toBeNull();
+  });
+  it("T4.6 (A1): target_peer whitespace normalized on output", () => {
+    // Bravo post-impl audit A1 fold: ` Bravo ` and `Bravo` must produce
+    // the SAME typed body so cross-pair audit-routing sees a canonical
+    // discriminator. Empty post-trim is rejected by T4.3/T4.4.
+    const parsed = parseAuditAskBody(bodyWith({ target_peer: "  Bravo  " }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.target_peer).toBe("Bravo");
   });
 });
 
