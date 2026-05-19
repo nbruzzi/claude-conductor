@@ -36,6 +36,7 @@ import { check as checkPeerMessageDeliverer } from "./peer-message-deliverer.ts"
 import { check as checkTeammateIdleReminder } from "./teammate-idle-reminder.ts";
 import { check as checkDotfilesWorktreeProvisioner } from "./dotfiles-worktree-provisioner.ts";
 import { check as checkDotfilesWorktreeGc } from "./dotfiles-worktree-gc.ts";
+import { check as checkRepoWorktreeProvisioner } from "./repo-worktree-provisioner.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -132,6 +133,14 @@ export function registerBundled(
     fn: checkDotfilesWorktreeGc,
     description:
       "Phase 3 Slice 2 — orphan-reaper for per-session dotfiles worktrees. Mirrors channels-gc-reaper rate-gate cursor pattern. Reaps when heartbeat absent OR ageMs > GC_WINDOW_MS=60min, with mtime-filtered safety guards (.git/index.lock < 1hr, node_modules/.bun-tmp-* < 5min) + forensic-marker escape hatch. RE-3 self-heal via unregisterActiveSession + clearSentinelDotfilesRoot.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+  builder.register("session-start", {
+    name: "repo-worktree-provisioner",
+    fn: checkRepoWorktreeProvisioner,
+    description:
+      "Phase 3 Slice 3 (Stream 3 Slice 2 of generic-worktree-provisioner RFC) — provision per-session worktrees for non-dotfiles repos declared in ~/.claude/worktree-provisioner.json with auto:true. Reads config (3-case fail-discipline: absent/empty → pass; malformed → warn + breadcrumb). Topo-sorts by siblingCloneOf DAG (fails-closed on cycle or absent reference). Delegates per-repo to materializeRepoWorktree (the Slice 1 generic helper). Same FEATURE_FLAG_ENV as dotfiles-worktree-provisioner; per-repo auto:true opts in granularly. Closes the recurring shared-tree-branch-race for any opted-in repo.",
     canBlock: false,
     profiles: ["standard", "strict"],
   });

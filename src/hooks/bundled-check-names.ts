@@ -67,6 +67,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "identity-injector",
     "dotfiles-worktree-provisioner",
     "dotfiles-worktree-gc",
+    "repo-worktree-provisioner",
   ],
   "user-prompt-submit": ["peer-message-deliverer", "teammate-idle-reminder"],
 } as const satisfies Record<HookEvent, readonly string[]>;
