@@ -83,7 +83,11 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // `repo-worktree-provisioner` hook added to session-start event; count
 // rises 12 → 13. Plan ~/.claude/plans/generic-worktree-provisioner-design-2026-05-19.md
 // v0.2 §Phasing Slice 2.
-const EXPECTED_COUNT = 13;
+//
+// Stream 3 Slice 3 of generic-worktree-provisioner RFC (2026-05-19) —
+// `repo-worktree-gc` hook added to session-start event; count rises
+// 13 → 14. Same plan v0.2 §Phasing Slice 3.
+const EXPECTED_COUNT = 14;
 
 /** TA-9 fold (Phase 4 Step A Layer 1 audit): explicit-presence pin for
  *  `peer-message-deliverer` on `user-prompt-submit` event. Sibling-shape

@@ -115,6 +115,12 @@ export const LOCK_DOMAINS = [
   "per-worktree-dir",
   "per-worktree-node-modules-symlink",
   "gc-reap-cursor-singleton",
+  // Stream 3 Slice 3 of generic-worktree-provisioner RFC (2026-05-19) —
+  // per-repo GC reap cursor at ~/.claude/logs/.repo-worktree-gc-cursor.<repoName>.
+  // Distinct from gc-reap-cursor-singleton because each opted-in repo has
+  // an independent rate-gate file (one repo's recent sweep doesn't block
+  // another's overdue sweep).
+  "gc-reap-cursor-per-repo",
   "session-collision-gate-state",
   "presence-failure-log",
   "none",
@@ -273,6 +279,17 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
       ],
       comment:
         "Stream 3 Slice 2 of generic-worktree-provisioner RFC (2026-05-19) — generic per-repo worktree provisioning for non-dotfiles repos declared opt-in in `~/.claude/worktree-provisioner.json` with auto:true. Reads config (3-case fail-discipline: absent/empty → pass; malformed → warn + breadcrumb). Topo-sorts by siblingCloneOf DAG (fails-closed on cycle or absent reference). Delegates per-repo to `materializeRepoWorktree` (the Slice 1 generic helper from `src/worktrees/provision-repo.ts`) which composes `provisionWorktree` (git serializes via its own internal `.git/worktrees/` lockfiles) + `linkCanonicalNodeModules` (symlinkSync filesystem-atomic; EEXIST race recovery). Per-repo source identifier (`repo-worktree-provisioner:<name>`) prefixes all breadcrumbs. Anchor-pin in this slice is no-op (Slice 3+ may add a per-repo sentinel primitive). NO active-sessions registry writes (deferred to Slice 3+ when per-repo anchors materialize). Per-repo presence-failure-log writes from the helper on provision/link errors.",
+    },
+    {
+      phase: "repo-worktree-gc",
+      event: "session-start",
+      domains: [
+        "per-worktree-dir",
+        "gc-reap-cursor-per-repo",
+        "presence-failure-log",
+      ],
+      comment:
+        "Stream 3 Slice 3 of generic-worktree-provisioner RFC (2026-05-19) — orphan reaper for repo-worktree-provisioner-created worktrees. Per-repo cursor at `<effectiveHome>/.claude/logs/.repo-worktree-gc-cursor.<repoName>` (5-min rate gate per repo; independent per-repo so one repo's recent sweep doesn't block another's). Iterates `readRepoConfig().repos` filtering on `auto:true && gc:!=false`; per-repo runs `listWorktrees(repo.canonical)` (read-only `git worktree list --porcelain`). Staleness model: sid-prefix-liveness PRIMARY check (not fallback) against `listAllHeartbeats` on the canonical-claude-home anchor — for each worktree's sid-prefix (8-char tail of path), if ANY heartbeat matches that prefix with `ageMs < windowMs`, worktree is live; otherwise reap via `removeWorktree(sid, {dotfilesCanonical: repo.canonical})` (`git worktree remove --force` + `git branch -D worktree/<prefix>`). Per-repo `cleanupAfterIdleHours` overrides default GC_WINDOW_MS=60min per FOLD-ARCH-3 precedence. Safety guards mirror dotfiles-worktree-gc (.git/index.lock < 1hr; node_modules mtime < 5min; forensic-marker active → skip). NO active-sessions registry self-heal (no per-repo sentinel to clear; deferred to Slice 3+ when per-repo anchors land). Reconciliation guard fires + presence-failure-log writes on each reap/skip outcome.",
     },
   ],
 

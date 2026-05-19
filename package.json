@@ -143,6 +143,11 @@
       "import": "./src/hooks/checks/repo-worktree-provisioner.ts",
       "default": "./src/hooks/checks/repo-worktree-provisioner.ts"
     },
+    "./hooks/checks/repo-worktree-gc": {
+      "types": "./src/hooks/checks/repo-worktree-gc.ts",
+      "import": "./src/hooks/checks/repo-worktree-gc.ts",
+      "default": "./src/hooks/checks/repo-worktree-gc.ts"
+    },
     "./hooks/checks/identity-injector": {
       "types": "./src/hooks/checks/identity-injector.ts",
       "import": "./src/hooks/checks/identity-injector.ts",
