@@ -35,6 +35,7 @@ const SUBCOMMANDS = {
   verify: join(PACKAGE_ROOT, "src", "verify", "cli.ts"),
   "cycle-character": join(PACKAGE_ROOT, "src", "cycle-character", "cli.ts"),
   lexicon: join(PACKAGE_ROOT, "src", "lexicon", "cli.ts"),
+  "pattern-trace": join(PACKAGE_ROOT, "src", "pattern-trace", "cli.ts"),
 } as const satisfies Record<string, string>;
 
 type Subcommand = keyof typeof SUBCOMMANDS;
@@ -79,6 +80,7 @@ function printHelp(): void {
       "  verify     Manifest-driven gate runner + drift detector (--check / --gate <n> / default)",
       "  cycle-character  Classify a handoff into PRISTINE/RECOVERED/INCIDENT-DRIVEN/COHORT-PASS/STALLED",
       "  lexicon    Extract terms-of-art from memory + handoffs + channels (--source --since --top --format)",
+      "  pattern-trace  Trace code-symbol propagation across git/PRs/channel with auto-memory-suggest (--symbol --since --source --propagation-threshold --format --emit-memory-proposal)",
       "",
       "Global flags (position-insensitive — accepted before or after subcommand):",
       "  --json     Emit structured JSON output where the subcommand supports it.",
