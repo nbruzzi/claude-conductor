@@ -25,9 +25,9 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 import { readBodyFile, readMessages, readMetadata } from "../channels/index.ts";
+import { handoffsDir } from "../shared/paths.ts";
 
 import { buildReciprocationGraph } from "./graph.ts";
 
@@ -125,13 +125,13 @@ function resolveWindow(window_spec: string): Window {
 }
 
 function resolveCycleWindow(): Window {
-  const latestPath = join(homedir(), ".claude", "handoffs", "LATEST.md");
+  const latestPath = join(handoffsDir(), "LATEST.md");
   let raw: string;
   try {
     raw = readFileSync(latestPath, "utf8");
   } catch {
     die(
-      `--window=cycle requires a readable ~/.claude/handoffs/LATEST.md (none found)`,
+      `--window=cycle requires a readable LATEST.md in handoffs dir (looked for ${latestPath})`,
     );
   }
   if (!raw.startsWith("---\n")) {
@@ -200,7 +200,7 @@ function printHelp(): void {
       "  --window <range>|cycle  Time window. REQUIRED.",
       "                          'cycle' resolves start from prior handoff's",
       "                          'ended_at' frontmatter at",
-      "                          ~/.claude/handoffs/LATEST.md (end = now).",
+      "                          LATEST.md in the handoffs dir (end = now).",
       "",
       "Output: JSON with channel_id, window, edges[], per_peer_audit_debt,",
       "and balances[] (canonical pair-keys sorted ASC).",
