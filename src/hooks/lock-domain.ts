@@ -123,6 +123,7 @@ export const LOCK_DOMAINS = [
   "gc-reap-cursor-per-repo",
   "session-collision-gate-state",
   "presence-failure-log",
+  "memory-attention-state",
   "none",
 ] as const satisfies readonly string[];
 
@@ -185,6 +186,13 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
   "post-tool-use": [],
 
   stop: [
+    {
+      phase: "memory-attention-updater",
+      event: "stop",
+      domains: ["memory-attention-state"],
+      comment:
+        "Tier 3-E E2 — read-modify-write cycle on sidecar MemoryAttentionState protected by withLockAsync against lockDir(<state-path>.lock). 4-NATO-peer concurrent Stop hooks serialize cleanly; bare tmp+rename would have lost-update class per Bravo plan-tier F1 fold.",
+    },
     {
       phase: "session-presence-unregister",
       event: "stop",

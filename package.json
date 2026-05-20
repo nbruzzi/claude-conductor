@@ -189,6 +189,11 @@
       "import": "./src/hooks/checks/session-presence-register.ts",
       "default": "./src/hooks/checks/session-presence-register.ts"
     },
+    "./hooks/checks/memory-attention-updater": {
+      "types": "./src/hooks/checks/memory-attention-updater.ts",
+      "import": "./src/hooks/checks/memory-attention-updater.ts",
+      "default": "./src/hooks/checks/memory-attention-updater.ts"
+    },
     "./hooks/checks/session-presence-unregister": {
       "types": "./src/hooks/checks/session-presence-unregister.ts",
       "import": "./src/hooks/checks/session-presence-unregister.ts",

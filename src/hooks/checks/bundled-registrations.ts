@@ -26,6 +26,7 @@ import type { RegistryBuilder } from "../registry.ts";
 import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
+import { check as checkMemoryAttentionUpdater } from "./memory-attention-updater.ts";
 import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkChannelsGcReaper } from "./channels-gc-reaper.ts";
 import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
@@ -63,6 +64,14 @@ export function registerBundled(
   // post-tool-use (none post-Cluster-2)
 
   // stop
+  builder.register("stop", {
+    name: "memory-attention-updater",
+    fn: checkMemoryAttentionUpdater,
+    description:
+      "Tier 3-E E2 — parse session transcript for Read/Edit/Write tool calls on memory files; update sidecar MemoryAttentionState (apply_count + last_apply + ring-buffer history). Lock-protected for concurrent-write safety across 4-NATO-peer sessions. Fail-open via stderr breadcrumb.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
   builder.register("stop", {
     name: "session-presence-unregister",
     fn: checkSessionPresenceUnregister,
