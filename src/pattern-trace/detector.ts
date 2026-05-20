@@ -38,14 +38,47 @@ export type PropagationEvent = {
 
 export type PropagationGraph = {
   symbol: string;
+  /**
+   * NULL semantic (Bravo N4 + Charlie N1 from 3-lens audit):
+   * `introducing_event === null` means the symbol's TRUE first appearance
+   * predates the scanned window. Operator passed events that begin
+   * mid-propagation; absorbing_events list the in-window references.
+   * Distinguish from "symbol doesn't exist" — in that case, the entire
+   * graph is empty (no introducing + no absorbing + empty peers).
+   */
   introducing_event: PropagationEvent | null;
   absorbing_events: readonly PropagationEvent[];
+  /**
+   * Sorted ALPHABETICAL ASCENDING per F1 deterministic-sort fold
+   * (Charlie N2 invariant). Consumer should NOT re-sort.
+   */
   distinct_peers: readonly string[];
   distinct_peers_count: number;
   latency_to_first_absorption_ms: number | null;
   latency_to_cross_author_absorption_ms: number | null;
   memory_suggest_triggered: boolean;
+  /**
+   * When `memory_suggest_triggered === true`, this field follows the
+   * template (Charlie N3 specification):
+   *   "threshold N=<K> met: distinct_peers=[<A>,<B>,...]; absorbing_events=<count>"
+   * Machine-parseable. Null when threshold not met.
+   */
   memory_suggest_reason: string | null;
+};
+
+export type AggregateOptions = {
+  /**
+   * When provided, events with ts < window.start_ms OR ts > window.end_ms
+   * are excluded from the absorbing list. If the chronologically-first
+   * event in the full input falls BEFORE window.start_ms, `introducing_event`
+   * is set to null (the introducing happened pre-window) per Charlie N1
+   * window-boundary semantic. The CLI scope-introducing strict mode is
+   * implemented at this boundary.
+   *
+   * When window is undefined (default), legacy behavior: first event in
+   * input chronologically = introducing.
+   */
+  window?: { start_ms: number; end_ms: number };
 };
 
 /**
@@ -62,11 +95,18 @@ export type PropagationGraph = {
  *
  * Deterministic sort (F1 fold): events by ts ASC, ties broken by
  * source_ref ASC; peers alphabetical.
+ *
+ * Window-boundary semantic (Charlie N1 fold): when `options.window` is
+ * provided AND the chronologically-first event predates window.start_ms,
+ * `introducing_event` is null + all in-window events are absorbing.
+ * This catches the substrate-self-validation case where a symbol
+ * pre-existed but is referenced within a query window.
  */
 export function aggregateGraph(
   events: readonly RawEvent[],
   symbol: string,
   threshold: number,
+  options: AggregateOptions = {},
 ): PropagationGraph {
   if (events.length === 0) {
     return {
@@ -104,15 +144,41 @@ export function aggregateGraph(
       memory_suggest_reason: null,
     };
   }
-  const introducing_event: PropagationEvent = {
-    symbol,
-    kind: "introducing",
-    source_kind: first.source_kind,
-    source_ref: first.source_ref,
-    ts: first.ts,
-    author: first.author,
-  };
-  const absorbing_events: PropagationEvent[] = sorted.slice(1).map((e) => ({
+
+  // Charlie N1 fold: window-boundary semantic. When window provided AND
+  // the chronologically-first event predates window.start_ms, introducing
+  // happened pre-window — set introducing_event=null + filter in-window
+  // events as absorbing only.
+  const window = options.window;
+  const firstTsMs = Date.parse(first.ts);
+  const introducingIsPreWindow =
+    window !== undefined && firstTsMs < window.start_ms;
+
+  const inWindowEvents = window
+    ? sorted.filter((e) => {
+        const ms = Date.parse(e.ts);
+        return ms >= window.start_ms && ms <= window.end_ms;
+      })
+    : sorted;
+
+  const introducing_event: PropagationEvent | null = introducingIsPreWindow
+    ? null
+    : (() => {
+        const head = inWindowEvents[0];
+        if (head === undefined) return null;
+        return {
+          symbol,
+          kind: "introducing",
+          source_kind: head.source_kind,
+          source_ref: head.source_ref,
+          ts: head.ts,
+          author: head.author,
+        };
+      })();
+
+  const absorbingRawSource =
+    introducing_event === null ? inWindowEvents : inWindowEvents.slice(1);
+  const absorbing_events: PropagationEvent[] = absorbingRawSource.map((e) => ({
     symbol,
     kind: "absorbing",
     source_kind: e.source_kind,
@@ -121,30 +187,34 @@ export function aggregateGraph(
     author: e.author,
   }));
 
-  const peerSet = new Set<string>([first.author]);
+  const peerSet = new Set<string>();
+  if (introducing_event !== null) peerSet.add(introducing_event.author);
   for (const e of absorbing_events) {
     peerSet.add(e.author);
   }
   const distinct_peers = Array.from(peerSet).sort();
 
-  const introducingTsMs = Date.parse(introducing_event.ts);
+  const introducingTsMs =
+    introducing_event === null ? null : Date.parse(introducing_event.ts);
   const firstAbsorbing = absorbing_events[0];
   const latency_to_first_absorption_ms =
-    firstAbsorbing === undefined
+    firstAbsorbing === undefined || introducingTsMs === null
       ? null
       : Date.parse(firstAbsorbing.ts) - introducingTsMs;
 
-  const firstCrossAuthor = absorbing_events.find(
-    (e) => e.author !== introducing_event.author,
-  );
+  const firstCrossAuthor =
+    introducing_event === null
+      ? undefined
+      : absorbing_events.find((e) => e.author !== introducing_event.author);
   const latency_to_cross_author_absorption_ms =
-    firstCrossAuthor === undefined
+    firstCrossAuthor === undefined || introducingTsMs === null
       ? null
       : Date.parse(firstCrossAuthor.ts) - introducingTsMs;
 
   const memory_suggest_triggered = distinct_peers.length >= threshold;
+  // Charlie N3 templated format: machine-parseable for consumer extraction.
   const memory_suggest_reason = memory_suggest_triggered
-    ? `${distinct_peers.length} distinct peer${distinct_peers.length === 1 ? "" : "s"} (threshold ${threshold}); pattern shows cross-author absorption signaling adoption`
+    ? `threshold N=${threshold} met: distinct_peers=[${distinct_peers.join(",")}]; absorbing_events=${absorbing_events.length}`
     : null;
 
   return {
