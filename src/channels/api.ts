@@ -93,6 +93,17 @@ export type { MemoryProposalBody, MemoryType } from "./memory-proposal.ts";
 // from `claude-conductor/channels/api` alongside `isBandwidthState`.
 export type { BandwidthInputs, BandwidthState } from "./audit-types.ts";
 
+// Tier 2 Verb 1 2026-05-20 — `wind-down-checkin` kind body schema type +
+// inline `CycleCharacter` enum. Consumers (deferred Tier-3 T3-F cycle-
+// character classifier; T3-G reciprocation ledger; eventual wind-down
+// CLI verb in Tier-2-V1b) import these from
+// `claude-conductor/channels/api` alongside `parseWindDownCheckinBody` +
+// `CYCLE_CHARACTERS` + `isCycleCharacter`.
+export type {
+  WindDownCheckinBody,
+  CycleCharacter,
+} from "./wind-down-checkin.ts";
+
 // ─── Value re-exports ──────────────────────────────────────────────
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
@@ -225,6 +236,17 @@ export {
 // bandwidth state is derive-on-read, not posted. The vocabulary type
 // + guard ride on the audit-discipline SSOT cohort.
 export { BANDWIDTH_STATES, isBandwidthState } from "./audit-types.ts";
+
+// Tier 2 Verb 1 2026-05-20 — `wind-down-checkin` kind shared parser +
+// inline CycleCharacter as-const tuple + type-guard (D2 (a) of plan v0.1
+// — inline until 2nd consumer surfaces; future T3-F cycle-character
+// classifier or T3-G reciprocation ledger are the candidates that would
+// trigger extraction to a shared module).
+export {
+  CYCLE_CHARACTERS,
+  isCycleCharacter,
+  parseWindDownCheckinBody,
+} from "./wind-down-checkin.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";
 

@@ -147,6 +147,20 @@ export const CHANNEL_KINDS = [
   // (when amends_existing is null) or the named memory exists on disk
   // (when amends_existing is non-null).
   "memory-proposal",
+  // Tier 2 Verb 1 2026-05-20 — wind-down-checkin surfaces structured
+  // cycle-close state (next_steps + decisions_logged + failed_approaches
+  // + memory_candidates + cycle_character per the T3-F rubric). See
+  // `src/channels/wind-down-checkin.ts` for `WindDownCheckinBody` +
+  // parser; 6 typed fields with min-1 invariants on next_steps +
+  // decisions_logged (empty-allowed on failed_approaches +
+  // memory_candidates). Substrate-mediates the wind-down summary —
+  // today's channel-prose `kind=status` checkin becomes a typed body
+  // downstream consumers (T3-F classifier; T3-G reciprocation ledger)
+  // can parse without regex-scraping handoff prose. Readers trust the
+  // SHAPE but primary-source-verify cycle_character claim against
+  // actual cycle artifacts (PR squashes / CI / failed-approach captures)
+  // and memory_candidates slug names against the memory directory.
+  "wind-down-checkin",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];
