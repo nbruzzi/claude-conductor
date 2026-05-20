@@ -135,6 +135,18 @@ export const CHANNEL_KINDS = [
   // but primary-source-verify the verdict's claims (lens-set actually
   // applied; findings actually surfaced).
   "audit-verdict",
+  // Tier 2 Verb 2 2026-05-20 — memory-proposal surfaces memorialization
+  // candidates for Nick's batch yes/no decision per
+  // `feedback-memory-authoring-surface-dont-auto-file`. See
+  // `src/channels/memory-proposal.ts` for `MemoryProposalBody` + parser;
+  // 6 typed fields (candidate_name + memory_type + description + reason
+  // + proposed_body + optional amends_existing). Substrate does NOT
+  // auto-file memories — a deferred Tier-2 ratification verb consumes
+  // ratified proposals and writes the file. Readers trust the SHAPE
+  // but primary-source-verify slug uniqueness vs existing memories
+  // (when amends_existing is null) or the named memory exists on disk
+  // (when amends_existing is non-null).
+  "memory-proposal",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

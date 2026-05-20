@@ -30,7 +30,7 @@ import { CHANNEL_KINDS, type ChannelKind } from "../../src/channels/index.ts";
 import { renderKindPrefix } from "../../src/channels/render.ts";
 
 describe("CHANNEL_KINDS (SSOT)", () => {
-  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict last)", () => {
+  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict, Tier 2 Verb 2 memory-proposal last)", () => {
     expect(CHANNEL_KINDS).toEqual([
       // Phase 1 informational + protocol carriers
       "note",
@@ -51,6 +51,8 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       "audit-ask",
       // Tier 1 Slice 2 cycle 2026-05-19 audit-loop-closure
       "audit-verdict",
+      // Tier 2 Verb 2 cycle 2026-05-20 memory-proposal surface
+      "memory-proposal",
     ]);
   });
 
@@ -59,8 +61,9 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // (tuple grows) at the SSOT site. Bumped from 4 → 9 with Layer 3
     // walkie-talkie additions; 9 → 10 with Layer 4 `digest`; 10 → 11
     // with L152 `live-update`; 11 → 12 with Tier 1 Slice 1 `audit-ask`;
-    // 12 → 13 with Tier 1 Slice 2 `audit-verdict`.
-    expect(CHANNEL_KINDS.length).toBe(13);
+    // 12 → 13 with Tier 1 Slice 2 `audit-verdict`; 13 → 14 with Tier 2
+    // Verb 2 `memory-proposal`.
+    expect(CHANNEL_KINDS.length).toBe(14);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {
