@@ -206,7 +206,13 @@ describe("inferBandwidthState — T2.18 ±1 threshold boundaries", () => {
     ).toBe("SATURATED");
   });
 
-  it("density just below HIGH + 0 audits does NOT trigger SATURATED-busy", () => {
+  it("density just below HIGH + 0 audits returns ACTIVE (not SATURATED-busy)", () => {
+    // Delta nit-A absorption: explicit positive assertion `.toBe("ACTIVE")`
+    // rather than `.not.toBe("SATURATED")`. Captures the FULL decision-tree
+    // outcome at the SATURATED-busy boundary edge — heartbeat fresh +
+    // density at HIGH-1=5 (≥ LOW=2) + audits 0 + no open-ask overflow →
+    // falls through SATURATED gates to ACTIVE. Sibling sharper-assertion
+    // pattern with the rest of T2.18.
     expect(
       inferBandwidthState(
         baseInputs({
@@ -214,7 +220,7 @@ describe("inferBandwidthState — T2.18 ±1 threshold boundaries", () => {
           audits_delivered_90min: 0,
         }),
       ),
-    ).not.toBe("SATURATED");
+    ).toBe("ACTIVE");
   });
 
   it("density at HIGH + 0 audits triggers SATURATED-busy", () => {
