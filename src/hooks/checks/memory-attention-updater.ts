@@ -18,6 +18,13 @@
  * malformed, lock IO error, write failure) logs via appendPresenceFailure
  * and returns pass(). Memory-attention is advisory, never blocking.
  *
+ * v2-evolution path (per Charlie PR-tier cross-pair-shadow N1 disposition):
+ * future iterations may add rule-fire events from `.feedback-events.jsonl`
+ * (emitted by feedback-rule-reminder hook) as a more-empirical
+ * application-moment signal complementary to or replacing the tool-call
+ * detection here. v0.1 ships tool-call-only per master-plan-default +
+ * plan-tier RE-N1 disposition (deferred to avoid schema migration in v0.1).
+ *
  * Plan: slice-T3E-memory-attention-2026-05-20.md v0.1 (E2 portion).
  */
 
