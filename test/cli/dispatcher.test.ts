@@ -99,6 +99,18 @@ describe("claude-conductor dispatcher", () => {
       expect(result.stdout).toContain("cascade-rebase");
     });
 
+    it("'audits --help' routes to audits CLI's help (Slice 3)", () => {
+      const result = run(["audits", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("queue --for");
+    });
+
+    it("'bandwidth --help' routes to bandwidth CLI's help (Slice 3)", () => {
+      const result = run(["bandwidth", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("show --for");
+    });
+
     it("'pr' with no verb routes to pr CLI's help (Slice 0)", () => {
       const result = run(["pr"]);
       expect(result.exitCode).toBe(0);

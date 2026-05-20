@@ -29,6 +29,8 @@ const SUBCOMMANDS = {
   channels: join(PACKAGE_ROOT, "src", "channels", "cli.ts"),
   todos: join(PACKAGE_ROOT, "src", "todos", "cli.ts"),
   pr: join(PACKAGE_ROOT, "src", "pr", "cli.ts"),
+  audits: join(PACKAGE_ROOT, "src", "audits", "cli.ts"),
+  bandwidth: join(PACKAGE_ROOT, "src", "bandwidth", "cli.ts"),
 } as const satisfies Record<string, string>;
 
 type Subcommand = keyof typeof SUBCOMMANDS;
@@ -67,6 +69,8 @@ function printHelp(): void {
       "  channels   Channel coordination operations (create/join/send/read/...)",
       "  todos      Per-handoff todo state (read-active/count-active/exists/...)",
       "  pr         Pull-request operations (cascade-rebase/...)",
+      "  audits     Audit-discipline queries (queue --for <identity>)",
+      "  bandwidth  Derive identity bandwidth state from artifacts (show --for ...)",
       "",
       "Global flags (position-insensitive — accepted before or after subcommand):",
       "  --json     Emit structured JSON output where the subcommand supports it.",
