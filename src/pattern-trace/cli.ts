@@ -185,14 +185,21 @@ function resolveDefaultSince(): string {
  * Gather git-log events: each commit referencing the symbol becomes a
  * RawEvent with source_kind="git". Uses `git log -S<symbol>` to find
  * commits where the symbol's introducing/absorbing count changed.
+ *
+ * Window-boundary semantic (Charlie F1 / Alpha cross-pair-shadow fold):
+ * NO `--since` filter at scanner layer — full history is passed to
+ * aggregateGraph which window-filters AND detects pre-window introducing
+ * via `options.window`. This ensures substrate-self-validation bake-test
+ * #9 #2 (parseAuditVerdictBody introduced 2026-05-19; queried with
+ * cycle-2026-05-20-start window) correctly returns introducing_event=null
+ * rather than mislabeling the first in-window event as introducing.
  */
-function gatherGitEvents(symbol: string, since: string): RawEvent[] {
+function gatherGitEvents(symbol: string): RawEvent[] {
   const result = runGit(process.cwd(), [
     "log",
     "--all",
     "-S",
     symbol,
-    `--since=${since}`,
     "--format=%H%x09%aI%x09%an",
   ]);
   if (result.status !== 0) return [];
@@ -219,15 +226,17 @@ function gatherGitEvents(symbol: string, since: string): RawEvent[] {
 /**
  * Gather PR-body events via `gh pr list --search`.
  * F2 rate-limit defense: single batched call per invocation.
+ * Window-boundary: no `merged:>=` filter; detector window-filters via
+ * `options.window` per Charlie F1 fold semantic.
  */
-function gatherPrEvents(symbol: string, since: string): RawEvent[] {
+function gatherPrEvents(symbol: string): RawEvent[] {
   const result = runGh([
     "pr",
     "list",
     "--state",
     "merged",
     "--search",
-    `${symbol} merged:>=${since.slice(0, 10)}`,
+    symbol,
     "--json",
     "number,mergedAt,body,author",
     "--limit",
@@ -279,9 +288,12 @@ function gatherPrEvents(symbol: string, since: string): RawEvent[] {
  * resolve body / body_ref text (mirror T3-C lexicon body_ref handling),
  * text-contains symbol → emit RawEvent with author=identity.
  */
-function gatherChannelEvents(symbol: string, since: string): RawEvent[] {
+/**
+ * Gather channel-JSONL events. Window-boundary: no since filter; detector
+ * window-filters via `options.window` per Charlie F1 fold semantic.
+ */
+function gatherChannelEvents(symbol: string): RawEvent[] {
   const dir = channelsDir();
-  const sinceMs = Date.parse(since);
   let channelIds: readonly string[];
   try {
     channelIds = readdirSync(dir);
@@ -321,7 +333,7 @@ function gatherChannelEvents(symbol: string, since: string): RawEvent[] {
       const identity = m["identity"];
       if (typeof ts !== "string") continue;
       const tsMs = Date.parse(ts);
-      if (!Number.isFinite(tsMs) || tsMs < sinceMs) continue;
+      if (!Number.isFinite(tsMs)) continue;
       if (typeof identity !== "string" || identity.length === 0) continue;
       let body = "";
       if (typeof m["body"] === "string") {
@@ -456,22 +468,27 @@ function main(): void {
   let events: RawEvent[] = [];
   const sourcesScanned = { git: 0, prs: 0, channel: 0 };
   if (flags.source === "git" || flags.source === "all") {
-    const gitEvents = gatherGitEvents(flags.symbol, since);
+    const gitEvents = gatherGitEvents(flags.symbol);
     events = events.concat(gitEvents);
     sourcesScanned.git = gitEvents.length;
   }
   if (flags.source === "prs" || flags.source === "all") {
-    const prEvents = gatherPrEvents(flags.symbol, since);
+    const prEvents = gatherPrEvents(flags.symbol);
     events = events.concat(prEvents);
     sourcesScanned.prs = prEvents.length;
   }
   if (flags.source === "channel" || flags.source === "all") {
-    const channelEvents = gatherChannelEvents(flags.symbol, since);
+    const channelEvents = gatherChannelEvents(flags.symbol);
     events = events.concat(channelEvents);
     sourcesScanned.channel = channelEvents.length;
   }
 
-  const graph = aggregateGraph(events, flags.symbol, flags.threshold);
+  // Charlie F1 fold + Alpha cross-pair-shadow: pass {window} so the
+  // detector window-filters + sets introducing_event=null when the
+  // symbol's chronologically-first event predates window.start_ms.
+  const graph = aggregateGraph(events, flags.symbol, flags.threshold, {
+    window: { start_ms: sinceMs, end_ms: nowMs },
+  });
   const generated_at = new Date(nowMs).toISOString();
   const window = { start: since, end: new Date(nowMs).toISOString() };
 
