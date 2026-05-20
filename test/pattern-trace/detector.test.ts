@@ -90,7 +90,103 @@ describe("aggregateGraph", () => {
     expect(g.distinct_peers_count).toBe(3);
     expect(g.distinct_peers).toEqual(["Alpha", "Bravo", "Charlie"]);
     expect(g.memory_suggest_triggered).toBe(true);
-    expect(g.memory_suggest_reason).toContain("3 distinct peers");
+    // Charlie N3 templated format: machine-parseable
+    expect(g.memory_suggest_reason).toBe(
+      "threshold N=3 met: distinct_peers=[Alpha,Bravo,Charlie]; absorbing_events=2",
+    );
+  });
+
+  it("Delta N1 negative-control: introducing + 3 same-author absorbing → distinct_peers=1, threshold@3 NOT triggered", () => {
+    const events: RawEvent[] = [
+      ALPHA_INTRODUCING,
+      {
+        source_kind: "git",
+        source_ref: "alpha-2",
+        ts: "2026-05-20T11:00:00.000Z",
+        author: "Alpha",
+      },
+      {
+        source_kind: "git",
+        source_ref: "alpha-3",
+        ts: "2026-05-20T12:00:00.000Z",
+        author: "Alpha",
+      },
+      {
+        source_kind: "git",
+        source_ref: "alpha-4",
+        ts: "2026-05-20T13:00:00.000Z",
+        author: "Alpha",
+      },
+    ];
+    const g = aggregateGraph(events, "X", 3);
+    expect(g.distinct_peers_count).toBe(1);
+    expect(g.distinct_peers).toEqual(["Alpha"]);
+    expect(g.absorbing_events).toHaveLength(3);
+    expect(g.latency_to_cross_author_absorption_ms).toBeNull();
+    expect(g.memory_suggest_triggered).toBe(false);
+    expect(g.memory_suggest_reason).toBeNull();
+  });
+
+  it("Charlie N1 window-boundary: introducing pre-window → introducing_event=null, in-window events are absorbing", () => {
+    const events: RawEvent[] = [
+      {
+        source_kind: "git",
+        source_ref: "pre-window",
+        ts: "2026-05-19T10:00:00.000Z",
+        author: "Alpha",
+      },
+      {
+        source_kind: "git",
+        source_ref: "in-window-1",
+        ts: "2026-05-20T10:00:00.000Z",
+        author: "Bravo",
+      },
+      {
+        source_kind: "git",
+        source_ref: "in-window-2",
+        ts: "2026-05-20T11:00:00.000Z",
+        author: "Charlie",
+      },
+    ];
+    const window = {
+      start_ms: Date.parse("2026-05-20T00:00:00.000Z"),
+      end_ms: Date.parse("2026-05-21T00:00:00.000Z"),
+    };
+    const g = aggregateGraph(events, "X", 3, { window });
+    expect(g.introducing_event).toBeNull();
+    expect(g.absorbing_events).toHaveLength(2);
+    expect(g.absorbing_events.map((e) => e.author)).toEqual([
+      "Bravo",
+      "Charlie",
+    ]);
+    expect(g.distinct_peers).toEqual(["Bravo", "Charlie"]);
+    expect(g.latency_to_first_absorption_ms).toBeNull();
+    expect(g.latency_to_cross_author_absorption_ms).toBeNull();
+  });
+
+  it("Charlie N1 window-boundary: introducing inside window → introducing_event populated normally", () => {
+    const events: RawEvent[] = [
+      {
+        source_kind: "git",
+        source_ref: "in-window-intro",
+        ts: "2026-05-20T10:00:00.000Z",
+        author: "Alpha",
+      },
+      {
+        source_kind: "git",
+        source_ref: "in-window-abs",
+        ts: "2026-05-20T11:00:00.000Z",
+        author: "Bravo",
+      },
+    ];
+    const window = {
+      start_ms: Date.parse("2026-05-20T00:00:00.000Z"),
+      end_ms: Date.parse("2026-05-21T00:00:00.000Z"),
+    };
+    const g = aggregateGraph(events, "X", 3, { window });
+    expect(g.introducing_event?.author).toBe("Alpha");
+    expect(g.absorbing_events).toHaveLength(1);
+    expect(g.absorbing_events[0]?.author).toBe("Bravo");
   });
 
   it("cross-author latency skips same-author absorbing", () => {
