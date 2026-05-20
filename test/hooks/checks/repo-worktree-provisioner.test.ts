@@ -343,4 +343,106 @@ describe("repo-worktree-provisioner hook", () => {
     expect(indexB).toBeGreaterThanOrEqual(0);
     expect(indexA).toBeGreaterThan(indexB);
   });
+
+  // T3-B Phase 2: extend coverage to 3 characteristic shapes documented in
+  // docs/conventions/operator-worktree-provisioner-config.md
+  //   - path-with-spaces canonical (Recipe 3 / wiki-like)
+  //   - no-package.json canonical (Recipe 3 / wiki-like)
+  //   - 3-repo sibling-clone DAG (Recipe 2 extended / vault-auto-sync-like chain)
+
+  it("provisions worktree when canonical path contains spaces (wiki-like)", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const repoCanonical = join(tmpHome, "repo with spaces");
+    initRepo(repoCanonical);
+    const configPath = join(tmpHome, "config.json");
+    writeConfig(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        repos: [{ name: "wiki-like", canonical: repoCanonical, auto: true }],
+      }),
+    );
+    process.env[CONFIG_ENV] = configPath;
+
+    const result = await provisionerCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    const expectedWorktreePath = `${repoCanonical}-${SID.slice(0, 8)}`;
+    expect(existsSync(expectedWorktreePath)).toBe(true);
+  });
+
+  it("provisions worktree + skips linkDeps when canonical has no node_modules (wiki-like)", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const repoCanonical = join(tmpHome, "no-package-json-repo");
+    initRepo(repoCanonical);
+    // initRepo does NOT create package.json or node_modules — the canonical
+    // is a bare empty-commit repo, exactly matching the wiki-like shape
+    // (markdown vault: git repo, no Node tooling).
+    const configPath = join(tmpHome, "config.json");
+    writeConfig(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        repos: [{ name: "wiki-like", canonical: repoCanonical, auto: true }],
+      }),
+    );
+    process.env[CONFIG_ENV] = configPath;
+
+    const result = await provisionerCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    const expectedWorktreePath = `${repoCanonical}-${SID.slice(0, 8)}`;
+    expect(existsSync(expectedWorktreePath)).toBe(true);
+    // Worktree exists; node_modules link was skipped (no canonical
+    // node_modules to source from). Symlink absence is the empirical
+    // assertion — linkCanonicalNodeModules hits the skip branch.
+    expect(existsSync(join(expectedWorktreePath, "node_modules"))).toBe(false);
+  });
+
+  it("topo-orders 3-repo sibling-clone DAG A → B → C correctly", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const repoA = join(tmpHome, "repo-a");
+    const repoB = join(tmpHome, "repo-b");
+    const repoC = join(tmpHome, "repo-c");
+    initRepo(repoA);
+    initRepo(repoB);
+    initRepo(repoC);
+    const configPath = join(tmpHome, "config.json");
+    // Declare in reverse-topo order to verify the resolver sorts
+    // correctly: C depends on B, B depends on A, A is root.
+    writeConfig(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        repos: [
+          {
+            name: "repo-c",
+            canonical: repoC,
+            auto: true,
+            siblingCloneOf: "repo-b",
+          },
+          {
+            name: "repo-b",
+            canonical: repoB,
+            auto: true,
+            siblingCloneOf: "repo-a",
+          },
+          { name: "repo-a", canonical: repoA, auto: true },
+        ],
+      }),
+    );
+    process.env[CONFIG_ENV] = configPath;
+
+    const result = await provisionerCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(`${repoA}-${SID.slice(0, 8)}`)).toBe(true);
+    expect(existsSync(`${repoB}-${SID.slice(0, 8)}`)).toBe(true);
+    expect(existsSync(`${repoC}-${SID.slice(0, 8)}`)).toBe(true);
+    // Verify topo-ordered breadcrumbs: A before B before C
+    // (F3 preemptive fold from T3-B plan §8 — deterministic order assertion).
+    const indexA = result.stdout.indexOf("repo-worktree-provisioner:repo-a");
+    const indexB = result.stdout.indexOf("repo-worktree-provisioner:repo-b");
+    const indexC = result.stdout.indexOf("repo-worktree-provisioner:repo-c");
+    expect(indexA).toBeGreaterThanOrEqual(0);
+    expect(indexB).toBeGreaterThan(indexA);
+    expect(indexC).toBeGreaterThan(indexB);
+  });
 });
