@@ -62,7 +62,10 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // walkie-talkie additions; 9 → 10 with Layer 4 `digest`; 10 → 11
     // with L152 `live-update`; 11 → 12 with Tier 1 Slice 1 `audit-ask`;
     // 12 → 13 with Tier 1 Slice 2 `audit-verdict`; 13 → 14 with Tier 2
-    // Verb 2 `memory-proposal`.
+    // Verb 2 `memory-proposal`. Tier 1 Slice 3 (audit-queue +
+    // bandwidth-inference) adds NO new kind — bandwidth state is
+    // derive-on-read, not posted as its own message kind; the T4.1
+    // drift catch (Delta N2 sharper assertion) holds at 14 post-T2V2.
     expect(CHANNEL_KINDS.length).toBe(14);
   });
 
