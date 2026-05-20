@@ -20,6 +20,7 @@ import {
   AUDIT_AXES,
   AUDIT_CLASSES,
   AUDIT_VERDICTS,
+  BANDWIDTH_STATES,
   FINDING_SEVERITIES,
   LENS_CLASSES,
   isAuditAskTier,
@@ -27,9 +28,11 @@ import {
   isAuditAxisArray,
   isAuditClass,
   isAuditVerdict,
+  isBandwidthState,
   isFindingSeverity,
   isLensClass,
   isLensClassArray,
+  type BandwidthInputs,
 } from "../../src/channels/audit-types.ts";
 
 describe("audit-types — isAuditAskTier", () => {
@@ -166,5 +169,42 @@ describe("audit-types — isFindingSeverity (Slice 2)", () => {
     expect(isFindingSeverity("MAJOR")).toBe(false);
     expect(isFindingSeverity(42)).toBe(false);
     expect(isFindingSeverity(null)).toBe(false);
+  });
+});
+
+describe("audit-types — isBandwidthState (Slice 3)", () => {
+  it("accepts every literal in BANDWIDTH_STATES", () => {
+    for (const s of BANDWIDTH_STATES) {
+      expect(isBandwidthState(s)).toBe(true);
+    }
+  });
+  it("rejects unknown / wrong-case / non-string", () => {
+    expect(isBandwidthState("saturated")).toBe(false); // case-mismatch
+    expect(isBandwidthState("idle")).toBe(false); // truncated
+    expect(isBandwidthState("IDLE")).toBe(false); // missing -AVAILABLE
+    expect(isBandwidthState("BUSY")).toBe(false); // not a literal
+    expect(isBandwidthState(42)).toBe(false);
+    expect(isBandwidthState(null)).toBe(false);
+    expect(isBandwidthState(undefined)).toBe(false);
+    expect(isBandwidthState({})).toBe(false);
+    expect(isBandwidthState([])).toBe(false);
+  });
+});
+
+describe("audit-types — BandwidthInputs shape (Slice 3)", () => {
+  it("type-assignment compiles + carries the 4 documented keys at runtime", () => {
+    const inputs: BandwidthInputs = {
+      msg_density_30min: 0,
+      audits_delivered_90min: 0,
+      heartbeat_age_ms: null,
+      open_audit_asks: 0,
+    };
+    expect(Object.keys(inputs).sort()).toEqual([
+      "audits_delivered_90min",
+      "heartbeat_age_ms",
+      "msg_density_30min",
+      "open_audit_asks",
+    ]);
+    expect(inputs.heartbeat_age_ms).toBeNull();
   });
 });

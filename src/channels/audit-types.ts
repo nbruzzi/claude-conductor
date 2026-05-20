@@ -190,3 +190,77 @@ export function isFindingSeverity(v: unknown): v is FindingSeverity {
     (FINDING_SEVERITIES as readonly string[]).includes(v)
   );
 }
+
+/**
+ * Bandwidth states (Slice 3 of Tier 1 schemas+coord substrate). The
+ * composite state derived from artifact-inputs (msg density + audits
+ * delivered + heartbeat freshness + open audit-asks) per Bravo's round-2
+ * + Charlie's correction in the 2026-05-19 brainstorm.
+ *
+ * Self-declared bandwidth selects for performance-of-availability; derive
+ * from artifacts. Anchor memory: `feedback-bandwidth-state-inferred-not-declared`.
+ *
+ *   - `SATURATED`       — busy authoring OR audit-queue overflow (≥3 open
+ *                          asks targeting identity); NEW asks should route
+ *                          elsewhere when an alternative is available.
+ *   - `ACTIVE`          — engaged; messages flowing + recent audit delivery.
+ *   - `IDLE-AVAILABLE`  — heartbeat fresh + low msg density + no open asks
+ *                          targeting; available for routing.
+ *   - `STALE`           — no heartbeat OR heartbeat older than
+ *                          `BANDWIDTH_STALE_AGE_MS` (30min); peer effectively
+ *                          offline.
+ *
+ * UPPERCASE matches `AuditVerdict` + `FindingSeverity` cohort-internal
+ * consistency (per Slice 2 N3 disposition — cohort-consistency beats
+ * JSON-idiomatic-lowercase).
+ *
+ * Slice 3 introduction. Threshold constants live in
+ * `src/bandwidth/inference.ts` adjacent to the decision logic; this
+ * module owns only the vocabulary types.
+ */
+export const BANDWIDTH_STATES = [
+  "SATURATED",
+  "ACTIVE",
+  "IDLE-AVAILABLE",
+  "STALE",
+] as const;
+export type BandwidthState = (typeof BANDWIDTH_STATES)[number];
+
+/**
+ * Artifact-derived inputs to bandwidth inference. Computed at query time
+ * by reading the channel state (NOT serialized to the channel; pure
+ * transient computation per Q5 disposition — `kind=bandwidth-snapshot`
+ * publish deferred until dashboard render latency proves it needed).
+ *
+ * Field meanings:
+ *
+ *   - `msg_density_30min`     — count of messages from `target_identity`
+ *                                with `ts` within the last 30 minutes.
+ *   - `audits_delivered_90min` — count of `kind=audit-verdict` messages
+ *                                from `target_identity` with `ts` within
+ *                                the last 90 minutes.
+ *   - `heartbeat_age_ms`      — milliseconds since the identity's
+ *                                heartbeat sentinel was last touched.
+ *                                `null` when no heartbeat exists for the
+ *                                identity (e.g., identity name has no
+ *                                sentinel on this channel).
+ *   - `open_audit_asks`       — count of `kind=audit-ask` messages with
+ *                                `target_peer === target_identity` that
+ *                                lack a matching `kind=audit-verdict`
+ *                                response. Unbounded (per Q3 disposition).
+ */
+export type BandwidthInputs = {
+  msg_density_30min: number;
+  audits_delivered_90min: number;
+  heartbeat_age_ms: number | null;
+  open_audit_asks: number;
+};
+
+/**
+ * Type-guard: `v` is one of the valid `BandwidthState` literals.
+ */
+export function isBandwidthState(v: unknown): v is BandwidthState {
+  return (
+    typeof v === "string" && (BANDWIDTH_STATES as readonly string[]).includes(v)
+  );
+}

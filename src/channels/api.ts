@@ -87,6 +87,12 @@ export type {
 // `MEMORY_TYPES` + `isMemoryType`.
 export type { MemoryProposalBody, MemoryType } from "./memory-proposal.ts";
 
+// Tier 1 Slice 3 2026-05-20 — bandwidth-inference vocabulary types
+// (cohort-internal extension of audit-discipline SSOT). Consumers
+// (dashboard SSE renderer, future audit-routing engine) import these
+// from `claude-conductor/channels/api` alongside `isBandwidthState`.
+export type { BandwidthInputs, BandwidthState } from "./audit-types.ts";
+
 // ─── Value re-exports ──────────────────────────────────────────────
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
@@ -213,6 +219,12 @@ export {
   isMemoryType,
   parseMemoryProposalBody,
 } from "./memory-proposal.ts";
+
+// Tier 1 Slice 3 2026-05-20 — bandwidth-inference SSOT tuple + guard.
+// Slice 3 does NOT add a new CHANNEL_KINDS entry (no new message kind);
+// bandwidth state is derive-on-read, not posted. The vocabulary type
+// + guard ride on the audit-discipline SSOT cohort.
+export { BANDWIDTH_STATES, isBandwidthState } from "./audit-types.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";
 
