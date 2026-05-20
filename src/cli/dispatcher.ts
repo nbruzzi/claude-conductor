@@ -36,6 +36,7 @@ const SUBCOMMANDS = {
   "cycle-character": join(PACKAGE_ROOT, "src", "cycle-character", "cli.ts"),
   lexicon: join(PACKAGE_ROOT, "src", "lexicon", "cli.ts"),
   "pattern-trace": join(PACKAGE_ROOT, "src", "pattern-trace", "cli.ts"),
+  "memory-attention": join(PACKAGE_ROOT, "src", "memory-attention", "cli.ts"),
 } as const satisfies Record<string, string>;
 
 type Subcommand = keyof typeof SUBCOMMANDS;
@@ -81,6 +82,7 @@ function printHelp(): void {
       "  cycle-character  Classify a handoff into PRISTINE/RECOVERED/INCIDENT-DRIVEN/COHORT-PASS/STALLED",
       "  lexicon    Extract terms-of-art from memory + handoffs + channels (--source --since --top --format)",
       "  pattern-trace  Trace code-symbol propagation across git/PRs/channel with auto-memory-suggest (--symbol --since --source --propagation-threshold --format --emit-memory-proposal)",
+      "  memory-attention  Score memories by recent-apply utility (Bravo's algorithm: count × 0.95^days − 0.5×violations)",
       "",
       "Global flags (position-insensitive — accepted before or after subcommand):",
       "  --json     Emit structured JSON output where the subcommand supports it.",
