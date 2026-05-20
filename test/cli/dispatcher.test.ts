@@ -91,6 +91,26 @@ describe("claude-conductor dispatcher", () => {
       // 'todos'" instead of todos CLI's own error.
       expect(result.stderr).not.toContain("unknown subcommand 'todos'");
     });
+
+    it("'pr --help' routes to pr CLI's help (Slice 0)", () => {
+      const result = run(["pr", "--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("claude-conductor pr");
+      expect(result.stdout).toContain("cascade-rebase");
+    });
+
+    it("'pr' with no verb routes to pr CLI's help (Slice 0)", () => {
+      const result = run(["pr"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Verbs:");
+    });
+
+    it("top-level --help lists 'pr' as a known subcommand (Slice 0)", () => {
+      const result = run(["--help"]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("pr ");
+      expect(result.stdout).toContain("Pull-request");
+    });
   });
 
   describe("unknown subcommand handling", () => {

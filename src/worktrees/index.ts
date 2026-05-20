@@ -34,7 +34,7 @@
  * intent path).
  */
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { decodeStdio, runGit } from "../git/index.ts";
 import {
   existsSync,
   lstatSync,
@@ -346,22 +346,6 @@ function isFeatureEnabled(override: boolean | undefined): boolean {
   if (override === true) return true;
   if (override === false) return false;
   return process.env[FEATURE_FLAG_ENV] === "1";
-}
-
-function runGit(
-  cwd: string,
-  args: readonly string[],
-): SpawnSyncReturns<Buffer> {
-  return spawnSync("git", [...args], {
-    cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-function decodeStdio(buf: Buffer | string | null | undefined): string {
-  if (buf === null || buf === undefined) return "";
-  if (typeof buf === "string") return buf.trim();
-  return buf.toString("utf-8").trim();
 }
 
 function tryLstat(p: string): Stats | null {

@@ -28,6 +28,7 @@ const PACKAGE_ROOT = dirname(dirname(SCRIPT_DIR));
 const SUBCOMMANDS = {
   channels: join(PACKAGE_ROOT, "src", "channels", "cli.ts"),
   todos: join(PACKAGE_ROOT, "src", "todos", "cli.ts"),
+  pr: join(PACKAGE_ROOT, "src", "pr", "cli.ts"),
 } as const satisfies Record<string, string>;
 
 type Subcommand = keyof typeof SUBCOMMANDS;
@@ -65,6 +66,7 @@ function printHelp(): void {
       "Subcommands:",
       "  channels   Channel coordination operations (create/join/send/read/...)",
       "  todos      Per-handoff todo state (read-active/count-active/exists/...)",
+      "  pr         Pull-request operations (cascade-rebase/...)",
       "",
       "Global flags (position-insensitive — accepted before or after subcommand):",
       "  --json     Emit structured JSON output where the subcommand supports it.",

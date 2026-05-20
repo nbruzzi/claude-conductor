@@ -26,6 +26,9 @@ describe("parseFlags", () => {
         role: undefined,
         force: false,
         fromSession: undefined,
+        base: undefined,
+        dryRun: false,
+        onto: undefined,
       });
       expect(result.positional).toEqual(["a", "b", "c"]);
     });
@@ -68,6 +71,9 @@ describe("parseFlags", () => {
         role: undefined,
         force: false,
         fromSession: undefined,
+        base: undefined,
+        dryRun: false,
+        onto: undefined,
       });
       expect(result.positional).toEqual(["my-channel"]);
     });
@@ -125,6 +131,9 @@ describe("parseFlags", () => {
         role: undefined,
         force: false,
         fromSession: undefined,
+        base: undefined,
+        dryRun: false,
+        onto: undefined,
       });
       expect(result.positional).toEqual([]);
     });
@@ -461,6 +470,152 @@ describe("parseFlags", () => {
       const result = parseFlags(["my-channel", "--as=Alpha"], P2_SPEC);
       expect(result.flags.as).toBe(undefined);
       expect(result.positional).toEqual(["my-channel", "--as=Alpha"]);
+    });
+  });
+
+  describe("Slice 0 — --base / --dry-run (pr cascade-rebase flags)", () => {
+    /**
+     * Slice 0 origin: plan ~/.claude/plans/slice-0-cascade-rebase-2026-05-19.md
+     * §D1 + §Files-to-modify §4. Parser is value-extraction only — verb-level
+     * dispatch validates non-empty + branch-name shape for --base.
+     */
+    const SLICE0_SPEC = { base: true, dryRun: true, onto: true } as const;
+
+    // ─── --base ────────────────────────────────────────────────────
+
+    it("--base alpha/conductor-foo consumes the next argv as the branch-name value (verbatim)", () => {
+      const result = parseFlags(
+        ["pr-cascade", "--base", "alpha/conductor-foo"],
+        SLICE0_SPEC,
+      );
+      expect(result.flags.base).toBe("alpha/conductor-foo");
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["pr-cascade"]);
+    });
+
+    it("--base combines cleanly with --json + --dry-run + --quiet", () => {
+      const result = parseFlags(
+        ["--base", "main", "--dry-run", "--json", "--quiet"],
+        SLICE0_SPEC,
+      );
+      expect(result.flags.base).toBe("main");
+      expect(result.flags.dryRun).toBe(true);
+      expect(result.flags.json).toBe(true);
+      expect(result.flags.quiet).toBe(true);
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual([]);
+    });
+
+    it("--base with no following value emits a parseError (missing-value)", () => {
+      const result = parseFlags(["pr-cascade", "--base"], SLICE0_SPEC);
+      expect(result.flags.base).toBe(undefined);
+      expect(result.parseErrors).toEqual([
+        "--base: expected value, got missing value",
+      ]);
+      // Don't consume forward; positional preserves the verb.
+      expect(result.positional).toEqual(["pr-cascade"]);
+    });
+
+    it("--base followed by another flag (eats the flag as value? no — rejected)", () => {
+      // `consumeStringValue` rejects values that start with `--`, treating them
+      // as a missing value (mirrors --as/--role behavior on flag-shaped values).
+      const result = parseFlags(
+        ["pr-cascade", "--base", "--json"],
+        SLICE0_SPEC,
+      );
+      expect(result.flags.base).toBe(undefined);
+      expect(result.flags.json).toBe(true);
+      expect(result.parseErrors).toEqual([
+        "--base: expected value, got missing value",
+      ]);
+    });
+
+    it("when base: false (default — opt-out), --base passes through as positional", () => {
+      const result = parseFlags(["pr-cascade", "--base", "main"], {
+        base: false,
+      });
+      expect(result.flags.base).toBe(undefined);
+      expect(result.positional).toContain("--base");
+      expect(result.positional).toContain("main");
+    });
+
+    // ─── --dry-run ─────────────────────────────────────────────────
+
+    it("--dry-run (standalone) sets dryRun flag without consuming next argv", () => {
+      const result = parseFlags(
+        ["pr-cascade", "--dry-run", "main"],
+        SLICE0_SPEC,
+      );
+      expect(result.flags.dryRun).toBe(true);
+      expect(result.positional).toEqual(["pr-cascade", "main"]);
+    });
+
+    it("--dry-run is position-insensitive (before or after positional)", () => {
+      const before = parseFlags(["--dry-run", "pr-cascade"], {
+        dryRun: true,
+      } as const);
+      const after = parseFlags(["pr-cascade", "--dry-run"], {
+        dryRun: true,
+      } as const);
+      expect(before.flags.dryRun).toBe(true);
+      expect(after.flags.dryRun).toBe(true);
+      expect(before.positional).toEqual(["pr-cascade"]);
+      expect(after.positional).toEqual(["pr-cascade"]);
+    });
+
+    it("when dryRun: false (default — opt-out), --dry-run passes through as positional", () => {
+      const result = parseFlags(["pr-cascade", "--dry-run"], { dryRun: false });
+      expect(result.flags.dryRun).toBe(false);
+      expect(result.positional).toContain("--dry-run");
+    });
+
+    // ─── --onto (Slice 0 v0.3 — Delta F-NEW-1 fold) ────────────────
+
+    it("T-onto.1 — --onto main consumes the next argv as the branch-name value (verbatim)", () => {
+      const result = parseFlags(["pr-cascade", "--onto", "main"], {
+        onto: true,
+      } as const);
+      expect(result.flags.onto).toBe("main");
+      expect(result.parseErrors).toEqual([]);
+      expect(result.positional).toEqual(["pr-cascade"]);
+    });
+
+    it("T-onto.2 — --onto with branch-name that includes /", () => {
+      const result = parseFlags(["pr-cascade", "--onto", "release/v2"], {
+        onto: true,
+      } as const);
+      expect(result.flags.onto).toBe("release/v2");
+    });
+
+    it("T-onto.3 — --onto combines cleanly with --base + --dry-run + --json", () => {
+      const result = parseFlags(
+        ["--base", "feat-A", "--onto", "main", "--dry-run", "--json"],
+        SLICE0_SPEC,
+      );
+      expect(result.flags.base).toBe("feat-A");
+      expect(result.flags.onto).toBe("main");
+      expect(result.flags.dryRun).toBe(true);
+      expect(result.flags.json).toBe(true);
+      expect(result.parseErrors).toEqual([]);
+    });
+
+    it("T-onto.4 — --onto with no following value emits a parseError", () => {
+      const result = parseFlags(["pr-cascade", "--onto"], {
+        onto: true,
+      } as const);
+      expect(result.flags.onto).toBe(undefined);
+      expect(result.parseErrors).toEqual([
+        "--onto: expected value, got missing value",
+      ]);
+    });
+
+    it("T-onto.5 — when onto: false (default — opt-out), --onto passes through as positional", () => {
+      const result = parseFlags(["pr-cascade", "--onto", "main"], {
+        onto: false,
+      });
+      expect(result.flags.onto).toBe(undefined);
+      expect(result.positional).toContain("--onto");
+      expect(result.positional).toContain("main");
     });
   });
 });
