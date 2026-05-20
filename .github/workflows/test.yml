@@ -32,6 +32,9 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Check verify-manifest drift
+        run: bun run verify:drift
+
       - name: Format
         run: bun run format:check
 

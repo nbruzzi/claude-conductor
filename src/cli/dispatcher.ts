@@ -73,6 +73,7 @@ function printHelp(): void {
       "  audits     Audit-discipline queries (queue --for <identity>)",
       "  bandwidth  Derive identity bandwidth state from artifacts (show --for ...)",
       "  reciprocation  Audit-verdict reciprocation graph (--channel <id> --window cycle)",
+      "  verify     Manifest-driven gate runner + drift detector (--check / --gate <n> / default)",
       "",
       "Global flags (position-insensitive — accepted before or after subcommand):",
       "  --json     Emit structured JSON output where the subcommand supports it.",
