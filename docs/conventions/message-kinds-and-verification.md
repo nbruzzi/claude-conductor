@@ -185,6 +185,15 @@ this convention.
   Future Tier-3 consumers (T3-F cycle-character classifier; T3-G
   reciprocation ledger) parse the typed body without regex-scraping
   handoff prose.
+- `src/reciprocation/cli.ts` + `src/reciprocation/graph.ts` — Tier 2
+  Verb 3 first-class substrate CONSUMER of `audit-verdict` bodies.
+  Queries channel for verdicts in window; emits directional graph
+  (auditor → target) + per-peer audit-debt + canonical pairwise
+  reciprocation balance. Replaces the hand-tallied cycle-end ledger
+  surfaced in handoff bodies. Auditor identity resolution is
+  message-time-stamped (uses `ChannelMessage.identity`); fallback to
+  current `metadata.identities` lookup for legacy messages without
+  the structured field.
 - `src/channels/cli.ts` — `channels kinds` verb prints the per-kind
   help; `channels send` role-gate carve-out for `kind=out`.
 - `memories/feedback-walkie-talkie-out-semantics.md` — `out` kind's
