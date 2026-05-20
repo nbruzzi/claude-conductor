@@ -12,7 +12,6 @@
  */
 
 import {
-  CYCLE_CHARACTERS,
   isCycleCharacter,
   type CycleCharacter,
 } from "../channels/wind-down-checkin.ts";
@@ -34,28 +33,51 @@ export type CycleClassification = {
 
 /**
  * Extract a markdown section by header. Returns the section body (text
- * between the matching `## Header` line and the next `## ` line or EOF).
- * Matches case-insensitive to tolerate author casing drift (F1).
+ * between the matching `## Header` OR `### Header` line and the next
+ * same-or-higher-level header (or EOF). Matches case-insensitive to
+ * tolerate author casing drift (F1 plan-tier). Supports BOTH h2 + h3
+ * since handoff convention nests sub-sections like `### Audits delivered`
+ * under `## Completed` (Bravo F2 post-impl fold; was h2-only previously
+ * which silently missed the NEEDS-REWORK signals).
+ *
+ * Section terminates at the next header of EQUAL OR HIGHER level (per
+ * markdown convention). For an h2 start, terminate on next h2. For an
+ * h3 start, terminate on next h2 OR h3.
  */
 function extractSection(body: string, header: string): string {
   const escaped = header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`^##\\s+${escaped}.*$`, "im");
+  const re = new RegExp(`^(##|###)\\s+${escaped}.*$`, "im");
   const startMatch = re.exec(body);
   if (startMatch === null) return "";
+  const headerLevel = startMatch[1] ?? "##";
   const startIdx = startMatch.index + startMatch[0].length;
   const slice = body.slice(startIdx);
-  const nextHeader = /^##\s+/m;
+  const nextHeader = headerLevel === "##" ? /^##\s+/m : /^(##|###)\s+/m;
   const endMatch = nextHeader.exec(slice);
   return endMatch === null ? slice : slice.slice(0, endMatch.index);
 }
 
 /**
- * Search a section for the first explicit CycleCharacter class name.
- * Case-insensitive (F1). Returns the class or null.
+ * Search a section for an explicit CycleCharacter class name.
+ * Case-insensitive (F1 plan-tier). When multiple class keywords appear
+ * (e.g., "PRISTINE through 5 ships with one RECOVERED moment"), the
+ * MOST-SPECIFIC class wins per rubric priority order (STALLED >
+ * INCIDENT-DRIVEN > COHORT-PASS > RECOVERED > PRISTINE) — Bravo F1
+ * post-impl fold; closes the iteration-order bias where general
+ * keywords listed first in CYCLE_CHARACTERS would mask qualifier
+ * classes appearing later in the section text. Returns the class or null.
  */
+const SELF_DECLARED_PRIORITY: readonly CycleCharacter[] = [
+  "STALLED",
+  "INCIDENT-DRIVEN",
+  "COHORT-PASS",
+  "RECOVERED",
+  "PRISTINE",
+];
+
 function findExplicitClass(text: string): CycleCharacter | null {
   const upper = text.toUpperCase();
-  for (const cls of CYCLE_CHARACTERS) {
+  for (const cls of SELF_DECLARED_PRIORITY) {
     if (upper.includes(cls)) {
       if (isCycleCharacter(cls)) return cls;
     }
