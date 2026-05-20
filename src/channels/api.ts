@@ -80,6 +80,13 @@ export type {
   FindingSeverity,
 } from "./audit-types.ts";
 
+// Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind body schema type +
+// inline `MemoryType` enum. Consumers (deferred Tier-2 ratification verb,
+// future Tier-3 T3-E memory-attention-scoring) import these from
+// `claude-conductor/channels/api` alongside `parseMemoryProposalBody` +
+// `MEMORY_TYPES` + `isMemoryType`.
+export type { MemoryProposalBody, MemoryType } from "./memory-proposal.ts";
+
 // ─── Value re-exports ──────────────────────────────────────────────
 // Preserve runtime bindings. The 9 functions below were added in Slice 3a
 // to widen the surface from 9 → 18 callable exports so Slice 3b's dotfiles
@@ -196,6 +203,16 @@ export {
   isAuditVerdict,
   isFindingSeverity,
 } from "./audit-types.ts";
+
+// Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind shared parser +
+// inline MemoryType as-const tuple + type-guard (D2 (a) of plan v0.2 —
+// inline until 2nd consumer surfaces; future T3-E memory-attention-scoring
+// is the candidate that would trigger extraction to a shared module).
+export {
+  MEMORY_TYPES,
+  isMemoryType,
+  parseMemoryProposalBody,
+} from "./memory-proposal.ts";
 
 export { NATO_POOL, isValidIdentity } from "./identity.ts";
 
