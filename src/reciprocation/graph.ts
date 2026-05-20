@@ -18,12 +18,14 @@
 
 import { parseAuditVerdictBody } from "../channels/audit-verdict.ts";
 import type { AuditClass, AuditVerdict } from "../channels/audit-types.ts";
-import type { ChannelMessage, ChannelMetadata } from "../channels/index.ts";
+import type { ChannelMessage } from "../channels/index.ts";
 
 /**
  * A single audit edge — one auditor-to-target verdict in the window.
- * Auditor identity is resolved at message-time (per plan D2):
- * `message.identity` if present, else metadata identity-map fallback.
+ * Auditor identity = message.identity (NATO letter stamped at post-time
+ * per Phase 1 ChannelMessage schema). Messages without identity are
+ * skipped — mirrors `audits/queue.ts` skip-pattern + assumes Slice 2
+ * audit-verdict messages are identity-stamped at send-time.
  */
 export type AuditEdge = {
   ts: string;
@@ -62,26 +64,10 @@ export type ReciprocationGraph = {
 
 type BuildArgs = {
   messages: readonly ChannelMessage[];
-  metadata: ChannelMetadata;
   bodies_by_ref: ReadonlyMap<string, string>;
   channel_id: string;
   window: { start_ms: number; end_ms: number };
 };
-
-function resolveAuditorIdentity(
-  message: ChannelMessage,
-  metadata: ChannelMetadata,
-): string | null {
-  if (message.identity !== undefined && message.identity.length > 0) {
-    return message.identity;
-  }
-  const identities = metadata.identities;
-  if (identities === undefined) return null;
-  for (const [letter, claim] of Object.entries(identities)) {
-    if (claim.session_id === message.from) return letter;
-  }
-  return null;
-}
 
 function resolveMessageBody(
   message: ChannelMessage,
@@ -100,12 +86,13 @@ function canonicalPairKey(a: string, b: string): readonly [string, string] {
 }
 
 export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
-  const { messages, metadata, bodies_by_ref, channel_id, window } = args;
+  const { messages, bodies_by_ref, channel_id, window } = args;
   const { start_ms, end_ms } = window;
   const edges: AuditEdge[] = [];
 
   for (const m of messages) {
     if (m.kind !== "audit-verdict") continue;
+    if (m.identity === undefined || m.identity.length === 0) continue;
     const ts_ms = Date.parse(m.ts);
     if (!Number.isFinite(ts_ms)) continue;
     if (ts_ms < start_ms || ts_ms > end_ms) continue;
@@ -113,11 +100,9 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
     if (bodyRaw === null) continue;
     const body = parseAuditVerdictBody(bodyRaw);
     if (body === null) continue;
-    const auditor = resolveAuditorIdentity(m, metadata);
-    if (auditor === null) continue;
     edges.push({
       ts: m.ts,
-      auditor_identity: auditor,
+      auditor_identity: m.identity,
       auditor_session: m.from,
       target_peer: body.target_peer,
       target_pr: { repo: body.target_pr.repo, number: body.target_pr.number },

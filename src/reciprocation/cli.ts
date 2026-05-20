@@ -13,20 +13,21 @@
  * `per_peer_audit_debt`, and `balances[]`.
  *
  * `--window cycle` resolves the start bound from the prior handoff's
- * `ended_at` frontmatter (latest entry under `~/.claude/handoffs/LATEST.md`);
- * end bound = now. Per plan D4 — strict semantics, no mtime fallback.
+ * `ended_at` frontmatter (LATEST.md in the handoffs dir, resolved via
+ * `handoffsDir()` from shared paths); end bound = now. Per plan D4 —
+ * strict semantics, no mtime fallback.
  *
  * Single-purpose CLI for now — no sub-verb routing. If future read shapes
  * materialize (top-debtors, history, etc.), add a verb layer mirroring
  * `src/audits/cli.ts`. YAGNI today.
  *
- * Plan: ~/.claude/plans/slice-T2V3-reciprocation-cli-2026-05-20.md v0.1.
+ * Plan: slice-T2V3-reciprocation-cli-2026-05-20.md in the plans dir.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { readBodyFile, readMessages, readMetadata } from "../channels/index.ts";
+import { readBodyFile, readMessages } from "../channels/index.ts";
 import { handoffsDir } from "../shared/paths.ts";
 
 import { buildReciprocationGraph } from "./graph.ts";
@@ -165,7 +166,6 @@ function recipCommand(argv: readonly string[]): void {
   const window = resolveWindow(window_spec);
 
   const messages = readMessages(channel_id);
-  const metadata = readMetadata(channel_id);
 
   const bodies_by_ref = new Map<string, string>();
   for (const m of messages) {
@@ -177,7 +177,6 @@ function recipCommand(argv: readonly string[]): void {
 
   const graph = buildReciprocationGraph({
     messages,
-    metadata,
     bodies_by_ref,
     channel_id,
     window,

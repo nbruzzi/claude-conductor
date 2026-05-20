@@ -20,32 +20,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { buildReciprocationGraph } from "../../src/reciprocation/graph.ts";
-import type {
-  ChannelMessage,
-  ChannelMetadata,
-} from "../../src/channels/index.ts";
-
-function makeMetadata(): ChannelMetadata {
-  return {
-    version: 1,
-    created_at: "2026-05-20T00:00:00.000Z",
-    lifecycle: "parallel",
-    handoff_id: "test",
-    participants: [],
-    identities: {
-      Alpha: {
-        session_id: "alpha-sid",
-        role: "pen",
-        joined_at: "2026-05-20T00:00:00.000Z",
-      },
-      Bravo: {
-        session_id: "bravo-sid",
-        role: "pen",
-        joined_at: "2026-05-20T00:00:00.000Z",
-      },
-    },
-  };
-}
+import type { ChannelMessage } from "../../src/channels/index.ts";
 
 function makeVerdictBody(opts: {
   target_peer: string;
@@ -101,7 +76,6 @@ describe("buildReciprocationGraph", () => {
   it("empty messages → empty graph", () => {
     const g = buildReciprocationGraph({
       messages: [],
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -122,7 +96,6 @@ describe("buildReciprocationGraph", () => {
           pr_number: 100,
         }),
       ],
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -156,7 +129,6 @@ describe("buildReciprocationGraph", () => {
           pr_number: 101,
         }),
       ],
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -190,7 +162,6 @@ describe("buildReciprocationGraph", () => {
     );
     const g = buildReciprocationGraph({
       messages: msgs,
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -229,7 +200,6 @@ describe("buildReciprocationGraph", () => {
           verdict: "NEEDS-REWORK",
         }),
       ],
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -263,7 +233,6 @@ describe("buildReciprocationGraph", () => {
           pr_number: 102,
         }),
       ],
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -272,17 +241,7 @@ describe("buildReciprocationGraph", () => {
     expect(g.edges[0]?.target_pr.number).toBe(101);
   });
 
-  it("identity-rotation: message.identity (post-time) wins over metadata current", () => {
-    const meta: ChannelMetadata = {
-      ...makeMetadata(),
-      identities: {
-        Charlie: {
-          session_id: "bravo-sid",
-          role: "pen",
-          joined_at: "2026-05-20T00:00:00.000Z",
-        },
-      },
-    };
+  it("identity-rotation: message.identity (post-time) is preserved on the edge", () => {
     const g = buildReciprocationGraph({
       messages: [
         makeVerdict({
@@ -293,7 +252,6 @@ describe("buildReciprocationGraph", () => {
           pr_number: 100,
         }),
       ],
-      metadata: meta,
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
@@ -326,7 +284,6 @@ describe("buildReciprocationGraph", () => {
           body: "standing by",
         },
       ],
-      metadata: makeMetadata(),
       bodies_by_ref: new Map(),
       channel_id: "ch",
       window: FULL_WINDOW,
