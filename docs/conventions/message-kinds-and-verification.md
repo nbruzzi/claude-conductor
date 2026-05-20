@@ -194,6 +194,13 @@ this convention.
   message-time-stamped (uses `ChannelMessage.identity`); fallback to
   current `metadata.identities` lookup for legacy messages without
   the structured field.
+- `verify-manifest.json` + `src/verify/{cli,drift}.ts` — Tier 3-A SSOT
+  for verification gates. Manifest enumerates each gate's local command
+  - CI step name. `bun run verify:drift` (and CI step "Check
+    verify-manifest drift") compares manifest against the workflow YAML
+    step list; flags drift loudly. `ci_only_steps` declares intentional
+    asymmetries (actionlint + the drift-meta-step itself). Closes the
+    local-clean ≠ CI-clean class structurally.
 - `src/channels/cli.ts` — `channels kinds` verb prints the per-kind
   help; `channels send` role-gate carve-out for `kind=out`.
 - `memories/feedback-walkie-talkie-out-semantics.md` — `out` kind's

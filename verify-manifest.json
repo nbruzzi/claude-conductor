@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "gates": [
+    {
+      "name": "typecheck",
+      "local_cmd": "bun run typecheck",
+      "ci_step_name": "Typecheck"
+    },
+    {
+      "name": "format",
+      "local_cmd": "bun run format:check",
+      "ci_step_name": "Format"
+    },
+    {
+      "name": "lint",
+      "local_cmd": "bun run lint",
+      "ci_step_name": "Lint"
+    },
+    {
+      "name": "check-generic-paths",
+      "local_cmd": "bun run check-generic-paths",
+      "ci_step_name": "Check generic paths"
+    },
+    {
+      "name": "check-import-extensions",
+      "local_cmd": "bun run check-import-extensions",
+      "ci_step_name": "Check import extensions"
+    },
+    {
+      "name": "test",
+      "local_cmd": "bun test",
+      "ci_step_name": "Test"
+    }
+  ],
+  "ci_only_steps": [
+    {
+      "name": "actionlint",
+      "ci_step_name": "Lint workflows",
+      "reason": "workflow YAML lint runs on CI only; not part of dev edit loop"
+    },
+    {
+      "name": "verify-drift",
+      "ci_step_name": "Check verify-manifest drift",
+      "reason": "meta-step that runs the drift detector itself; not a gate"
+    }
+  ],
+  "local_only_steps": []
+}
