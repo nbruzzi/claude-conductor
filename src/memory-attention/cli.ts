@@ -214,7 +214,7 @@ function printHelp(): void {
       "Score: apply_count_recent x 0.95^days_since_last_apply - 0.5 x violation_count_recent",
       "",
       "Sidecar state path:",
-      "  $CLAUDE_CONDUCTOR_MEMORY_ATTENTION_STATE OR <home>/.claude/conductor/memory-attention.json",
+      "  $CLAUDE_CONDUCTOR_MEMORY_ATTENTION_STATE OR <home>/<conductor-state-dir>/memory-attention.json",
       "  (written by Stop-hook 'memory-attention-updater'; reader-only here)",
       "",
       "Output: sorted score DESC (tie-break memory name ASC) per F1 deterministic-sort fold.",
