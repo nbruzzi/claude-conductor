@@ -241,7 +241,7 @@ describe("parseHandoffBodyForChannelsFromFile — file wrapper", () => {
     const path = join(tmpDir, "HANDOFF_2026-05-19_22-40.md");
     writeFileSync(
       path,
-      "# Handoff\n\n**Working directory:** /Users/nbruzzi/.claude-dotfiles\n**Branch:** main\n**Session:** a02fa5fc-e7ba-4cc0-97c5-f2023c6e7de7 (Alpha)\n**Channel:** 2026-05-18_10-50 (4 NATO peers active)\n\nSome prose body content here.\n",
+      "# Handoff\n\n**Branch:** main\n**Channel:** 2026-05-18_10-50 (4 NATO peers active)\n\nSome prose body content here.\n",
     );
     expect(parseHandoffBodyForChannelsFromFile(path)).toEqual([
       "2026-05-18_10-50",
