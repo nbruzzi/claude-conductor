@@ -30,7 +30,7 @@ import { CHANNEL_KINDS, type ChannelKind } from "../../src/channels/index.ts";
 import { renderKindPrefix } from "../../src/channels/render.ts";
 
 describe("CHANNEL_KINDS (SSOT)", () => {
-  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict, Tier 2 Verb 2 memory-proposal last)", () => {
+  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict, Tier 2 Verb 2 memory-proposal, Tier 2 Verb 1 wind-down-checkin last)", () => {
     expect(CHANNEL_KINDS).toEqual([
       // Phase 1 informational + protocol carriers
       "note",
@@ -53,6 +53,8 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       "audit-verdict",
       // Tier 2 Verb 2 cycle 2026-05-20 memory-proposal surface
       "memory-proposal",
+      // Tier 2 Verb 1 cycle 2026-05-20 wind-down-checkin cycle-close substrate
+      "wind-down-checkin",
     ]);
   });
 
@@ -66,7 +68,8 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // bandwidth-inference) adds NO new kind — bandwidth state is
     // derive-on-read, not posted as its own message kind; the T4.1
     // drift catch (Delta N2 sharper assertion) holds at 14 post-T2V2.
-    expect(CHANNEL_KINDS.length).toBe(14);
+    // 14 → 15 with Tier 2 Verb 1 `wind-down-checkin`.
+    expect(CHANNEL_KINDS.length).toBe(15);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {
