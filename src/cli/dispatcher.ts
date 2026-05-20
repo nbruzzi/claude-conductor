@@ -32,6 +32,8 @@ const SUBCOMMANDS = {
   audits: join(PACKAGE_ROOT, "src", "audits", "cli.ts"),
   bandwidth: join(PACKAGE_ROOT, "src", "bandwidth", "cli.ts"),
   reciprocation: join(PACKAGE_ROOT, "src", "reciprocation", "cli.ts"),
+  verify: join(PACKAGE_ROOT, "src", "verify", "cli.ts"),
+  "cycle-character": join(PACKAGE_ROOT, "src", "cycle-character", "cli.ts"),
 } as const satisfies Record<string, string>;
 
 type Subcommand = keyof typeof SUBCOMMANDS;
@@ -74,6 +76,7 @@ function printHelp(): void {
       "  bandwidth  Derive identity bandwidth state from artifacts (show --for ...)",
       "  reciprocation  Audit-verdict reciprocation graph (--channel <id> --window cycle)",
       "  verify     Manifest-driven gate runner + drift detector (--check / --gate <n> / default)",
+      "  cycle-character  Classify a handoff into PRISTINE/RECOVERED/INCIDENT-DRIVEN/COHORT-PASS/STALLED",
       "",
       "Global flags (position-insensitive — accepted before or after subcommand):",
       "  --json     Emit structured JSON output where the subcommand supports it.",
