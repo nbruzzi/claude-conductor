@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 nbruzzi
 
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { effectiveHome } from "./home.ts";
@@ -63,6 +64,13 @@ const COMPONENT_SPECS: { readonly [K in ComponentName]: ComponentSpec } = {
     envVar: "CLAUDE_CONDUCTOR_AUDITS_DIR",
   },
   memories: {
+    // DEPRECATED for memoriesDir() resolution — bypassed by the project-
+    // namespaced resolver added in cycle-2026-05-22 T4-Y1. Retained in
+    // COMPONENT_SPECS for type-system stability + the legacy fallback path
+    // (memoriesDir() returns join(fallbackRoot(), "memories") when
+    // CLAUDE_CODE_SESSION_ID-based discovery fails, e.g. in CLI/test
+    // environments without Claude Code's session env var). Future cleanup
+    // slice may remove if no other code-paths reference.
     defaultSuffix: "memories",
     envVar: "CLAUDE_CONDUCTOR_MEMORIES_DIR",
   },
@@ -129,6 +137,140 @@ export function auditsDir(): string {
   return resolveComponent("audits");
 }
 
-export function memoriesDir(): string {
-  return resolveComponent("memories");
+// ============================================================================
+// T4-Y1 cycle 2026-05-22 — project-namespaced memory directory helpers.
+//
+// Claude Code's memory storage convention: ~/.claude/projects/<slug>/memory/
+// where <slug> is the project root path with forward-slashes replaced by
+// hyphens (e.g. /Users/nbruzzi → -Users-nbruzzi, /Users/nbruzzi/.claude-dotfiles
+// → -Users-nbruzzi-.claude-dotfiles). This is a Claude Code harness convention;
+// deviation breaks operator memory-loading + memory-attention-updater hook
+// detection. See cycle-2026-05-22 T3-E L2 substrate gap memorialization
+// (feedback-memoriesdir-project-namespaced-resolution, candidate).
+//
+// `memoriesDir()` returns the per-project memory path. `memoriesDirForSlug(slug)`
+// is for callers that already have a slug (e.g. Stop hook extracted from
+// `input.transcriptPath`). `projectSlugFromTranscriptPath(p)` parses the slug
+// from a transcript path. `discoverProjectSlug()` resolves the current
+// session's slug by scanning `~/.claude/projects/` for the session-id's
+// transcript file (S2-A per Charlie plan-tier fold; more reliable than
+// cwd-derivation under per-session worktrees).
+//
+// NOTE: memory is the ONLY component dir that is project-namespaced. Other
+// resolvers (channelsDir, identityDir, todosDir, handoffsDir,
+// activeSessionsDir, decisionLogsDir, auditsDir) are user-scoped.
+// ============================================================================
+
+const SESSION_ID_ENV_VAR = "CLAUDE_CODE_SESSION_ID";
+let cachedProjectSlug: string | undefined = undefined;
+let cacheInitialized = false;
+
+/**
+ * Discover the project slug for the current Claude Code session by scanning
+ * `~/.claude/projects/<slug>/<session-id>.jsonl` for ownership. Module-level
+ * cache (initialized on first call → O(1) on subsequent calls within the
+ * process lifetime). Cache reset for tests via
+ * `INTERNAL.resetProjectSlugCache()`.
+ *
+ * Returns undefined when CLAUDE_CODE_SESSION_ID is unset, the projects/
+ * directory is unreadable, or no project contains a transcript file matching
+ * the session-id (e.g. CLI invocations from outside a Claude Code session).
+ */
+export function discoverProjectSlug(): string | undefined {
+  if (cacheInitialized) return cachedProjectSlug;
+  cacheInitialized = true;
+
+  const sid = process.env[SESSION_ID_ENV_VAR];
+  if (sid === undefined || sid.length === 0) return undefined;
+
+  const projectsRoot = join(effectiveHome(), ".claude", "projects");
+  let entries: string[];
+  try {
+    entries = readdirSync(projectsRoot);
+  } catch {
+    return undefined;
+  }
+
+  for (const slug of entries) {
+    const transcriptPath = join(projectsRoot, slug, `${sid}.jsonl`);
+    if (existsSync(transcriptPath)) {
+      cachedProjectSlug = slug;
+      return cachedProjectSlug;
+    }
+  }
+  return undefined;
 }
+
+/**
+ * Extract the project slug from a Claude Code transcript path. Path shape:
+ * `<home>/.claude/projects/<slug>/<session-id>.jsonl`. Returns undefined on
+ * shape mismatch. More reliable than `discoverProjectSlug()` when the caller
+ * has direct transcriptPath context (Stop hook `input.transcriptPath`);
+ * avoids the filesystem scan.
+ */
+export function projectSlugFromTranscriptPath(
+  transcriptPath: string,
+): string | undefined {
+  const match = transcriptPath.match(
+    /\/\.claude\/projects\/([^/]+)\/[^/]+\.jsonl$/,
+  );
+  return match?.[1];
+}
+
+/**
+ * Build the project-namespaced memory directory for a caller-supplied slug.
+ * Honors the same layered env-var precedence as `memoriesDir()`:
+ *   Layer 1: `CLAUDE_CONDUCTOR_MEMORIES_DIR` (operator-supplied absolute path)
+ *   Layer 2: `CLAUDE_CONDUCTOR_ROOT` prefix + `projects/<slug>/memory`
+ *   Layer 3: `~/.claude/projects/<slug>/memory` (Claude Code convention)
+ */
+export function memoriesDirForSlug(slug: string): string {
+  const env = process.env["CLAUDE_CONDUCTOR_MEMORIES_DIR"];
+  if (env !== undefined && env.length > 0) return env;
+
+  const root = process.env[ROOT_ENV_VAR];
+  if (root !== undefined && root.length > 0) {
+    return join(root, "projects", slug, "memory");
+  }
+
+  return join(effectiveHome(), ".claude", "projects", slug, "memory");
+}
+
+/**
+ * Memory storage directory for the current Claude Code session.
+ *
+ * Resolution order:
+ *   Layer 1: `CLAUDE_CONDUCTOR_MEMORIES_DIR` (operator-supplied absolute path)
+ *   Layer 2 (project-namespaced, when slug discoverable):
+ *     `discoverProjectSlug()` succeeds → `memoriesDirForSlug(slug)`
+ *   Layer 3 (legacy fallback, when slug discovery fails):
+ *     `CLAUDE_CONDUCTOR_ROOT` + `memories` OR `~/.claude/memories`
+ *
+ * The legacy fallback (Layer 3) preserves backward-compat for environments
+ * without `CLAUDE_CODE_SESSION_ID` (CLI invocations from outside a Claude
+ * Code session, test environments). Within a Claude Code session, Layer 2
+ * resolves to the per-project memory storage.
+ */
+export function memoriesDir(): string {
+  const env = process.env["CLAUDE_CONDUCTOR_MEMORIES_DIR"];
+  if (env !== undefined && env.length > 0) return env;
+
+  const slug = discoverProjectSlug();
+  if (slug !== undefined) return memoriesDirForSlug(slug);
+
+  const root = process.env[ROOT_ENV_VAR];
+  if (root !== undefined && root.length > 0) return join(root, "memories");
+  return join(fallbackRoot(), "memories");
+}
+
+export const INTERNAL = {
+  /**
+   * Test-only: reset the `discoverProjectSlug()` module-level cache so each
+   * test starts with a fresh resolution. Matches sibling INTERNAL patterns
+   * in `identity.ts` / `registry-assertion.ts`.
+   */
+  resetProjectSlugCache(): void {
+    cachedProjectSlug = undefined;
+    cacheInitialized = false;
+  },
+};
