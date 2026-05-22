@@ -58,7 +58,11 @@ import type { HookEvent } from "./types.ts";
 export const BUNDLED_CHECKS_BY_EVENT = {
   "pre-tool-use": ["session-collision-gate", "task-coordinator"],
   "post-tool-use": [],
-  stop: ["memory-attention-updater", "session-presence-unregister"],
+  stop: [
+    "memory-attention-updater",
+    "pattern-trace-auto-propose",
+    "session-presence-unregister",
+  ],
   "session-start": [
     "channel-gc",
     "channels-gc-reaper",

@@ -124,6 +124,7 @@ export const LOCK_DOMAINS = [
   "session-collision-gate-state",
   "presence-failure-log",
   "memory-attention-state",
+  "pattern-trace-emit-history",
   "none",
 ] as const satisfies readonly string[];
 
@@ -192,6 +193,13 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
       domains: ["memory-attention-state"],
       comment:
         "Tier 3-E E2 — read-modify-write cycle on sidecar MemoryAttentionState protected by withLockAsync against lockDir(<state-path>.lock). 4-NATO-peer concurrent Stop hooks serialize cleanly; bare tmp+rename would have lost-update class per Bravo plan-tier F1 fold.",
+    },
+    {
+      phase: "pattern-trace-auto-propose",
+      event: "stop",
+      domains: ["pattern-trace-emit-history"],
+      comment:
+        "Tier 4 (a) T4-X3 composition — RMW cycle on sidecar EmitHistory at ~/.claude/conductor-state/pattern-trace-emit-history.json. Protected by withLockAsync against lockDir(<state-path>.lock) for 4-NATO-peer concurrent Stop hook serialization (per memory-attention-updater sibling-pattern). Per-channel sendMemoryProposal calls write through appendMessage (already-locked per-channel by channels module — distinct domain not double-counted here). Subprocess invocation of pattern-trace CLI is read-only (git log + gh pr list + channels JSONL reads); no shared-state write.",
     },
     {
       phase: "session-presence-unregister",

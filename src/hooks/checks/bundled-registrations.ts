@@ -27,6 +27,7 @@ import type { BundledCheckName } from "../bundled-check-names.ts";
 import { check as checkSessionCollisionGate } from "./session-collision-gate.ts";
 import { check as checkSessionPresenceUnregister } from "./session-presence-unregister.ts";
 import { check as checkMemoryAttentionUpdater } from "./memory-attention-updater.ts";
+import { check as checkPatternTraceAutoPropose } from "./pattern-trace-auto-propose.ts";
 import { check as checkChannelGc } from "./channel-gc.ts";
 import { check as checkChannelsGcReaper } from "./channels-gc-reaper.ts";
 import { check as checkActiveChannelsLoad } from "./active-channels-load.ts";
@@ -69,6 +70,14 @@ export function registerBundled(
     fn: checkMemoryAttentionUpdater,
     description:
       "Tier 3-E E2 — parse session transcript for Read/Edit/Write tool calls on memory files; update sidecar MemoryAttentionState (apply_count + last_apply + ring-buffer history). Lock-protected for concurrent-write safety across 4-NATO-peer sessions. Fail-open via stderr breadcrumb.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+  builder.register("stop", {
+    name: "pattern-trace-auto-propose",
+    fn: checkPatternTraceAutoPropose,
+    description:
+      "Tier 4 (a) T4-X3 composition — read operator-curated pattern-trace watch-list at ~/.claude/conductor-state/pattern-trace-watch.json, invoke pattern-trace CLI per watched symbol, emit kind=memory-proposal to every live channel when threshold met + 7-day dedup-gate passes. Fail-open per Stop-hook convention.",
     canBlock: false,
     profiles: ["standard", "strict"],
   });
