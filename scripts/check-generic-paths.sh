@@ -154,6 +154,15 @@ P3_FILE_ALLOWLIST=(
   # assertion target. The literal is the expected-string-to-match,
   # not a path the script computes.
   "scripts/smoke-phase-2.sh"
+  # T4-X2 cycle 2026-05-22 — registry-assertion.ts JSDoc "Recovery paths"
+  # section + fail-CLOSED error message + armed-state visibility reminder
+  # reference the canonical kill-switch path
+  # `~/.claude/hook-registry-assert-warn` as operator-facing documentation.
+  # The literal IS the operator-facing recovery instruction; routing via
+  # paths.ts in JSDoc / error strings would obscure the "what file do I
+  # touch to recover" answer at exactly the moment the operator needs it
+  # (mid-session wedge). Same rationale as channels/cli.ts + disable-hooks.ts.
+  "src/hooks/registry-assertion.ts"
 )
 
 # --- 3. Patterns ---
