@@ -2,7 +2,8 @@
 // Copyright 2026 nbruzzi
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { homedir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   activeSessionsDir,
@@ -327,6 +328,32 @@ describe("paths — T4-Y1 project-namespaced memoriesDir helpers", () => {
       process.env["CLAUDE_CODE_SESSION_ID"] = "different-sid";
       const after = discoverProjectSlug();
       expect(after).toBeUndefined();
+    });
+
+    // Charlie L3-PR-N1 fold (cycle 2026-05-22 T4-Y1 v0.3 amendment) —
+    // happy-path positive-detection test for discoverProjectSlug. Unit-test
+    // suite previously asserted only undefined cases + cache behavior; this
+    // case closes the "future refactor breaks scan logic + passes tests +
+    // ships broken" failure mode by asserting the load-bearing positive
+    // path.
+    test("returns slug when CLAUDE_CODE_SESSION_ID matches a project's transcript file (happy path)", () => {
+      const tmpHome = mkdtempSync(join(tmpdir(), "paths-discoverProjectSlug-"));
+      const sid = "happy-path-sid-00000000-0000-0000-0000-000000000000";
+      const slug = "-Users-testfixture-projectx";
+      const projectDir = join(tmpHome, ".claude", "projects", slug);
+      const origHome = process.env["HOME"];
+      try {
+        mkdirSync(projectDir, { recursive: true });
+        writeFileSync(join(projectDir, `${sid}.jsonl`), "{}\n");
+        process.env["HOME"] = tmpHome;
+        process.env["CLAUDE_CODE_SESSION_ID"] = sid;
+        INTERNAL.resetProjectSlugCache();
+        expect(discoverProjectSlug()).toBe(slug);
+      } finally {
+        if (origHome === undefined) delete process.env["HOME"];
+        else process.env["HOME"] = origHome;
+        rmSync(tmpHome, { recursive: true, force: true });
+      }
     });
   });
 });
