@@ -39,7 +39,11 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { memoriesDir } from "../../shared/paths.ts";
+import {
+  memoriesDir,
+  memoriesDirForSlug,
+  projectSlugFromTranscriptPath,
+} from "../../shared/paths.ts";
 import { withLockAsync } from "../lock.ts";
 import {
   parseMemoryAttentionState,
@@ -209,13 +213,30 @@ export async function check(input: HookInput): Promise<HookResult> {
     return pass();
   }
 
-  const memDir = memoriesDir();
+  // T4-Y1 cycle 2026-05-22 — prefer transcriptPath-extracted slug over
+  // memoriesDir() fallback. transcriptPath is the most reliable slug source
+  // inside Stop hook context (input.transcriptPath is always the canonical
+  // ~/.claude/projects/<slug>/<sid>.jsonl shape).
+  const slug = projectSlugFromTranscriptPath(transcriptPath);
+  const memDir = slug !== undefined ? memoriesDirForSlug(slug) : memoriesDir();
+
   const events: ToolUseEvent[] = [];
   for (const line of transcript.split("\n")) {
     if (line.length === 0) continue;
     events.push(...extractMemoryToolUseEvents(line, memDir));
   }
-  if (events.length === 0) return pass();
+  if (events.length === 0) {
+    // NIT-1 (T4-Y1 Charlie plan-tier fold) — debug visibility on silent-no-op.
+    // Surfaces the "transcriptPath shape unrecognized + cwd-fallback also
+    // empty" failure mode early so operators don't lose days waiting for
+    // sidecar that never populates. Single stderr line; non-blocking.
+    if (slug === undefined) {
+      console.error(
+        `[memory-attention-updater] transcriptPath shape unrecognized + memoriesDir() fallback path matched no events. transcriptPath=${transcriptPath} memDir=${memDir}`,
+      );
+    }
+    return pass();
+  }
 
   const path = statePath();
   const now = new Date().toISOString();
