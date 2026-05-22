@@ -157,7 +157,7 @@ describe("assertWiringComplete — fail-CLOSED (env-var unset)", () => {
     );
     expect(exitCalls).toEqual([2]);
     expect(stderrCalls.join("")).toContain(
-      "HOOK_REGISTRY_ASSERT=warn for one-shot recovery",
+      "HOOK_REGISTRY_ASSERT=warn for pre-launch one-shot recovery",
     );
   });
 });
@@ -312,5 +312,131 @@ describe("assertWiringComplete — audit log line bounds", () => {
     if (first === undefined) throw new Error("captured first entry undefined");
     const entry = JSON.parse(first.trim()) as { argv: string[] };
     expect(entry.argv.length).toBeLessThanOrEqual(3);
+  });
+});
+
+// T4-X2 — file-based kill-switch recovery path.
+// Hard-coded path constant; drift-check against INTERNAL.RECOVERY_KILL_SWITCH_BASENAME
+// in the final test of this block (which depends on the impl landing).
+const KILL_SWITCH_BASENAME = "hook-registry-assert-warn";
+
+function killSwitchFilePath(): string {
+  return join(tmpHome, ".claude", KILL_SWITCH_BASENAME);
+}
+
+function armKillSwitch(): void {
+  Bun.spawnSync(["mkdir", "-p", join(tmpHome, ".claude")]);
+  Bun.spawnSync(["touch", killSwitchFilePath()]);
+}
+
+function disarmKillSwitch(): void {
+  try {
+    rmSync(killSwitchFilePath());
+  } catch {
+    // ignore; file may not exist
+  }
+}
+
+describe("assertWiringComplete — recovery via file kill-switch (T4-X2)", () => {
+  test("file present + wiring broken → recovery-mode (no exit) + audit log trigger:'file'", () => {
+    armKillSwitch();
+    Bun.spawnSync(["mkdir", "-p", join(tmpHome, ".claude", "logs")]);
+
+    assertWiringComplete(
+      buildBrokenBlockingRegistry("pre-tool-use"),
+      emptyOrders(),
+    );
+
+    expect(exitCalls).toEqual([]); // recovery triggered, NOT fail-CLOSED
+    expect(stderrCalls.join("")).toContain("DOWNGRADED to warn");
+    expect(stderrCalls.join("")).toContain(KILL_SWITCH_BASENAME);
+
+    const content = readFileSync(INTERNAL.recoveryLogPath(), "utf-8").trim();
+    const entry = JSON.parse(content) as { trigger?: string };
+    expect(entry.trigger).toBe("file");
+  });
+
+  test("file present + env=warn (BOTH triggers) → audit log trigger:'env' (env precedence)", () => {
+    armKillSwitch();
+    process.env[INTERNAL.RECOVERY_ENV_VAR_NAME] =
+      INTERNAL.RECOVERY_ENV_VAR_VALUE;
+    Bun.spawnSync(["mkdir", "-p", join(tmpHome, ".claude", "logs")]);
+
+    assertWiringComplete(
+      buildBrokenBlockingRegistry("pre-tool-use"),
+      emptyOrders(),
+    );
+
+    expect(exitCalls).toEqual([]);
+    const content = readFileSync(INTERNAL.recoveryLogPath(), "utf-8").trim();
+    const entry = JSON.parse(content) as { trigger?: string };
+    expect(entry.trigger).toBe("env");
+  });
+
+  test("file absent + env unset + wiring broken → fail-CLOSED + error mentions BOTH bypass paths (L4-N1)", () => {
+    assertWiringComplete(
+      buildBrokenBlockingRegistry("pre-tool-use"),
+      emptyOrders(),
+    );
+
+    expect(exitCalls).toEqual([2]);
+    const stderr = stderrCalls.join("");
+    expect(stderr).toContain("HOOK_REGISTRY_ASSERT=warn"); // env path
+    expect(stderr).toContain(KILL_SWITCH_BASENAME); // file path
+  });
+
+  test("file present + wiring CLEAN → no exit + armed-state visibility reminder (L3-N1)", () => {
+    armKillSwitch();
+
+    assertWiringComplete(buildEmptyRegistry(), emptyOrders());
+
+    expect(exitCalls).toEqual([]);
+    const stderr = stderrCalls.join("");
+    expect(stderr).toContain(KILL_SWITCH_BASENAME);
+    expect(stderr).toContain("still ARMED");
+  });
+
+  test("rm of kill-switch file restores fail-CLOSED", () => {
+    armKillSwitch();
+    Bun.spawnSync(["mkdir", "-p", join(tmpHome, ".claude", "logs")]);
+    assertWiringComplete(
+      buildBrokenBlockingRegistry("pre-tool-use"),
+      emptyOrders(),
+    );
+    expect(exitCalls).toEqual([]); // armed → recovery
+
+    // Reset captured state; disarm.
+    exitCalls.length = 0;
+    stderrCalls.length = 0;
+    disarmKillSwitch();
+
+    assertWiringComplete(
+      buildBrokenBlockingRegistry("pre-tool-use"),
+      emptyOrders(),
+    );
+    expect(exitCalls).toEqual([2]); // disarmed → fail-CLOSED restored
+  });
+
+  test("kill-switch path resolution respects live HOME env (per feedback-homedir-not-live-from-env)", () => {
+    // tmpHome is the test's HOME override (per beforeEach). The kill-switch
+    // helper reads process.env['HOME'] LIVE, not os.homedir() cached. Verify
+    // by arming with the current tmpHome, then asserting the file resolves
+    // at tmpHome (not whatever real-HOME might be).
+    armKillSwitch();
+    expect(existsSync(killSwitchFilePath())).toBe(true);
+    expect(killSwitchFilePath().startsWith(tmpHome)).toBe(true);
+
+    // Now invoke assertWiringComplete with clean wiring — should pick up
+    // file at tmpHome path (not real ~/.claude/), trigger armed-state
+    // visibility reminder against tmpHome path.
+    assertWiringComplete(buildEmptyRegistry(), emptyOrders());
+    expect(exitCalls).toEqual([]);
+  });
+
+  test("INTERNAL constants drift-check (post-impl assertion)", () => {
+    // Hard-coded test constant + helper must match impl-side INTERNAL exports.
+    // Failure here indicates path-constant drift between test fixture and impl.
+    expect(INTERNAL.RECOVERY_KILL_SWITCH_BASENAME).toBe(KILL_SWITCH_BASENAME);
+    expect(INTERNAL.killSwitchPath()).toBe(killSwitchFilePath());
   });
 });
