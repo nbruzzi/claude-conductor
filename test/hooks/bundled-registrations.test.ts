@@ -87,7 +87,12 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // Stream 3 Slice 3 of generic-worktree-provisioner RFC (2026-05-19) —
 // `repo-worktree-gc` hook added to session-start event; count rises
 // 13 → 14. Same plan v0.2 §Phasing Slice 3.
-const EXPECTED_COUNT = 15;
+//
+// T4-X3 cycle 2026-05-22 — `pattern-trace-auto-propose` Stop hook added
+// (Tier 4 (a) composition primitive: pattern-trace × memory-proposal).
+// Count rises 15 → 16. Plan: T4-X3 v0.2 + Alpha plan-tier audit RATIFY-
+// WITH-FOLDS 4/4 @ 15:20Z.
+const EXPECTED_COUNT = 16;
 
 /** TA-9 fold (Phase 4 Step A Layer 1 audit): explicit-presence pin for
  *  `peer-message-deliverer` on `user-prompt-submit` event. Sibling-shape

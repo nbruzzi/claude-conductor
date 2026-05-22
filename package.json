@@ -194,6 +194,16 @@
       "import": "./src/hooks/checks/memory-attention-updater.ts",
       "default": "./src/hooks/checks/memory-attention-updater.ts"
     },
+    "./hooks/checks/pattern-trace-auto-propose": {
+      "types": "./src/hooks/checks/pattern-trace-auto-propose.ts",
+      "import": "./src/hooks/checks/pattern-trace-auto-propose.ts",
+      "default": "./src/hooks/checks/pattern-trace-auto-propose.ts"
+    },
+    "./channels/send-primitive": {
+      "types": "./src/channels/send-primitive.ts",
+      "import": "./src/channels/send-primitive.ts",
+      "default": "./src/channels/send-primitive.ts"
+    },
     "./hooks/checks/session-presence-unregister": {
       "types": "./src/hooks/checks/session-presence-unregister.ts",
       "import": "./src/hooks/checks/session-presence-unregister.ts",
