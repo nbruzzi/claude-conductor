@@ -27,7 +27,11 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { aggregateGraph, type RawEvent } from "./detector.ts";
+import {
+  aggregateGraph,
+  buildMemoryProposalPayload,
+  type RawEvent,
+} from "./detector.ts";
 import { runGit } from "../git/index.ts";
 import { runGh } from "../gh/index.ts";
 import { channelsDir, handoffsDir } from "../shared/paths.ts";
@@ -408,30 +412,6 @@ function formatHumanOutput(
   return `${lines.join("\n")}\n`;
 }
 
-function buildMemoryProposalPayload(
-  graph: ReturnType<typeof aggregateGraph>,
-): Record<string, unknown> {
-  const peers = graph.distinct_peers.join(", ");
-  const description = `Pattern '${graph.symbol}' adopted by ${graph.distinct_peers_count} peers; cross-author propagation surfaced by pattern-trace`;
-  const reason = `T3-D pattern-trace detected ${graph.absorbing_events.length} absorbing events across ${graph.distinct_peers_count} distinct peers (${peers}); auto-memory-suggest threshold met. Latency to first cross-author absorption: ${graph.latency_to_cross_author_absorption_ms ?? "n/a"}ms.`;
-  const proposed_body = [
-    `Pattern: ${graph.symbol}`,
-    "",
-    `Introducing: ${graph.introducing_event?.author ?? "?"} at ${graph.introducing_event?.ts ?? "?"}`,
-    `Absorbing peers: ${peers}`,
-    `Memorialize as pattern-of-art if propagation reflects substantive convention vs incidental co-occurrence (operator judgment).`,
-  ].join("\n");
-  return {
-    kind_version: 1,
-    candidate_name: `pattern-trace-${graph.symbol.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-    memory_type: "feedback",
-    description,
-    reason,
-    proposed_body,
-    amends_existing: null,
-  };
-}
-
 function main(): void {
   const argv = process.argv.slice(2);
   const first = argv[0];
@@ -492,15 +472,17 @@ function main(): void {
   const generated_at = new Date(nowMs).toISOString();
   const window = { start: since, end: new Date(nowMs).toISOString() };
 
+  const memoryPayload = flags.emit_memory_proposal
+    ? buildMemoryProposalPayload(graph)
+    : null;
+
   if (flags.format === "human") {
     process.stdout.write(
       formatHumanOutput(graph, sourcesScanned, generated_at, window),
     );
-    if (flags.emit_memory_proposal && graph.memory_suggest_triggered) {
+    if (memoryPayload !== null) {
       process.stdout.write("\nMemory-proposal payload:\n");
-      process.stdout.write(
-        JSON.stringify(buildMemoryProposalPayload(graph), null, 2),
-      );
+      process.stdout.write(JSON.stringify(memoryPayload, null, 2));
       process.stdout.write("\n");
     }
     process.exit(0);
@@ -513,8 +495,8 @@ function main(): void {
     sources_scanned: sourcesScanned,
     graph,
   };
-  if (flags.emit_memory_proposal && graph.memory_suggest_triggered) {
-    output["memory_proposal_payload"] = buildMemoryProposalPayload(graph);
+  if (memoryPayload !== null) {
+    output["memory_proposal_payload"] = memoryPayload;
   }
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 }
