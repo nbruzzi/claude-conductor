@@ -44,6 +44,11 @@
       "import": "./src/active-sessions/index.ts",
       "default": "./src/active-sessions/index.ts"
     },
+    "./shared/artifact-id": {
+      "types": "./src/shared/artifact-id.ts",
+      "import": "./src/shared/artifact-id.ts",
+      "default": "./src/shared/artifact-id.ts"
+    },
     "./shared/disable-hooks": {
       "types": "./src/shared/disable-hooks.ts",
       "import": "./src/shared/disable-hooks.ts",
