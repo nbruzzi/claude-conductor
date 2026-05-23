@@ -61,6 +61,11 @@ import { getWallClockNow } from "../shared/clock.ts";
 import { effectiveHome } from "../shared/home.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import { activeSessionsDir } from "../shared/paths.ts";
+import { VALID_ID_REGEX, isValidArtifactId } from "../shared/artifact-id.ts";
+
+// Re-export isValidArtifactId to preserve existing consumer imports
+// (6 src/channels/* + 3 test/channels/* call sites resolve from this module).
+export { isValidArtifactId } from "../shared/artifact-id.ts";
 
 /** 30-minute live window — mirrors channel heartbeat TTL. */
 export const LIVE_WINDOW_MS = 30 * 60 * 1000;
@@ -342,19 +347,12 @@ function stripTrailingGitDir(path: string): string {
   return path;
 }
 
-/**
- * Session IDs and artifact IDs are joined into filesystem paths inside
- * ~/.claude/active-sessions/. A malformed value containing .., /, or NUL
- * would escape the registry directory. Defense-in-depth: validate at every
- * boundary, even though Claude Code's raw.session_id is normally a UUID.
- */
-const VALID_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
-
+// Session-id validation uses the same syntactic shape as artifact-id
+// (`../shared/artifact-id.ts` is the SSOT for the regex). Two predicates
+// exist as separate exports for caller-side naming intent — sessionId-shaped
+// values (UUIDs) and artifact-id-shaped values (paths into filesystem
+// registries) share the same shape check but document their distinct purpose.
 export function isValidSessionId(s: unknown): s is string {
-  return typeof s === "string" && VALID_ID_REGEX.test(s);
-}
-
-export function isValidArtifactId(s: unknown): s is string {
   return typeof s === "string" && VALID_ID_REGEX.test(s);
 }
 
