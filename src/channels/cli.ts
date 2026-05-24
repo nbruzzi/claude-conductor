@@ -157,6 +157,8 @@ const VERB_HELP: Record<string, string> = {
     "set-role <channel-id> --role <pen|queue|out>\n  Update the role of this session's claimed identity. Exits 5 if no\n  identity is held (per RE-6 — silent no-op is the failure mode).",
   "close-peer":
     "close-peer <channel-id> --peer <Identity> [--force]\n  Release a peer's NATO identity if its heartbeat is > 60 s stale.\n  --force overrides the staleness gate (operator escape hatch).",
+  "release-self":
+    "release-self <channel-id>\n  Release THIS session's NATO identity claim on the channel.\n  Resolves the held letter automatically via getIdentityForSession; uses\n  implicit force (self-heartbeat is fresh by definition). CAS-guarded\n  against takeover races: if another peer claimed your identity between\n  the resolve + release steps, exits 7 RACE_RELEASED rather than\n  mistakenly releasing their fresh claim. Posts a 'self-released' status\n  message (distinct from 'peer-closed') so observers distinguish\n  operator-initiated self-release from peer-side close-peer action.\n  Exits 5 NOT_HELD if no identity is claimed on this channel.",
   "forget-cursor":
     'forget-cursor <channel-id>\n  Reset this session\'s last-seen cursor on the channel.\n  Subsequent --since-cursor reads will return full history (then bootstrap a fresh cursor).\n  Idempotent: kind="cleared" if cursor existed, "absent" otherwise,\n              "archived" if channel is archived, "error" on EACCES/EBUSY.\n  Use \'show-cursor <channel-id>\' to inspect first.\n  Note: this clears the `read --since-cursor` cursor only. For the\n  peer-message-deliverer hook cursor, use \'forget-message-cursor\'.',
   "show-cursor":
@@ -205,7 +207,8 @@ const TOP_LEVEL_HELP =
   "\n" +
   "Subcommands: from-handoff | resolve-handoff | summarize-handoff-channel | create | join |\n" +
   "             close | send | read | list | meta | heartbeat | peers | body | whoami |\n" +
-  "             set-role | close-peer | forget-cursor | show-cursor | forget-message-cursor |\n" +
+  "             set-role | close-peer | release-self | forget-cursor | show-cursor |\n" +
+  "             forget-message-cursor |\n" +
   "             show-message-cursor | kinds\n" +
   "\n" +
   "Run '<subcommand> --help' for verb-specific usage.";
@@ -1568,13 +1571,142 @@ export async function runChannelsCli(
             },
           );
         }
-        // result.kind === "not-held" (TS narrows by elimination).
+        if (result.kind === "not-held") {
+          die(
+            ctx,
+            `[close-peer] no identity '${peer}' on channel '${channelId}'`,
+            {
+              code: 5,
+              category: "NOT_HELD",
+            },
+          );
+        }
+        // result.kind === "session-mismatch" — unreachable from close-peer
+        // (doesn't pass casSessionId). Defensive die catches future
+        // substrate-shape changes; mirrors the exhaustive-handler pattern
+        // used in release-self. Bravo L2 NIT fold (2026-05-24).
         die(
           ctx,
-          `[close-peer] no identity '${peer}' on channel '${channelId}'`,
+          `[close-peer] unexpected closeStalePeerIdentity result kind '${result.kind}' for peer '${peer}' — close-peer does not pass casSessionId so session-mismatch should be unreachable`,
           {
-            code: 5,
-            category: "NOT_HELD",
+            code: 1,
+            category: "UNEXPECTED",
+          },
+        );
+      }
+      case "release-self": {
+        // Self-targeted sibling of `close-peer` — releases THIS session's
+        // claim on the channel. Auto-resolves the held letter (no --peer
+        // flag) and uses implicit force (self-heartbeat is fresh by
+        // definition; staleness gate would always block otherwise).
+        //
+        // CAS-guarded: the inner closeStalePeerIdentity call passes
+        // `casSessionId: sessionId` so a concurrent peer takeover via
+        // `join --as <my-letter> --force --from-session <my-uuid>` fails
+        // the in-lock check and returns kind: "session-mismatch" instead
+        // of silently releasing the new holder's claim. Maps to exit 7
+        // RACE_RELEASED — distinct from NOT_HELD (5) and STILL_ACTIVE (6)
+        // so operators can tell from the exit code why the verb refused.
+        const channelId = requireChannelId(ctx, rest, 0);
+        const sessionId = sid();
+        const claim = await getIdentityForSession(channelId, sessionId);
+        if (claim === null) {
+          die(
+            ctx,
+            `[release-self] this session has no identity claim on channel '${channelId}'`,
+            {
+              code: 5,
+              category: "NOT_HELD",
+              remediation: `Run 'channels join ${channelId}' first to claim an identity.`,
+            },
+          );
+        }
+        const identity = claim.identity;
+        const result = await closeStalePeerIdentity({
+          channelId,
+          identity,
+          staleThresholdMs: STALE_THRESHOLD_MS,
+          force: true,
+          casSessionId: sessionId,
+        });
+        if (result.kind === "released") {
+          const unlinkResult = unlinkIdentitySentinelOrLogOrphan(
+            channelId,
+            identity,
+            result.releasedClaim,
+          );
+          const orphanSentinel =
+            unlinkResult.ok === false && unlinkResult.code !== "ENOENT";
+          // Audit-trail status message — `self-released` prefix
+          // distinguishes operator-initiated self-release from the
+          // `peer-closed` pattern emitted by close-peer (actor ≠
+          // subject). Same broad shape (identity + session + sentinel
+          // hint) so observers can grep both with the same parser.
+          const selfReleasedMessage: ChannelMessage = {
+            ts: new Date().toISOString(),
+            from: sid(),
+            kind: "status",
+            body: `self-released: identity ${identity} (session ${sessionId}) released by self${orphanSentinel ? " (orphan-sentinel)" : ""}`,
+          };
+          await appendMessage({
+            channelId,
+            message: selfReleasedMessage,
+          });
+          const responseBody: {
+            kind: "released";
+            identity: string;
+            previous_session_id: string;
+            orphan_sentinel: boolean;
+            sentinel_error?: { code: string; detail: string };
+          } = {
+            kind: "released",
+            identity,
+            previous_session_id: sessionId,
+            orphan_sentinel: orphanSentinel,
+          };
+          if (orphanSentinel && unlinkResult.ok === false) {
+            responseBody.sentinel_error = {
+              code: unlinkResult.code,
+              detail: unlinkResult.detail,
+            };
+          }
+          printJson(responseBody);
+          return;
+        }
+        if (result.kind === "session-mismatch") {
+          die(
+            ctx,
+            `[release-self] race detected: identity '${identity}' is now held by session '${result.actualSessionId}' (someone took over between resolve and release)`,
+            {
+              code: 7,
+              category: "RACE_RELEASED",
+              remediation: `Re-run 'channels whoami ${channelId}' to verify current claim before retrying.`,
+            },
+          );
+        }
+        if (result.kind === "not-held") {
+          // Race window: getIdentityForSession saw a claim, but a
+          // concurrent removeIdentityClaim cleared it before our
+          // closeStalePeerIdentity lock acquired. Treat as success-shape
+          // not-held (the operator's intent — "drop my claim" — is
+          // already satisfied).
+          die(
+            ctx,
+            `[release-self] identity '${identity}' was already released between resolve and close (concurrent close-peer or session re-spawn)`,
+            {
+              code: 5,
+              category: "NOT_HELD",
+            },
+          );
+        }
+        // result.kind === "still-active" — impossible with force=true.
+        // Defensive die in case substrate semantics change.
+        die(
+          ctx,
+          `[release-self] unexpected closeStalePeerIdentity result kind '${result.kind}' (expected released | session-mismatch | not-held)`,
+          {
+            code: 1,
+            category: "UNEXPECTED",
           },
         );
       }
