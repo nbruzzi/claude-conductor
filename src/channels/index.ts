@@ -1063,12 +1063,27 @@ export async function closeStalePeerIdentity(args: {
   identity: string;
   staleThresholdMs: number;
   force: boolean;
+  /**
+   * Optional CAS gate: when set, the in-lock claim-read MUST match this
+   * session_id. Mismatch returns `{kind: "session-mismatch", ...}` without
+   * mutating metadata or sentinel state. Added for the `release-self` CLI
+   * verb (cycle 2026-05-24 Alpha Tier 4) to close the resolve-then-release
+   * race: if another peer's `claim --as <Identity> --force` lands between
+   * `getIdentityForSession` and `closeStalePeerIdentity`, force=true alone
+   * would mistakenly release THEIR fresh claim. With casSessionId set, the
+   * race fails closed rather than silently corrupting peer state.
+   *
+   * Unset = legacy behavior (no CAS check; close-peer's operator-escape-
+   * hatch shape is preserved).
+   */
+  casSessionId?: string;
 }): Promise<
   | { kind: "released"; releasedClaim: IdentityClaim }
   | { kind: "still-active"; ageMs: number | null }
   | { kind: "not-held" }
+  | { kind: "session-mismatch"; actualSessionId: string }
 > {
-  const { channelId, identity, staleThresholdMs, force } = args;
+  const { channelId, identity, staleThresholdMs, force, casSessionId } = args;
   if (!isValidArtifactId(channelId)) {
     throw new Error(
       `[channels] closeStalePeerIdentity: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
@@ -1079,6 +1094,15 @@ export async function closeStalePeerIdentity(args: {
     const claim = meta.identities?.[identity];
     if (claim === undefined) {
       return { kind: "not-held" } as const;
+    }
+    // CAS gate — verify holder matches expected before any mutation.
+    // Runs BEFORE staleness check so a session-mismatch never gets
+    // misattributed as still-active.
+    if (casSessionId !== undefined && claim.session_id !== casSessionId) {
+      return {
+        kind: "session-mismatch",
+        actualSessionId: claim.session_id,
+      } as const;
     }
     // Heartbeat snapshot — read inside the lock so it's stable w/r/t
     // other metadata mutators (the peer's own touchHeartbeat is

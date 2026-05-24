@@ -679,6 +679,79 @@ describe("identity", () => {
       });
       expect(setResult.kind).toBe("not-held");
     });
+
+    it("closeStalePeerIdentity: session-mismatch when casSessionId differs from holder (race-window CAS gate)", async () => {
+      // CAS-gate scenario added for the release-self CLI verb (cycle
+      // 2026-05-24 Alpha Tier 4). Without this gate, force=true would
+      // mistakenly release a fresh claim that took over between caller's
+      // resolve + close steps. With casSessionId set, the in-lock
+      // session_id check rejects mismatches as kind="session-mismatch"
+      // (no mutation, no sentinel touch).
+      await createChannel({
+        channelId: "c-csp-cas",
+        handoffId: "c-csp-cas",
+        sessionId: SESSION,
+      });
+      // Seed: TAKEOVER scenario simulated by claiming with one session,
+      // then attempting to close with force + casSessionId of a
+      // DIFFERENT session (the operator's pre-takeover read).
+      const currentHolder = "current-holder-session";
+      const operatorPreTakeover = "operator-pre-takeover-session";
+      await claimIdentity({
+        channelId: "c-csp-cas",
+        sessionId: currentHolder,
+      });
+      // Fresh heartbeat — without CAS this would fire the still-active
+      // branch (force=false) OR release (force=true). With CAS the
+      // session_id mismatch fires regardless of force.
+      touchHeartbeat("c-csp-cas", currentHolder);
+
+      const result = await closeStalePeerIdentity({
+        channelId: "c-csp-cas",
+        identity: "Alpha",
+        staleThresholdMs: 60_000,
+        force: true,
+        casSessionId: operatorPreTakeover,
+      });
+      expect(result.kind).toBe("session-mismatch");
+      if (result.kind === "session-mismatch") {
+        expect(result.actualSessionId).toBe(currentHolder);
+      }
+      // Metadata untouched: Alpha still held by currentHolder.
+      const meta = readMetadata("c-csp-cas");
+      expect(meta.identities?.["Alpha"]?.session_id).toBe(currentHolder);
+    });
+
+    it("closeStalePeerIdentity: released when casSessionId matches holder (CAS happy path)", async () => {
+      // Mirror of the session-mismatch test — when casSessionId DOES
+      // match the holder, the gate passes through to the staleness/force
+      // logic. force=true releases the claim.
+      await createChannel({
+        channelId: "c-csp-cas-match",
+        handoffId: "c-csp-cas-match",
+        sessionId: SESSION,
+      });
+      const holder = "self-session-id";
+      await claimIdentity({
+        channelId: "c-csp-cas-match",
+        sessionId: holder,
+      });
+      touchHeartbeat("c-csp-cas-match", holder);
+
+      const result = await closeStalePeerIdentity({
+        channelId: "c-csp-cas-match",
+        identity: "Alpha",
+        staleThresholdMs: 60_000,
+        force: true,
+        casSessionId: holder,
+      });
+      expect(result.kind).toBe("released");
+      if (result.kind === "released") {
+        expect(result.releasedClaim.session_id).toBe(holder);
+      }
+      const meta = readMetadata("c-csp-cas-match");
+      expect(meta.identities?.["Alpha"]).toBeUndefined();
+    });
   });
 
   describe("claimIdentityNamed (P2 — channel-as-flag plan)", () => {
