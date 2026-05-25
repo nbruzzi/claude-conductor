@@ -88,6 +88,14 @@ function makeVerdictBody(opts: {
       c_reframe_if_applicable: null,
     },
     findings: [],
+    // Substrate-class PR (target_pr.repo = "claude-conductor"); the
+    // send-time validator at substrate-class.ts:v0.1.1 requires non-empty
+    // cross_edge_consumers_verified. Fixture enumerates a plausible
+    // consumer-edge for shape-only purposes (test exercises reciprocation
+    // graph builder, not consumer-verification semantics).
+    cross_edge_consumers_verified: [
+      "~/Repos/claude-conductor-dashboard/src/lib/server/adapters/active-sessions.ts",
+    ],
   });
 }
 
