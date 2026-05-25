@@ -109,6 +109,13 @@ EXCLUDE_PATHSPECS=(
   # Audit-internal logs (decision records + audit transcripts)
   ":(exclude)decisions"
   ":(exclude)audits"
+  # Cycle 2026-05-25 substrate-evolution slice — substrate-class PR
+  # detection helper uses 'nbruzzi/<repo>' as GitHub-repo-identifier
+  # convention (NOT path-substrate-leak); SUBSTRATE_CLASS_REPOS const
+  # set is project-config data. Tests reference the same identifiers
+  # in their fixture-cases per paired-contract-test discipline.
+  ":(exclude)src/channels/substrate-class.ts"
+  ":(exclude)test/channels/substrate-class.test.ts"
 )
 
 # P3 file allowlist — 12 plugin files with legitimate \.claude/ references.
