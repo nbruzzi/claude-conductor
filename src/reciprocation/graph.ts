@@ -19,6 +19,7 @@
 import { parseAuditVerdictBody } from "../channels/audit-verdict.ts";
 import type { AuditClass, AuditVerdict } from "../channels/audit-types.ts";
 import type { ChannelMessage } from "../channels/index.ts";
+import { isSubstrateClassPR } from "../channels/substrate-class.ts";
 
 /**
  * A single audit edge — one auditor-to-target verdict in the window.
@@ -35,6 +36,15 @@ export type AuditEdge = {
   target_pr: { repo: string; number: number };
   verdict: AuditVerdict;
   audit_class: AuditClass;
+  /**
+   * Cross-edge consumer-edges the auditor verified, when the audit-
+   * verdict body provided them. Absent (`undefined`) for verdicts that
+   * pre-date the field OR for non-substrate-class PRs where the field
+   * is optional. Empty-array means "auditor explicitly listed none" —
+   * distinct from absent. Per
+   * `feedback-audit-cohort-missed-cross-edge-shim-consumer`.
+   */
+  cross_edge_consumers_verified?: readonly string[];
 };
 
 /**
@@ -60,6 +70,21 @@ export type ReciprocationGraph = {
   edges: readonly AuditEdge[];
   per_peer_audit_debt: Readonly<Record<string, number>>;
   balances: readonly ReciprocationBalance[];
+  /**
+   * Per-peer cross-edge-consumer coverage aggregate. Each entry counts
+   * audit-verdicts the peer AUTHORED that included non-empty
+   * `cross_edge_consumers_verified`. Surfacing primitive for the
+   * audit-cohort-blind-spot signal: a peer whose verdicts uniformly
+   * omit the field (count == 0 while audit-edges > 0) is the
+   * substrate-side-focused-lens-set pattern caught at cycle 2026-05-25
+   * PR #119 (per `feedback-audit-cohort-missed-cross-edge-shim-consumer`).
+   * Pre-PR-#120 verdicts (no field) are excluded from numerator AND
+   * denominator — only verdicts that COULD have included the field
+   * count.
+   */
+  cross_edge_coverage_by_peer: Readonly<
+    Record<string, { with_consumers: number; total_substrate_class: number }>
+  >;
 };
 
 type BuildArgs = {
@@ -108,6 +133,9 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
       target_pr: { repo: body.target_pr.repo, number: body.target_pr.number },
       verdict: body.verdict,
       audit_class: body.audit_class,
+      ...(body.cross_edge_consumers_verified !== undefined
+        ? { cross_edge_consumers_verified: body.cross_edge_consumers_verified }
+        : {}),
     });
   }
 
@@ -163,11 +191,33 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
             : 0,
   );
 
+  // Cross-edge coverage aggregate per auditor identity. Denominator counts
+  // substrate-class verdicts where the auditor's body included the field
+  // (present + array — including empty); numerator counts those with non-
+  // empty array. Verdicts whose body pre-dates the field (undefined) are
+  // excluded from BOTH; only schema-aware substrate-class verdicts count.
+  const coverage: Record<
+    string,
+    { with_consumers: number; total_substrate_class: number }
+  > = {};
+  for (const e of edges) {
+    if (!isSubstrateClassPR(e.target_pr)) continue;
+    if (e.cross_edge_consumers_verified === undefined) continue;
+    const entry = coverage[e.auditor_identity] ?? {
+      with_consumers: 0,
+      total_substrate_class: 0,
+    };
+    entry.total_substrate_class += 1;
+    if (e.cross_edge_consumers_verified.length > 0) entry.with_consumers += 1;
+    coverage[e.auditor_identity] = entry;
+  }
+
   return {
     channel_id,
     window: { start_ms, end_ms },
     edges,
     per_peer_audit_debt: debt,
     balances,
+    cross_edge_coverage_by_peer: coverage,
   };
 }
