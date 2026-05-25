@@ -572,3 +572,96 @@ describe("parseAuditVerdictBody — Section 14: JSON-root failures", () => {
     expect(parseAuditVerdictBody("null")).toBeNull();
   });
 });
+
+// Cycle 2026-05-25 substrate-evolution slice (Bravo-pen). Backwards-compat
+// optional field `cross_edge_consumers_verified?: readonly string[]`.
+// Parser accepts absent + present-with-valid-shape; rejects wrong-shape.
+// Send-time validation (cli.ts gate) enforces non-empty for substrate-class
+// PRs via isSubstrateClassPR(target_pr); that path is exercised via the
+// substrate-class.test.ts helper unit tests + integration verified at
+// PR-tier (this PR is itself substrate-class — self-dogfood).
+describe("parseAuditVerdictBody — Section 15: cross_edge_consumers_verified field", () => {
+  it("T15.1: absent field parses as undefined (backwards-compat with kind_version: 1 bodies pre-dating field)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({}));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.cross_edge_consumers_verified).toBeUndefined();
+  });
+
+  it("T15.2: present empty array parses as empty array (caller may include explicitly)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({ cross_edge_consumers_verified: [] }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.cross_edge_consumers_verified).toEqual([]);
+  });
+
+  it("T15.3: present non-empty string array round-trips (canonical case)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({
+        cross_edge_consumers_verified: [
+          "~/Repos/claude-conductor-dashboard/src/lib/server/adapters/active-sessions.ts",
+          "~/.claude-dotfiles/src/active-sessions/index.ts",
+        ],
+      }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.cross_edge_consumers_verified).toEqual([
+      "~/Repos/claude-conductor-dashboard/src/lib/server/adapters/active-sessions.ts",
+      "~/.claude-dotfiles/src/active-sessions/index.ts",
+    ]);
+  });
+
+  it("T15.4: non-array value rejected (string)", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({ cross_edge_consumers_verified: "single-string-not-array" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("T15.5: non-array value rejected (number)", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ cross_edge_consumers_verified: 42 })),
+    ).toBeNull();
+  });
+
+  it("T15.6: non-array value rejected (object)", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({
+          cross_edge_consumers_verified: { not: "an-array" },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("T15.7: array with non-string entry rejected (number)", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({ cross_edge_consumers_verified: ["valid", 42] }),
+      ),
+    ).toBeNull();
+  });
+
+  it("T15.8: array with empty-string entry rejected (whitespace-only discipline mirrors three_option_ask)", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({ cross_edge_consumers_verified: ["valid", ""] }),
+      ),
+    ).toBeNull();
+  });
+
+  it("T15.9: array with whitespace-only entry rejected", () => {
+    expect(
+      parseAuditVerdictBody(
+        bodyWith({ cross_edge_consumers_verified: ["valid", "   "] }),
+      ),
+    ).toBeNull();
+  });
+
+  it("T15.10: null value rejected (explicit-null is not the same as absent)", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ cross_edge_consumers_verified: null })),
+    ).toBeNull();
+  });
+});

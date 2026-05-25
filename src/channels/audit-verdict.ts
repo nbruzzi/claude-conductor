@@ -158,6 +158,26 @@ export type AuditVerdictBody = {
    * (Bravo plan v0.2 audit).
    */
   findings: readonly AuditFinding[];
+  /**
+   * Cross-edge consumer-edges the auditor explicitly verified. Each
+   * entry is a path or symbolic reference to a consumer site (e.g.,
+   * dotfiles shim, dashboard adapter) whose mirror invariant was
+   * checked against this PR's substrate changes.
+   *
+   * Optional at the type level for backwards-compat (`kind_version: 1`
+   * bodies without the field still parse). Send-time validation in
+   * `cli.ts` REJECTS substrate-class PRs (per
+   * `isSubstrateClassPR(target_pr)` from `./substrate-class.ts`) whose
+   * audit-verdict body lacks a non-empty array — operationalizing
+   * the discipline from cycle 2026-05-25 PR #119 4-instance audit-
+   * cohort gap (see
+   * `feedback-audit-cohort-missed-cross-edge-shim-consumer`).
+   *
+   * Parser tolerates absent field (treated as undefined); rejects
+   * present-but-wrong-shape (not an array OR contains non-string
+   * entries).
+   */
+  cross_edge_consumers_verified?: readonly string[];
 };
 
 /**
@@ -328,6 +348,26 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
     return null;
   }
 
+  // cross_edge_consumers_verified — optional readonly string[]. Backwards-
+  // compat with kind_version: 1 bodies pre-dating the field. Parser
+  // tolerates absent (treated as undefined); rejects present-but-wrong-
+  // shape. Send-time validation in cli.ts enforces non-empty for
+  // substrate-class PRs per isSubstrateClassPR(target_pr).
+  const crossEdgeRaw = obj["cross_edge_consumers_verified"];
+  let crossEdgeConsumersVerified: readonly string[] | undefined;
+  if (crossEdgeRaw === undefined) {
+    crossEdgeConsumersVerified = undefined;
+  } else if (!Array.isArray(crossEdgeRaw)) {
+    return null;
+  } else {
+    for (const entry of crossEdgeRaw) {
+      if (typeof entry !== "string" || entry.trim().length === 0) {
+        return null;
+      }
+    }
+    crossEdgeConsumersVerified = crossEdgeRaw as readonly string[];
+  }
+
   return {
     kind_version: 1,
     target_pr: { repo: repoRaw.trim(), number: numberRaw },
@@ -343,5 +383,8 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
       c_reframe_if_applicable: cReframe,
     },
     findings,
+    ...(crossEdgeConsumersVerified !== undefined
+      ? { cross_edge_consumers_verified: crossEdgeConsumersVerified }
+      : {}),
   };
 }

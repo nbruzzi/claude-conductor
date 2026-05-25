@@ -80,6 +80,16 @@ export type {
   FindingSeverity,
 } from "./audit-types.ts";
 
+// Cycle 2026-05-25 substrate-evolution slice (Bravo-pen) — substrate-class
+// PR detection helper for the kind=audit-verdict
+// cross_edge_consumers_verified send-time validator gate. Consumers
+// (audit tooling, dashboards, future lint rules) import alongside the
+// canonical SUBSTRATE_CLASS_REPOS set for caller-side enumeration.
+export {
+  isSubstrateClassPR,
+  SUBSTRATE_CLASS_REPOS,
+} from "./substrate-class.ts";
+
 // Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind body schema type +
 // inline `MemoryType` enum. Consumers (deferred Tier-2 ratification verb,
 // future Tier-3 T3-E memory-attention-scoring) import these from

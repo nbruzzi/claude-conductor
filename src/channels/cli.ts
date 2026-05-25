@@ -84,6 +84,7 @@ import {
 import { parseDigestBody } from "./digest.ts";
 import { parseAuditAskBody } from "./audit-ask.ts";
 import { parseAuditVerdictBody } from "./audit-verdict.ts";
+import { isSubstrateClassPR } from "./substrate-class.ts";
 import { parseMemoryProposalBody } from "./memory-proposal.ts";
 import { parseWindDownCheckinBody } from "./wind-down-checkin.ts";
 import {
@@ -1064,17 +1065,44 @@ export async function runChannelsCli(
         // Counts-coherence cross-field validation is enforced inside
         // the parser (N1) — counts.blocker/fold/nit must equal the
         // severity-grouped findings length.
-        if (kind === "audit-verdict" && parseAuditVerdictBody(body) === null) {
-          die(
-            ctx,
-            `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, target_pr={repo,number}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}). counts must equal severity-grouped findings length.`,
-            {
-              code: 2,
-              category: "VALIDATION",
-              remediation:
-                "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md.",
-            },
-          );
+        //
+        // Cycle 2026-05-25 substrate-evolution slice (Bravo-pen): after
+        // shape validation, a second gate enforces non-empty
+        // cross_edge_consumers_verified for substrate-class PRs per
+        // isSubstrateClassPR(target_pr). Concretizes the
+        // feedback-audit-cohort-missed-cross-edge-shim-consumer
+        // discipline from PR #119 4-instance audit-cohort gap.
+        if (kind === "audit-verdict") {
+          const parsedVerdict = parseAuditVerdictBody(body);
+          if (parsedVerdict === null) {
+            die(
+              ctx,
+              `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, target_pr={repo,number}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}), cross_edge_consumers_verified[] (optional readonly string[]; required non-empty for substrate-class PRs per isSubstrateClassPR). counts must equal severity-grouped findings length.`,
+              {
+                code: 2,
+                category: "VALIDATION",
+                remediation:
+                  "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md.",
+              },
+            );
+          }
+          // Substrate-class cross-edge-consumer-coverage gate.
+          if (
+            isSubstrateClassPR(parsedVerdict.target_pr) &&
+            (parsedVerdict.cross_edge_consumers_verified === undefined ||
+              parsedVerdict.cross_edge_consumers_verified.length === 0)
+          ) {
+            die(
+              ctx,
+              `[send] audit-verdict body for substrate-class PR (repo: ${parsedVerdict.target_pr.repo}#${parsedVerdict.target_pr.number}) requires non-empty cross_edge_consumers_verified array. Enumerate the consumer-edges your audit verified (e.g., dashboard adapter path, dotfiles shim path). Empty/absent means no cross-edge consumer was verified — surfaces the audit-cohort-gap the schema is designed to prevent.`,
+              {
+                code: 2,
+                category: "VALIDATION",
+                remediation:
+                  'Add cross_edge_consumers_verified: ["<consumer-path-1>", "<consumer-path-2>", ...] to your audit-verdict body. See feedback-audit-cohort-missed-cross-edge-shim-consumer.md for the discipline rationale + enumerate-all-consumers primitive.',
+              },
+            );
+          }
         }
 
         // Tier 2 Verb 2 2026-05-20 — `memory-proposal` validator gate
