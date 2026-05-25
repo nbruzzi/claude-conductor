@@ -67,6 +67,17 @@ import { VALID_ID_REGEX, isValidArtifactId } from "../shared/artifact-id.ts";
 // (6 src/channels/* + 3 test/channels/* call sites resolve from this module).
 export { isValidArtifactId } from "../shared/artifact-id.ts";
 
+// Boundary-throw classifiers — exposed so downstream adapters can
+// discriminate kind:"invalid-input" vs kind:"malformed" via the substrate
+// primitive, not via inline string-match. Mirrors `claude-conductor/channels/api`
+// `isInvalidChannelIdError`. See `boundary-errors.ts` JSDoc.
+export {
+  INVALID_ARTIFACT_ID_MESSAGE_FRAGMENT,
+  INVALID_SESSION_ID_MESSAGE_FRAGMENT,
+  isInvalidArtifactIdError,
+  isInvalidSessionIdError,
+} from "./boundary-errors.ts";
+
 /** 30-minute live window — mirrors channel heartbeat TTL. */
 export const LIVE_WINDOW_MS = 30 * 60 * 1000;
 
