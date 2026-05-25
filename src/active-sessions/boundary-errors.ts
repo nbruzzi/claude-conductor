@@ -7,10 +7,10 @@
  * The module emits two stable wire shapes on `isValidArtifactId` /
  * `isValidSessionId` rejection — every guarded fn's throw includes both the
  * canonical prefix substring AND the offending id substring in the thrown
- * `Error.message`. Throw sites today (`src/active-sessions/index.ts`):
+ * `Error.message`. Throw sites today (in `src/active-sessions/index.ts`):
  *
- *   - `touchHeartbeat`        — line 391 (artifactId), line 393 (sessionId)
- *   - `resetArtifactRegistry` — line 922 (artifactId)
+ *   - `touchHeartbeat`        — artifactId throw + sessionId throw
+ *   - `resetArtifactRegistry` — artifactId throw
  *
  * The remaining `isValidArtifactId` / `isValidSessionId` call sites in
  * `index.ts` return silently (no throw) — those are the "best-effort" surfaces

@@ -19,9 +19,9 @@
  *     string-match.
  *
  * Mirrors `test/channels/boundary-errors.test.ts`. Existing positive-shape
- * coverage on the throw side (`test/active-sessions/reset-and-atomic-meta`
- * lines 199/202/204) uses a loose `/invalid artifactId/` regex; this file
- * pins the classifier side under the same wire-shape contract.
+ * coverage on the throw side (`test/active-sessions/reset-and-atomic-meta`,
+ * the `resetArtifactRegistry` block) uses a loose `/invalid artifactId/`
+ * regex; this file pins the classifier side under the same wire-shape contract.
  */
 import { describe, expect, it } from "bun:test";
 
