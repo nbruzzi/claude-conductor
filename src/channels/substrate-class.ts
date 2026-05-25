@@ -45,6 +45,7 @@
  *     primitives that other consumers mirror, add here.
  */
 export const SUBSTRATE_CLASS_REPOS: ReadonlySet<string> = new Set([
+  "claude-conductor",
   "nbruzzi/claude-conductor",
 ]);
 
@@ -54,14 +55,29 @@ export const SUBSTRATE_CLASS_REPOS: ReadonlySet<string> = new Set([
  * validator to gate the `cross_edge_consumers_verified` required-field
  * check.
  *
- * Repo-based heuristic at v0.1; see module JSDoc for v0.2 refinement
- * direction. If detection misclassifies in practice, surface via
- * `feedback-audit-cohort-missed-cross-edge-shim-consumer` follow-on
- * before adding an override-flag (YAGNI per plan v0.1 Q4).
+ * Canonical-normalization: callers send `target_pr.repo` in either
+ * the bare `<name>` form (e.g., `"claude-conductor"`) OR the GitHub-
+ * prefixed `<owner>/<name>` form (e.g., `"nbruzzi/claude-conductor"`).
+ * This function checks the raw input first (fast-path) then the
+ * post-slash suffix (handles owner-prefixed input against the
+ * canonical entries in the set). Closes the v0.1 wire-shape-vs-set-
+ * shape mismatch caught by Bravo L3 on PR #121 dogfood: canonical
+ * wire shape across actual audit-verdict send sites is bare
+ * `"claude-conductor"`, but v0.1 set held only the GitHub-prefixed
+ * form → isSubstrateClassPR returned false for canonical traffic →
+ * validator was silently inert across 9 PRs of cycle 2026-05-25.
+ *
+ * Repo-based heuristic at v0.1.1; see module JSDoc for v0.2
+ * refinement direction. If detection misclassifies in practice,
+ * surface via `feedback-audit-cohort-missed-cross-edge-shim-consumer`
+ * follow-on before adding an override-flag (YAGNI per plan v0.1 Q4).
  */
 export function isSubstrateClassPR(target_pr: {
   repo: string;
   number: number;
 }): boolean {
-  return SUBSTRATE_CLASS_REPOS.has(target_pr.repo);
+  if (SUBSTRATE_CLASS_REPOS.has(target_pr.repo)) return true;
+  const slashIdx = target_pr.repo.indexOf("/");
+  if (slashIdx === -1) return false;
+  return SUBSTRATE_CLASS_REPOS.has(target_pr.repo.slice(slashIdx + 1));
 }

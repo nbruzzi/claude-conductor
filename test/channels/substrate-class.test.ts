@@ -94,4 +94,49 @@ describe("isSubstrateClassPR helper", () => {
     expect(r99999).toBe(true);
     expect(r1).toBe(r99999);
   });
+
+  // Canonical-normalization regression coverage. Bravo L3 on PR #121
+  // dogfood caught that v0.1 stored only the GitHub-prefixed shape but
+  // canonical wire shape across actual audit-verdict send sites is bare
+  // `"claude-conductor"` (cross-cohort empirical: 13+ audit-verdicts on
+  // cycle 2026-05-25 all sent bare). v0.1.1 stores both shapes; future
+  // sends in either form resolve identically.
+  it("returns true for the bare canonical repo shape (claude-conductor)", () => {
+    expect(isSubstrateClassPR({ repo: "claude-conductor", number: 119 })).toBe(
+      true,
+    );
+  });
+
+  it("returns true regardless of which shape the caller sends (parity)", () => {
+    const bare = isSubstrateClassPR({ repo: "claude-conductor", number: 120 });
+    const prefixed = isSubstrateClassPR({
+      repo: "nbruzzi/claude-conductor",
+      number: 120,
+    });
+    expect(bare).toBe(true);
+    expect(prefixed).toBe(true);
+    expect(bare).toBe(prefixed);
+  });
+
+  it("returns false for partial-match-but-non-substrate suffix (e.g., bare claude-conductor-dashboard)", () => {
+    // Defends against accidental over-inclusion: 'claude-conductor-dashboard'
+    // is NOT a substrate-class repo even though it shares a prefix with
+    // the substrate name. Set-membership is exact-match; no substring shape.
+    expect(
+      isSubstrateClassPR({ repo: "claude-conductor-dashboard", number: 38 }),
+    ).toBe(false);
+    expect(
+      isSubstrateClassPR({
+        repo: "nbruzzi/claude-conductor-dashboard",
+        number: 38,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("SUBSTRATE_CLASS_REPOS canonical-normalization (v0.1.1 regression coverage)", () => {
+  it("includes both bare and GitHub-prefixed shapes for parity", () => {
+    expect(SUBSTRATE_CLASS_REPOS.has("claude-conductor")).toBe(true);
+    expect(SUBSTRATE_CLASS_REPOS.has("nbruzzi/claude-conductor")).toBe(true);
+  });
 });
