@@ -20,9 +20,11 @@
  * core object-key-sort + nested-object recursion needed by the
  * `audit-verdict` schema (integer + UTF-8 string fields only). It does NOT
  * implement RFC 8785 §3.2.2 full number canonicalization (no scientific-
- * notation normalization for large/small floats); not implement §3.2.5 full
- * Unicode normalization (relies on V8/JSC's UTF-16 string repr being stable
- * for our ASCII/Latin-1-dominant cohort identifiers). When the audit-verdict
+ * notation normalization for large/small floats). RFC 8785 itself
+ * explicitly EXCLUDES Unicode normalization (per spec: "preserve string
+ * data as is") — this impl follows the spec on strings and relies on
+ * V8/JSC's UTF-16 string repr being stable for our ASCII/Latin-1-dominant
+ * cohort identifiers. When the audit-verdict
  * body schema extends to include floats OR non-ASCII strings, this impl
  * needs an extension or library replacement — flagged in test fixtures
  * (`test/channels/canonical-json.test.ts` documents the limitations as
