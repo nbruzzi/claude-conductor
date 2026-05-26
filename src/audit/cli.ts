@@ -49,6 +49,7 @@ import {
   type KeyHistory,
   type KeyHistoryEntry,
 } from "../channels/key-surface.ts";
+import { exitCodeFor, renderHuman, verifyChannelAuditChain } from "./verify.ts";
 
 function die(message: string, code: number = 2): never {
   process.stderr.write(`[audit] ${message}\n`);
@@ -216,10 +217,59 @@ export async function runBootstrap(
   };
 }
 
+export type VerifyFlags = {
+  channelId: string | null;
+  pubkeyDir: string | null;
+  output: "json" | "human";
+  strict: boolean;
+};
+
+function parseVerifyFlags(argv: readonly string[]): VerifyFlags {
+  let channelId: string | null = null;
+  let pubkeyDir: string | null = null;
+  let output: "json" | "human" = "json";
+  let strict = false;
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === undefined) {
+      i += 1;
+      continue;
+    }
+    if (arg === "--pubkey-dir" || arg.startsWith("--pubkey-dir=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--pubkey-dir");
+      pubkeyDir = value;
+      i += consumed;
+    } else if (arg === "--output" || arg.startsWith("--output=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--output");
+      if (value !== "json" && value !== "human") {
+        die(`invalid --output value '${value}' — expected 'json' or 'human'`);
+      }
+      output = value;
+      i += consumed;
+    } else if (arg === "--strict") {
+      strict = true;
+      i += 1;
+    } else if (arg.startsWith("-")) {
+      die(`unknown flag '${arg}' for audit verify`);
+    } else {
+      if (channelId !== null) {
+        die(
+          `unexpected positional '${arg}' — audit verify takes exactly one <channel-id>`,
+        );
+      }
+      channelId = arg;
+      i += 1;
+    }
+  }
+  return { channelId, pubkeyDir, output, strict };
+}
+
 const HELP_TEXT = `claude-conductor audit — signature-chain CLI (Cycle 1 substrate-core)
 
 Usage:
   claude-conductor audit bootstrap [--identity <nato>] [--force] [--cohort-dir <dir>]
+  claude-conductor audit verify <channel-id> [--pubkey-dir <dir>] [--output json|human] [--strict]
 
 Verbs:
   bootstrap   Generate Ed25519 keypair + write .pub/.sec/.history.json
@@ -234,10 +284,22 @@ Verbs:
               --cohort-dir Override cohort key directory (default:
                            paths.ts cohortKeysDir(); Decision #9)
 
-Future verbs (PR-A6 next):
-  verify <channel-id>   Verify Ed25519 signature chain over channel JSONL
-                        (DSSE PAE + per-message + in-payload prev_audit_body_ref
-                        chain per DC-2; resolves OBS-A)
+  verify      Verify Ed25519 signature chain over channel JSONL
+              (DSSE PAE + per-message + in-payload prev_audit_body_ref
+              chain per DC-2; resolves OBS-A).
+              <channel-id>   Required positional; channel to verify
+              --pubkey-dir   Override cohort pubkey directory (default:
+                             paths.ts cohortKeysDir())
+              --output       'json' (default; AuditVerifyOutput shape per
+                             §2.3 LOCKED contract) or 'human' (plain-text)
+              --strict       Treat partial (exit 2) as broken (exit 1).
+                             Useful in CI gates where any non-clean state
+                             is a failure.
+              Exit codes:
+                0 = ok (chain verifies; may be vacuously ok)
+                1 = broken (one or more breaks[] entries)
+                2 = partial (skipped pre-v0.3 entries; --strict → 1)
+                3 = unsupported (unparseable bodies)
 `;
 
 export async function runAuditCli(argv: readonly string[]): Promise<void> {
@@ -257,9 +319,22 @@ export async function runAuditCli(argv: readonly string[]): Promise<void> {
   }
 
   if (verb === "verify") {
-    die(
-      "audit verify not yet implemented — coming in PR-A6 per Charlie body §8 step 6",
+    const flags = parseVerifyFlags(rest);
+    if (flags.channelId === null) {
+      die("audit verify requires a <channel-id> positional argument");
+    }
+    const pubkeyDirOption =
+      flags.pubkeyDir !== null ? { pubkeyDir: flags.pubkeyDir } : {};
+    const result = await verifyChannelAuditChain(
+      flags.channelId,
+      pubkeyDirOption,
     );
+    if (flags.output === "json") {
+      process.stdout.write(JSON.stringify(result.output, null, 2) + "\n");
+    } else {
+      process.stdout.write(renderHuman(result.output, result.internal));
+    }
+    process.exit(exitCodeFor(result, flags.strict));
   }
 
   die(`unknown verb '${verb}' — see 'claude-conductor audit --help'`);
