@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "claude-conductor:schemas/audit-verdict/003_v0.3.json",
+  "title": "AuditVerdict v0.3 DSSE Envelope",
+  "description": "Cycle 1 substrate-core schema migration 003 — wraps the audit-verdict body in a DSSE (Dead Simple Signing Envelope) per https://github.com/secure-systems-lab/dsse/blob/master/protocol.md for tamper-evident per-message Ed25519 signature chains (resolves OBS-A: HMAC framing was incorrect crypto-primitive naming per Delta Phase 0 fact-base catch). The JSONL line `body` field becomes a DSSE envelope JSON for new audit-verdicts; legacy v0.1/v0.2 raw audit-verdict bodies continue to parse via parseAuditVerdictBody back-compat dispatch. PAE solves envelope-level type-confusion (payloadType + LEN-prefix prevents byte substitution); JCS solves payload-level serialization-determinism (RFC 8785 canonical-JSON ensures semantically-identical bodies encode to identical bytes across implementations — Bravo Obs-CC-1 + Delta lens-prep finding). The `payload` field carries the base64-encoded canonical-JSON-RFC-8785 of the inner v0.2 AuditVerdictBody (schema 002_v0.2.json). The `signatures` array carries Ed25519 attestations; each entry's `keyid` is the NATO identifier (advisory; NOT signature-covered per DSSE §2 PAE input); each entry's `sig` is the base64-encoded Ed25519 signature over PAE(payloadType, payload). See src/channels/audit-signature-chain.ts for DSSE primitives + src/channels/audit-verdict.ts parseAuditVerdictV0_3Wrapped for parser dispatch + src/channels/canonical-json.ts for JCS-subset helper. See plans/cycle-1-substrate-core-slice-plan-2026-05-26.md §2.2 + §2.6 + §4.2 for envelope shape + migration narrative + cross-pair contract.",
+  "type": "object",
+  "properties": {
+    "payloadType": {
+      "type": "string",
+      "const": "application/vnd.claude-conductor.audit-verdict+json",
+      "description": "MIME-type-style payload identifier per DSSE spec; enables envelope-type dispatch on read-side. Constant for audit-verdict envelopes; future cohort cycles may add new payloadTypes for new structured kinds. RFC 6838 structure (application/vnd.<vendor>.<product>+<suffix>)."
+    },
+    "payload": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Base64-encoded canonical-JSON-RFC-8785-subset of inner AuditVerdictBody (schema 002_v0.2.json). Signature scope (PAE input) covers this base64 string verbatim; envelope-level fields (payloadType, signatures[i].keyid) are NOT in signature scope per DSSE §2. Canonical encoding via src/channels/canonical-json.ts canonicalJson() helper (key sort + nested recursion; RFC 8785 subset documented in module JSDoc)."
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Non-empty array of signer attestations per DSSE spec §3. Cycle 1 ships single-signer per envelope (each NATO signs their own audit-verdicts); future cycles may extend to multi-signer for compromise-revocation co-signing per OQ-4.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "keyid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "NATO identifier (e.g., charlie); verifier resolves this against the cohort's pubkey trust set (per PR-A3 key-surface module + PR-A4 audit bootstrap CLI verb). Outer-envelope advisory; NOT signature-covered per DSSE §2 PAE input. Line-vs-envelope cross-check on JSONL `identity` catches keyid-tamper at verify time (HYBRID lock identity-tamper-detection)."
+          },
+          "sig": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base64-encoded Ed25519 signature over PAE(payloadType, payload). RFC 8032 Ed25519 (asymmetric signature per RFC 8032; not HMAC per OBS-A rename). Verifier reproduces PAE input from envelope payloadType + payload + verifies signature against resolved pubkey."
+          }
+        },
+        "required": ["keyid", "sig"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["payloadType", "payload", "signatures"],
+  "additionalProperties": false,
+  "x-claude-conductor": {
+    "schema_version": "v0.3",
+    "migration_number": "003",
+    "cohort_ratify": {
+      "ratify_tier": "TBD-pending-cohort-audit-shadow",
+      "cohort_cycle": "2026-05-26"
+    },
+    "supersedes_migration": "002 (v0.2 baseline; raw-body signed fields added)",
+    "supersedes_migration_note": "v0.1 raw-unsigned + v0.2 raw-signed bodies remain valid + parseable per back-compat discipline (parseAuditVerdictBody unchanged); v0.3 introduces DSSE wrapping as a new shape at the body-field level. Send-side validation in cli.ts requires new audit-verdicts to be DSSE-wrapped post-PR-A6 audit verify CLI verb landing; current PR-A5 ships schema + parser dispatch only.",
+    "next_migration": "004 (v0.4 lineage envelope embedded in payload; Pair A Layer 2; gated on PR-A5 schema-shape merge per Pair A §7.1 R-A5)",
+    "ssot_pen": "Pair B Charlie",
+    "audit_shadow_pen": "Pair B Delta + Pair A Alpha + Pair A Bravo",
+    "cross_pair_contract": "plans/cycle-1-substrate-extension-slice-plan-2026-05-26.md §4 (Pair A Layer 2 v0.4 lineage envelope embeds inside payload)",
+    "cohort_ratify_audit_trail_note": "Ratify body_refs + session UUIDs + channel id documented in PR commit message body + cohort channel (not in schema file to keep schema operator-portable + free of bernstein arc-specific anonymization-leak class identifiers per check-generic-paths CGP-001/CGP-004 lessons from PR-A1)."
+  }
+}

@@ -231,6 +231,20 @@ export {
   isFindingSeverity,
 } from "./audit-types.ts";
 
+// Cycle 1 substrate-core PR-A5 2026-05-26 — `audit-verdict` v0.3 DSSE
+// wrapper schema migration. New parser dispatch (`parseAuditVerdictV0_3Wrapped`)
+// + sign-side helper (`wrapAuditVerdictBody`) + canonical-JSON-RFC-8785
+// subset (`canonicalJson`). Cross-edge consumers (dotfiles shim today;
+// future Pair A v0.4 Layer 2 lineage envelope embedding) import these
+// from `claude-conductor/channels/api` for the substrate-canonical
+// surface. Substrate-shim-mirror discipline per
+// `feedback-substrate-shim-mirror-on-plugin-export-changes.md`.
+export {
+  parseAuditVerdictV0_3Wrapped,
+  wrapAuditVerdictBody,
+} from "./audit-verdict.ts";
+export { canonicalJson } from "./canonical-json.ts";
+
 // Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind shared parser +
 // inline MemoryType as-const tuple + type-guard (D2 (a) of plan v0.2 —
 // inline until 2nd consumer surfaces; future T3-E memory-attention-scoring
