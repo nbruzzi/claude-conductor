@@ -665,3 +665,160 @@ describe("parseAuditVerdictBody — Section 15: cross_edge_consumers_verified fi
     ).toBeNull();
   });
 });
+
+// Section 16: v0.2 extension fields (Cycle 1 substrate-core; Pair B Charlie-pen
+// per slice plan cycle-1-substrate-core-slice-plan-2026-05-26.md §2.6 Migration 002).
+// Three optional fields per HYBRID lock 4-NATO ratify-clean: signed_at +
+// prev_audit_body_ref + signer_role. Identity attestation handled by DSSE keyid
+// per HYBRID; no in-payload signer_nato.
+describe("parseAuditVerdictBody — Section 16: v0.2 extension fields (signed_at + prev_audit_body_ref + signer_role)", () => {
+  // signed_at — ISO-8601 timestamp; required when DSSE-signed; optional/absent on legacy
+
+  it("T16.1: signed_at absent parses as undefined (back-compat with legacy v0.1 bodies)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({}));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signed_at).toBeUndefined();
+  });
+
+  it("T16.2: signed_at null parses as null (explicit-null distinct from undefined)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({ signed_at: null }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signed_at).toBeNull();
+  });
+
+  it("T16.3: signed_at valid ISO-8601 string round-trips (canonical case)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({ signed_at: "2026-05-26T13:34:00.000Z" }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signed_at).toBe("2026-05-26T13:34:00.000Z");
+  });
+
+  it("T16.4: signed_at unparseable string rejected (non-ISO-8601)", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ signed_at: "not-a-timestamp" })),
+    ).toBeNull();
+  });
+
+  it("T16.5: signed_at non-string-non-null rejected (number)", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ signed_at: 1748263240000 })),
+    ).toBeNull();
+  });
+
+  it("T16.6: signed_at non-string-non-null rejected (boolean)", () => {
+    expect(parseAuditVerdictBody(bodyWith({ signed_at: true }))).toBeNull();
+  });
+
+  // prev_audit_body_ref — chain pointer; null for bootstrap; absent for legacy
+
+  it("T16.7: prev_audit_body_ref absent parses as undefined (back-compat with legacy bodies)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({}));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.prev_audit_body_ref).toBeUndefined();
+  });
+
+  it("T16.8: prev_audit_body_ref null parses as null (HYBRID write-side canonical for bootstrap message per Charlie Obs-5)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({ prev_audit_body_ref: null }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.prev_audit_body_ref).toBeNull();
+  });
+
+  it("T16.9: prev_audit_body_ref valid string round-trips (canonical chain-pointer case)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({
+        prev_audit_body_ref:
+          "a3f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b0",
+      }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.prev_audit_body_ref).toBe(
+      "a3f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b0",
+    );
+  });
+
+  it("T16.10: prev_audit_body_ref empty-post-trim string rejected", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ prev_audit_body_ref: "" })),
+    ).toBeNull();
+  });
+
+  it("T16.11: prev_audit_body_ref whitespace-only rejected", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ prev_audit_body_ref: "   " })),
+    ).toBeNull();
+  });
+
+  it("T16.12: prev_audit_body_ref non-string-non-null rejected (number)", () => {
+    expect(
+      parseAuditVerdictBody(bodyWith({ prev_audit_body_ref: 42 })),
+    ).toBeNull();
+  });
+
+  // signer_role — sender's role; signature-covered per Obs-3 HYBRID lock
+
+  it("T16.13: signer_role absent parses as undefined (back-compat with legacy bodies)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({}));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signer_role).toBeUndefined();
+  });
+
+  it("T16.14: signer_role null parses as null (explicit-null distinct from undefined)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({ signer_role: null }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signer_role).toBeNull();
+  });
+
+  it("T16.15: signer_role valid string round-trips (canonical cohort case)", () => {
+    const parsed = parseAuditVerdictBody(bodyWith({ signer_role: "queue" }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signer_role).toBe("queue");
+  });
+
+  it("T16.16: signer_role empty-post-trim string rejected", () => {
+    expect(parseAuditVerdictBody(bodyWith({ signer_role: "" }))).toBeNull();
+  });
+
+  it("T16.17: signer_role whitespace-only rejected (mirrors target_peer + a_ratify discipline)", () => {
+    expect(parseAuditVerdictBody(bodyWith({ signer_role: "   " }))).toBeNull();
+  });
+
+  it("T16.18: signer_role non-string-non-null rejected (number)", () => {
+    expect(parseAuditVerdictBody(bodyWith({ signer_role: 42 }))).toBeNull();
+  });
+
+  // Combined v0.2-signed-ready body round-trip
+
+  it("T16.19: all three v0.2 fields present + valid round-trip (canonical signed-ready body)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({
+        signed_at: "2026-05-26T13:34:00.000Z",
+        prev_audit_body_ref:
+          "a3f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b0",
+        signer_role: "queue",
+      }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signed_at).toBe("2026-05-26T13:34:00.000Z");
+    expect(parsed?.prev_audit_body_ref).toBe(
+      "a3f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b0",
+    );
+    expect(parsed?.signer_role).toBe("queue");
+  });
+
+  it("T16.20: bootstrap message canonical (signed_at + null prev_audit_body_ref + signer_role)", () => {
+    const parsed = parseAuditVerdictBody(
+      bodyWith({
+        signed_at: "2026-05-26T13:34:00.000Z",
+        prev_audit_body_ref: null,
+        signer_role: "driver",
+      }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signed_at).toBe("2026-05-26T13:34:00.000Z");
+    expect(parsed?.prev_audit_body_ref).toBeNull();
+    expect(parsed?.signer_role).toBe("driver");
+  });
+});
