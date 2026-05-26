@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "claude-conductor:schemas/key-revoke/001_v0.1.json",
+  "title": "KeyRevokeBody v0.1",
+  "description": "Cycle 1 substrate-core schema migration 001 baseline for the key-revoke channel kind per Pair B slice plan body §2.5 + §4.3 LOCKED. Posted by the operator revoking their own Ed25519 key OR by cohort members co-signing a revocation when a compromise is detected. The wire-format here drives <nato>.history.json maintenance which feeds resolveKeyAtTime (key-surface.ts) which feeds verifyChannelAuditChain (verify.ts): revoked entries map to breaks[].reason = 'revoked-key' per the 3-class break taxonomy (sub-Obs-6a + DC-5) distinct from 'tamper' (signature failure) and 'key-rotation-discontinuity' (chain gap / no covering history entry). See src/channels/key-revoke.ts KeyRevokeBody type + parseKeyRevokeBody function for parser implementation. Pair B Delta-pen capacity-take per cohort feedback-cohort-standby-standoff-anti-pattern rule + Pair B §5 flexibility-clause invocation at Charlie 19:42Z tool-flow-accuracy explicit-defer.",
+  "type": "object",
+  "properties": {
+    "kind_version": {
+      "const": 1,
+      "description": "Schema version literal (stays at 1; future migrations are additive optional)."
+    },
+    "revoked_nato": {
+      "type": "string",
+      "minLength": 1,
+      "description": "NATO identifier of the operator whose key is being revoked (e.g., 'Alpha', 'Delta'). Non-empty-post-trim."
+    },
+    "revoked_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SHA-256 fingerprint of the revoked public key (hex; matches KeyHistoryEntry.fingerprint per PR-A3 key-surface.ts). Used by verifier-side history-file maintenance to mark the specific key entry as status='revoked'."
+    },
+    "revoked_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when the key was revoked. Verifier uses this to mark KeyHistoryEntry.active_until (transitions the entry from status='active' to status='revoked')."
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["compromise", "rotation", "operator-departure"],
+      "description": "3-class revocation reason per §2.5 LOCKED + sub-Obs-6a — distinct operational remediation paths. compromise = private key suspected leaked/exfiltrated; rotation = operator-intentional key rotation (no compromise); operator-departure = NATO identity retiring from cohort."
+    },
+    "replacement_fingerprint": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "SHA-256 fingerprint of the replacement key when a new active key is taking over (rotation scenario). null when no replacement exists (compromise without rotation, operator-departure, emergency revocation). Must be explicit (present in body; not undefined)."
+    },
+    "signed_by": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "NATO identifiers of cohort members signing this revocation. Min-1 (revoking operator themselves). For compromise scenarios, future cohort design MAY require N-of-cohort co-signing (deferred per §2.5 prose; schema enforces ≥1 only)."
+    }
+  },
+  "required": [
+    "kind_version",
+    "revoked_nato",
+    "revoked_fingerprint",
+    "revoked_at",
+    "reason",
+    "replacement_fingerprint",
+    "signed_by"
+  ],
+  "additionalProperties": true,
+  "x-claude-conductor": {
+    "schema_version": "v0.1",
+    "migration_number": "001",
+    "cohort_ratify": {
+      "ratify_tier": "TBD-pending-cohort-audit-shadow",
+      "cohort_cycle": "2026-05-26"
+    },
+    "supersedes_migration": null,
+    "supersedes_migration_note": "v0.1 baseline for key-revoke kind; no prior schema. Future migrations may add fields (e.g., DSSE-wrapping for non-repudiation per future PR; multi-signer N-of-cohort co-signing per §2.5 compromise-scenario clause).",
+    "next_migration": "002 (TBD; future cycle may add DSSE-wrapping + N-of-cohort co-sig requirements when compromise scenarios empirically surface)",
+    "ssot_pen": "Pair B Delta (capacity-take per Pair B §5 flexibility-clause; Charlie tool-flow-accuracy explicit-defer at 19:42Z)",
+    "audit_shadow_pen": "Pair B Charlie (inverted micro-split; audit-shadow at Charlie next-resume)",
+    "cross_pair_contract": "plans/cycle-1-substrate-core-slice-plan-2026-05-26.md §4.3 (key-rotation contract; verifier-side resolveKeyAtTime maps revoked entries to revoked-key break reason)",
+    "cohort_ratify_audit_trail_note": "Ratify body_refs + session UUIDs + channel id documented in PR commit message body + cohort channel (not in schema file to keep schema operator-portable + free of bernstein arc-specific anonymization-leak class identifiers per check-generic-paths CGP-001/CGP-004 lessons from PR-A1)."
+  }
+}

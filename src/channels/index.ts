@@ -161,6 +161,26 @@ export const CHANNEL_KINDS = [
   // actual cycle artifacts (PR squashes / CI / failed-approach captures)
   // and memory_candidates slug names against the memory directory.
   "wind-down-checkin",
+  // Cycle 1 substrate-core PR-A7 2026-05-26 — key-revoke kind per
+  // Pair B slice plan body §2.5 + §4.3 + §8 step 7. Posted by an
+  // operator revoking their own Ed25519 key OR by cohort members
+  // co-signing a compromise revocation. See `src/channels/key-revoke.ts`
+  // for `KeyRevokeBody` + parser; 7 typed fields incl. 3-class
+  // `reason` (compromise | rotation | operator-departure) + nullable
+  // `replacement_fingerprint` + non-empty `signed_by[]` cohort co-sign
+  // list. Wire-format drives `<nato>.history.json` maintenance which
+  // feeds resolveKeyAtTime (key-surface.ts) which feeds the audit
+  // verify CLI (PR-A6 verify.ts) — revoked entries map to
+  // `breaks[].reason = "revoked-key"` per the 3-class break taxonomy
+  // (DC-5 + sub-Obs-6a) distinct from `"tamper"` (sig failure) and
+  // `"key-rotation-discontinuity"` (chain gap). Readers trust the
+  // SHAPE but primary-source-verify (a) `signed_by[]` contains the
+  // revoking NATO + (b) `revoked_at` is Date.parse-valid ISO-8601.
+  // Pair B Delta-pen impl via capacity-take per Pair B §5 flexibility-
+  // clause invocation at Charlie 19:42Z tool-flow-accuracy explicit-
+  // defer + `feedback-cohort-standby-standoff-anti-pattern` named-
+  // alternate-owner rule.
+  "key-revoke",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

@@ -30,7 +30,7 @@ import { CHANNEL_KINDS, type ChannelKind } from "../../src/channels/index.ts";
 import { renderKindPrefix } from "../../src/channels/render.ts";
 
 describe("CHANNEL_KINDS (SSOT)", () => {
-  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict, Tier 2 Verb 2 memory-proposal, Tier 2 Verb 1 wind-down-checkin last)", () => {
+  it("contains the canonical kind set in declaration order (Phase 1 first, Layer 3 walkie-talkie second, Layer 4 digest, L152 live-update, Tier 1 Slice 1 audit-ask, Tier 1 Slice 2 audit-verdict, Tier 2 Verb 2 memory-proposal, Tier 2 Verb 1 wind-down-checkin, Cycle 1 substrate-core PR-A7 key-revoke last)", () => {
     expect(CHANNEL_KINDS).toEqual([
       // Phase 1 informational + protocol carriers
       "note",
@@ -55,6 +55,10 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       "memory-proposal",
       // Tier 2 Verb 1 cycle 2026-05-20 wind-down-checkin cycle-close substrate
       "wind-down-checkin",
+      // Cycle 1 substrate-core PR-A7 cycle 2026-05-26 key-revoke kind
+      // (Pair B Delta-pen capacity-take per §5 flexibility-clause +
+      // Charlie 19:42Z tool-flow-accuracy explicit-defer)
+      "key-revoke",
     ]);
   });
 
@@ -68,8 +72,10 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // bandwidth-inference) adds NO new kind — bandwidth state is
     // derive-on-read, not posted as its own message kind; the T4.1
     // drift catch (Delta N2 sharper assertion) holds at 14 post-T2V2.
-    // 14 → 15 with Tier 2 Verb 1 `wind-down-checkin`.
-    expect(CHANNEL_KINDS.length).toBe(15);
+    // 14 → 15 with Tier 2 Verb 1 `wind-down-checkin`. 15 → 16 with
+    // Cycle 1 substrate-core PR-A7 `key-revoke` per Pair B body §2.5
+    // + §4.3 + §8 step 7 LOCKED.
+    expect(CHANNEL_KINDS.length).toBe(16);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {
