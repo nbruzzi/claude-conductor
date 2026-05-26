@@ -45,7 +45,7 @@
  * Serialize a value to canonical-JSON-RFC-8785-subset string.
  *
  * - Recursively sorts object keys by UTF-16 code-unit order
- * - Recurses into arrays preserving index order (RFC 8785 §3.2.4)
+ * - Recurses into arrays preserving index order
  * - Preserves `null` literal
  * - Numbers + booleans + strings serialized via JSON.stringify default
  *   (integers + ASCII/Latin-1 strings are stable; non-ASCII strings may
@@ -69,8 +69,9 @@ export function canonicalJson(value: unknown): string {
 /**
  * Recursively rebuild a value with object keys sorted. Pure helper.
  *
- * Per RFC 8785 §3.2.3 + §3.2.4: object property name sort applies
- * recursively to nested objects; arrays preserve index order.
+ * Per RFC 8785 §3.2.3 (Sorting of Object Properties): object property
+ * name sort applies recursively to nested objects; arrays preserve
+ * index order (per the JSON value model — no array-sort step).
  *
  * Footgun: `typeof null === "object"` — explicit null-check FIRST per
  * the parent module's discipline (`audit-verdict.ts` parser pattern).
