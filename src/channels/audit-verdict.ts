@@ -66,6 +66,10 @@ import {
   type DsseEnvelope,
 } from "./audit-signature-chain.ts";
 import { canonicalJson } from "./canonical-json.ts";
+import {
+  parseLineageEnvelope,
+  type LineageEnvelope,
+} from "./lineage-envelope.ts";
 
 /**
  * A single audit finding. The minimal 4-field shape covers the
@@ -250,6 +254,28 @@ export type AuditVerdictBody = {
    * reject empty-post-trim OR non-string-non-null.
    */
   signer_role?: string | null;
+
+  /**
+   * Optional Layer 2 per-artefact lineage envelope (Cycle 1 substrate-
+   * extension PR-A2; Pair A Alpha-pen per slice plan
+   * `cycle-1-substrate-extension-slice-plan-2026-05-26.md` §1.1 + §7.1).
+   *
+   * When present + the audit-verdict body is DSSE-wrapped (v0.3) via
+   * {@link wrapAuditVerdictBody}, the `lineage` field becomes part of the
+   * canonical-JSON payload bytes that {@link signPayload} signs via PAE
+   * → the lineage envelope is signature-covered automatically (per
+   * composition-lens audit-shadow `f66e0cb7` 2026-05-26T17:42Z OBS-COMP-1).
+   *
+   * Parser tolerates absent (treated as undefined) OR null OR shape-valid
+   * object. Forward-compat with v0.1/v0.2 bodies pre-dating PR-A2 (those
+   * bodies parse cleanly with `lineage` undefined).
+   *
+   * Cross-pair contract: the inner shape comes from `parseLineageEnvelope`
+   * in `src/channels/lineage-envelope.ts` (PR-A1 SSOT); see that module
+   * JSDoc for the per-field schema + RFC 8785 §3.2.2 substrate-debt note
+   * on `TokenCost.cost_usd` opt-in canonical-encoding limitation.
+   */
+  lineage?: LineageEnvelope | null;
 };
 
 /**
@@ -493,6 +519,23 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
     signerRole = signerRoleRaw;
   }
 
+  // lineage — optional Layer 2 LineageEnvelope (Cycle 1 substrate-extension
+  // PR-A2). Tolerate undefined OR null OR shape-valid envelope. Delegates
+  // shape validation to parseLineageEnvelope (SSOT in lineage-envelope.ts).
+  // Per cross-pair contract §1.1: when present + body is DSSE-wrapped, the
+  // lineage envelope rides inside payload bytes → PAE-covered automatically.
+  const lineageRaw = obj["lineage"];
+  let lineage: LineageEnvelope | null | undefined;
+  if (lineageRaw === undefined) {
+    lineage = undefined;
+  } else if (lineageRaw === null) {
+    lineage = null;
+  } else {
+    const parsedLineage = parseLineageEnvelope(lineageRaw);
+    if (parsedLineage === null) return null;
+    lineage = parsedLineage;
+  }
+
   return {
     kind_version: 1,
     target_pr: { repo: repoRaw.trim(), number: numberRaw },
@@ -516,6 +559,7 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
       ? { prev_audit_body_ref: prevAuditBodyRef }
       : {}),
     ...(signerRole !== undefined ? { signer_role: signerRole } : {}),
+    ...(lineage !== undefined ? { lineage } : {}),
   };
 }
 
