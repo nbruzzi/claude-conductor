@@ -14,7 +14,8 @@ type ComponentName =
   | "active-sessions"
   | "decision-logs"
   | "audits"
-  | "memories";
+  | "memories"
+  | "keys";
 
 type ComponentSpec = {
   readonly defaultSuffix: string;
@@ -73,6 +74,15 @@ const COMPONENT_SPECS: { readonly [K in ComponentName]: ComponentSpec } = {
     // slice may remove if no other code-paths reference.
     defaultSuffix: "memories",
     envVar: "CLAUDE_CONDUCTOR_MEMORIES_DIR",
+  },
+  keys: {
+    // Cycle 1 substrate-core PR-A3 (2026-05-26) — Pair B Charlie-pen
+    // Ed25519 key surface per Decision #9 4-NATO ratify-clean
+    // (OPERATOR-GLOBAL `~/.claude/keys/`); cohort sub-directory layered
+    // via cohortKeysDir() below. Consumer-routing avoids `.claude/`
+    // literals in src/channels/key-surface.ts per CGP-003 discipline.
+    defaultSuffix: "keys",
+    envVar: "CLAUDE_CONDUCTOR_KEYS_DIR",
   },
 };
 
@@ -135,6 +145,29 @@ export function decisionLogsDir(): string {
 
 export function auditsDir(): string {
   return resolveComponent("audits");
+}
+
+/**
+ * Root of the operator-global key surface (`~/.claude/keys/` per Decision
+ * #9 4-NATO ratify-clean). Per-cohort layering is provided by
+ * {@link cohortKeysDir}.
+ */
+export function keysDir(): string {
+  return resolveComponent("keys");
+}
+
+/**
+ * Cohort sub-directory under the operator-global key surface (i.e.,
+ * `~/.claude/keys/cohort/`). Sibling to channelsDir/todosDir/etc. for
+ * Cycle 1 substrate-core key-surface.ts consumer routing per
+ * `[[feedback-substrate-precedes-consumer-via-prop]]` discipline.
+ *
+ * Per slice plan `cycle-1-substrate-core-slice-plan-2026-05-26.md`
+ * §2.1: canonical files live at
+ * `~/.claude/keys/cohort/<nato>.ed25519.{pub,sec,history.json}`.
+ */
+export function cohortKeysDir(): string {
+  return join(keysDir(), "cohort");
 }
 
 // ============================================================================
