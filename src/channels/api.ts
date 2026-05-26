@@ -295,6 +295,24 @@ export {
   parseWindDownCheckinBody,
 } from "./wind-down-checkin.ts";
 
+// Cycle 1 substrate-core PR-A7 2026-05-26 — `key-revoke` kind shared
+// parser + RevocationReason 3-class union per Pair B slice plan body
+// §2.5 + §4.3 LOCKED. Plugin canonical at `src/channels/key-revoke.ts`.
+// Cross-edge consumers (dotfiles shim today; future PR-A6 audit verify
+// CLI history-file maintenance reading revoked-key entries; future
+// Pair-A-PR-A4 lineage verify operator-departure signal) import these
+// from `claude-conductor/channels/api` for the substrate-canonical
+// surface. Substrate-shim-mirror discipline per
+// `feedback-substrate-shim-mirror-on-plugin-export-changes.md`.
+// Pair B Delta-pen capacity-take per Pair B §5 flexibility-clause +
+// `feedback-cohort-standby-standoff-anti-pattern` named-alternate-owner.
+export type { KeyRevokeBody, RevocationReason } from "./key-revoke.ts";
+export {
+  parseKeyRevokeBody,
+  isKeyRevokeBody,
+  isRevocationReason,
+} from "./key-revoke.ts";
+
 export { NATO_POOL, isValidIdentity } from "./identity.ts";
 
 // Phase 1 v2 / L991+ vault-backlog closure — classifier + wire-shape
