@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nbruzzi/claude-conductor/schemas/audit-verdict/002_v0.2.json",
+  "title": "AuditVerdictBody v0.2",
+  "description": "Cycle 1 substrate-core schema migration 002 — extends v0.1 AuditVerdictBody with three optional fields per HYBRID lock 4-NATO ratify-clean (cohort cycle 2026-05-26): signed_at (ISO-8601 signing timestamp), prev_audit_body_ref (in-payload chain pointer per DC-2 resolving OBS-A), signer_role (sender's role; signature-covered via PAE per Obs-3). All three are OPTIONAL on the type (back-compat preserved with legacy v0.1 bodies pre-dating Cycle 1; kind_version stays at literal 1). Identity attestation is handled by DSSE signatures[i].keyid per HYBRID (no in-payload signer_nato). See src/channels/audit-verdict.ts AuditVerdictBody type + parseAuditVerdictBody function for parser implementation. See plans/cycle-1-substrate-core-slice-plan-2026-05-26.md §2.6 for migration narrative + §4.2 for cross-pair contract.",
+  "type": "object",
+  "properties": {
+    "kind_version": {
+      "const": 1,
+      "description": "Schema version literal (stays at 1; optional v0.2 fields are additive)."
+    },
+    "target_pr": {
+      "type": "object",
+      "properties": {
+        "repo": { "type": "string", "minLength": 1 },
+        "number": { "type": "integer", "exclusiveMinimum": 0 }
+      },
+      "required": ["repo", "number"],
+      "additionalProperties": false
+    },
+    "target_peer": { "type": "string", "minLength": 1 },
+    "lens_set_applied": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "audit_class": { "type": "string" },
+    "audit_axes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "verdict": { "type": "string" },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "blocker": { "type": "integer", "minimum": 0 },
+        "fold": { "type": "integer", "minimum": 0 },
+        "nit": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["blocker", "fold", "nit"],
+      "additionalProperties": false
+    },
+    "three_option_ask": {
+      "type": "object",
+      "properties": {
+        "a_ratify": { "type": "string", "minLength": 1 },
+        "b_fold_if_applicable": {
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "c_reframe_if_applicable": {
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        }
+      },
+      "required": [
+        "a_ratify",
+        "b_fold_if_applicable",
+        "c_reframe_if_applicable"
+      ],
+      "additionalProperties": false
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["BLOCKER", "FOLD", "NIT"]
+          },
+          "lens": { "type": "string" },
+          "title": { "type": "string", "minLength": 1 },
+          "detail": { "type": "string", "minLength": 1 }
+        },
+        "required": ["kind", "lens", "title", "detail"]
+      }
+    },
+    "cross_edge_consumers_verified": {
+      "description": "Optional readonly string[]; PR #120 b21f107 introduced; required non-empty for substrate-class PRs per isSubstrateClassPR(target_pr) send-time validation.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "signed_at": {
+      "description": "v0.2: ISO-8601 timestamp when the audit-verdict was signed. Required when DSSE-wrapped (post-Migration-003 v0.3); optional/absent on legacy unsigned bodies. Verifier resolves the correct historical pubkey by matching this timestamp against signing NATO's keys/cohort/<nato>.history.json entries (DC-5).",
+      "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+    },
+    "prev_audit_body_ref": {
+      "description": "v0.2: SHA-256 of prior audit-verdict's canonical-JSON payload (in-payload signature-chain pointer per DC-2; resolves OBS-A — HMAC framing was incorrect crypto-primitive naming per Delta Phase 0 fact-base catch). null for bootstrap (first) audit-verdict in a channel per Charlie Obs-5 HYBRID write-side canonical. Absent on legacy v0.1 bodies.",
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    },
+    "signer_role": {
+      "description": "v0.2: sender's channel role at signing time (queue / driver / out etc; matches JSONL line role field). Signature-covered via PAE per Obs-3 4-NATO cohort HYBRID lock; line-vs-payload cross-check at verify time catches role-tamper attacks. NATO identity attestation is handled by DSSE signatures[i].keyid per HYBRID (no in-payload signer_nato).",
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    }
+  },
+  "required": [
+    "kind_version",
+    "target_pr",
+    "target_peer",
+    "lens_set_applied",
+    "audit_class",
+    "audit_axes",
+    "verdict",
+    "counts",
+    "three_option_ask",
+    "findings"
+  ],
+  "additionalProperties": true,
+  "x-claude-conductor": {
+    "schema_version": "v0.2",
+    "migration_number": "002",
+    "cohort_ratify": {
+      "ratify_tier": "4-NATO ratify-clean",
+      "cohort_cycle": "2026-05-26",
+      "ratify_body_refs": ["47f54507", "fbb0fad9", "e16982b5", "88609f4f"],
+      "channel": "2026-05-25_23-30"
+    },
+    "supersedes_migration": "001 (v0.1 baseline)",
+    "supersedes_migration_note": "v0.1 bodies remain valid + parseable per back-compat discipline; v0.2 additive fields are optional.",
+    "next_migration": "003 (v0.3 DSSE wrapper; Pair B substrate-core; PR-A5 in slice plan §8 10-step order)",
+    "ssot_pen": "Charlie 472990e3-45c7-4759-a187-185a0f5e8fab",
+    "audit_shadow_pen": "Delta 787e36a4-f6df-45bd-8bd3-9ccb776f7ed6",
+    "cross_pair_contract": "plans/cycle-1-substrate-extension-slice-plan-2026-05-26.md §4 (Pair A Layer 2)"
+  }
+}

@@ -178,6 +178,69 @@ export type AuditVerdictBody = {
    * entries).
    */
   cross_edge_consumers_verified?: readonly string[];
+
+  /**
+   * v0.2 schema extension fields (Cycle 1 substrate-core; Pair B
+   * Charlie-pen per slice plan `cycle-1-substrate-core-slice-plan-2026-05-26.md`
+   * §2.6 Migration 002).
+   *
+   * All three are OPTIONAL on the type (back-compat preserved for legacy
+   * v0.1 bodies pre-dating Cycle 1; `kind_version: 1` stays at literal 1).
+   * Parser tolerates absent (treated as undefined); rejects present-but-
+   * wrong-shape per per-field validation rules below.
+   *
+   * Send-time validation in `cli.ts` will require these fields when the
+   * substrate-core PR sequence lands (PR-A6 `audit verify` verb + DSSE
+   * wrapper migration 003 v0.3 makes them required for new audit-verdict
+   * bodies post-impl). Cycle 1 PR-A1 ships the schema-only extension;
+   * runtime enforcement lands in later PRs per §8 10-step order.
+   */
+
+  /**
+   * ISO-8601 timestamp when this audit-verdict was signed. Required when
+   * DSSE-wrapped (post-Migration-003 v0.3); optional/absent on legacy
+   * unsigned v0.1/v0.2 bodies. Parser-side: tolerate undefined OR null
+   * OR valid ISO-8601 string; reject anything else.
+   *
+   * Per DC-5 key archive lookup: verifier resolves the correct historical
+   * pubkey by matching this timestamp against the signing NATO's
+   * `keys/cohort/<nato>.history.json` entries.
+   */
+  signed_at?: string | null;
+
+  /**
+   * SHA-256 of prior audit-verdict's canonical-JSON payload, forming the
+   * in-payload signature-chain pointer per DC-2 (DSSE+Ed25519 in-payload
+   * chain via payload graph; resolves OBS-A — HMAC framing was incorrect
+   * crypto-primitive naming per Delta Phase 0 fact-base catch).
+   *
+   * `null` for the bootstrap (first) audit-verdict in a channel (per
+   * Charlie Obs-5 HYBRID write-side canonical: write `null` explicitly).
+   * `undefined`/absent on legacy v0.1 bodies pre-dating the chain.
+   *
+   * Read-side: tolerate both `null` and absent for back-compat per
+   * `[[feedback-cross-edge-via-shim-env-var-trap]]` migration discipline.
+   * Reject present-non-string-non-null shapes.
+   */
+  prev_audit_body_ref?: string | null;
+
+  /**
+   * Sender's channel role at signing time (queue / driver / out etc;
+   * matches the JSONL line `role` field). Signature-covered via PAE per
+   * Obs-3 4-NATO cohort HYBRID lock; line-vs-payload cross-check at
+   * verify time catches role-tamper attacks (line `role` mutation
+   * without payload re-signing → mismatch → verify reports tamper).
+   *
+   * Per CONCUR-FOLD-2 HYBRID (Charlie + Delta + Alpha + Bravo
+   * 4-NATO ratify-clean cohort `47f54507` 12:51Z + supporting chain):
+   * NATO identity attestation is handled by DSSE `signatures[i].keyid`
+   * (outer envelope; verifier-side line-vs-envelope cross-check on
+   * `identity`); NO in-payload `signer_nato` field per HYBRID.
+   *
+   * Parser-side: tolerate undefined/null OR non-empty-post-trim string;
+   * reject empty-post-trim OR non-string-non-null.
+   */
+  signer_role?: string | null;
 };
 
 /**
@@ -368,6 +431,59 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
     crossEdgeConsumersVerified = crossEdgeRaw as readonly string[];
   }
 
+  // v0.2 extension fields (Migration 002 per slice plan
+  // cycle-1-substrate-core-slice-plan-2026-05-26.md §2.6).
+  // All three are optional; back-compat with legacy v0.1 bodies preserved.
+
+  // signed_at — optional ISO-8601 string OR null. Parser-side: tolerate
+  // undefined/null OR Date.parse-able string; reject anything else.
+  const signedAtRaw = obj["signed_at"];
+  let signedAt: string | null | undefined;
+  if (signedAtRaw === undefined) {
+    signedAt = undefined;
+  } else if (signedAtRaw === null) {
+    signedAt = null;
+  } else if (typeof signedAtRaw !== "string") {
+    return null;
+  } else if (Number.isNaN(Date.parse(signedAtRaw))) {
+    return null;
+  } else {
+    signedAt = signedAtRaw;
+  }
+
+  // prev_audit_body_ref — optional string OR null (null for bootstrap
+  // first audit-verdict in channel; undefined/absent for legacy v0.1
+  // bodies pre-dating chain). Reject empty-post-trim OR non-string-non-null.
+  const prevAuditBodyRefRaw = obj["prev_audit_body_ref"];
+  let prevAuditBodyRef: string | null | undefined;
+  if (prevAuditBodyRefRaw === undefined) {
+    prevAuditBodyRef = undefined;
+  } else if (prevAuditBodyRefRaw === null) {
+    prevAuditBodyRef = null;
+  } else if (typeof prevAuditBodyRefRaw !== "string") {
+    return null;
+  } else if (prevAuditBodyRefRaw.trim().length === 0) {
+    return null;
+  } else {
+    prevAuditBodyRef = prevAuditBodyRefRaw;
+  }
+
+  // signer_role — optional non-empty-post-trim string OR null. Tolerate
+  // undefined/null; reject empty-post-trim OR non-string-non-null.
+  const signerRoleRaw = obj["signer_role"];
+  let signerRole: string | null | undefined;
+  if (signerRoleRaw === undefined) {
+    signerRole = undefined;
+  } else if (signerRoleRaw === null) {
+    signerRole = null;
+  } else if (typeof signerRoleRaw !== "string") {
+    return null;
+  } else if (signerRoleRaw.trim().length === 0) {
+    return null;
+  } else {
+    signerRole = signerRoleRaw;
+  }
+
   return {
     kind_version: 1,
     target_pr: { repo: repoRaw.trim(), number: numberRaw },
@@ -386,5 +502,10 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
     ...(crossEdgeConsumersVerified !== undefined
       ? { cross_edge_consumers_verified: crossEdgeConsumersVerified }
       : {}),
+    ...(signedAt !== undefined ? { signed_at: signedAt } : {}),
+    ...(prevAuditBodyRef !== undefined
+      ? { prev_audit_body_ref: prevAuditBodyRef }
+      : {}),
+    ...(signerRole !== undefined ? { signer_role: signerRole } : {}),
   };
 }
