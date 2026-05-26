@@ -30,6 +30,7 @@ const SUBCOMMANDS = {
   todos: join(PACKAGE_ROOT, "src", "todos", "cli.ts"),
   pr: join(PACKAGE_ROOT, "src", "pr", "cli.ts"),
   audits: join(PACKAGE_ROOT, "src", "audits", "cli.ts"),
+  audit: join(PACKAGE_ROOT, "src", "audit", "cli.ts"),
   bandwidth: join(PACKAGE_ROOT, "src", "bandwidth", "cli.ts"),
   reciprocation: join(PACKAGE_ROOT, "src", "reciprocation", "cli.ts"),
   verify: join(PACKAGE_ROOT, "src", "verify", "cli.ts"),
