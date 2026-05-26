@@ -57,6 +57,15 @@ import {
   type FindingSeverity,
   type LensClass,
 } from "./audit-types.ts";
+import {
+  AUDIT_VERDICT_PAYLOAD_TYPE,
+  decodePayload,
+  encodePayload,
+  parseDsseEnvelope,
+  signPayload,
+  type DsseEnvelope,
+} from "./audit-signature-chain.ts";
+import { canonicalJson } from "./canonical-json.ts";
 
 /**
  * A single audit finding. The minimal 4-field shape covers the
@@ -508,4 +517,94 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
       : {}),
     ...(signerRole !== undefined ? { signer_role: signerRole } : {}),
   };
+}
+
+/**
+ * Parse a v0.3 DSSE-wrapped audit-verdict body (Cycle 1 substrate-core
+ * PR-A5; Pair B Charlie-pen per slice plan §2.6 Migration 003).
+ *
+ * Discriminator: the JSONL `body` field is a DSSE envelope JSON (shape =
+ * `{ payloadType, payload, signatures }`) rather than a raw v0.1/v0.2
+ * audit-verdict body JSON. Validates envelope shape via
+ * {@link parseDsseEnvelope}, confirms the envelope is for our
+ * `audit-verdict` payloadType ({@link AUDIT_VERDICT_PAYLOAD_TYPE}),
+ * decodes the base64 payload back to canonical-JSON via
+ * {@link decodePayload}, then validates the inner body via the existing
+ * {@link parseAuditVerdictBody} parser.
+ *
+ * Returns the envelope + inner body together so signature-verifying
+ * callers (PR-A6 `audit verify` CLI verb) can pass the envelope to
+ * {@link verifyEnvelope} while consuming the inner body shape. Callers
+ * that only need the inner body (e.g., audit-queue dashboard rendering)
+ * can read `result.body` directly.
+ *
+ * **Schema dispatch pattern (no upconversion).** Per Sigstore bundle.json
+ * precedent (parse all v0.1/v0.2/v0.3 simultaneously; no version
+ * upconversion codec): existing callers of {@link parseAuditVerdictBody}
+ * continue to work unchanged on raw v0.1 + v0.2 bodies. Callers that need
+ * to handle either shape compose:
+ *
+ * ```typescript
+ * const wrapped = parseAuditVerdictV0_3Wrapped(line.body);
+ * const verdict = wrapped !== null ? wrapped.body : parseAuditVerdictBody(line.body);
+ * ```
+ *
+ * **Verification semantics out of scope.** This parser validates SHAPE
+ * only (envelope structure + payload base64 + inner body parseable). It
+ * does NOT verify the signature; the caller composes with
+ * {@link verifyEnvelope} for cryptographic verification using a resolved
+ * pubkey from PR-A3 key-surface + PR-A4 audit bootstrap.
+ *
+ * Returns `null` on any of:
+ *  - body is not parseable as DSSE envelope
+ *  - envelope.payloadType is not the audit-verdict payloadType (envelope
+ *    is for some other DSSE-wrapped kind, not us)
+ *  - envelope.payload is not valid base64
+ *  - decoded payload is not a parseable v0.2 audit-verdict body
+ */
+export function parseAuditVerdictV0_3Wrapped(
+  body: string,
+): { envelope: DsseEnvelope; body: AuditVerdictBody } | null {
+  const envelope = parseDsseEnvelope(body);
+  if (envelope === null) return null;
+  if (envelope.payloadType !== AUDIT_VERDICT_PAYLOAD_TYPE) return null;
+  const innerJson = decodePayload(envelope.payload);
+  if (innerJson === null) return null;
+  const innerBody = parseAuditVerdictBody(innerJson);
+  if (innerBody === null) return null;
+  return { envelope, body: innerBody };
+}
+
+/**
+ * Wrap an audit-verdict body in a v0.3 DSSE envelope (sign-side
+ * counterpart of {@link parseAuditVerdictV0_3Wrapped}). Returns the
+ * serialized envelope JSON suitable for storage in the JSONL line `body`
+ * field.
+ *
+ * Composition: canonical-JSON via {@link canonicalJson} → base64 via
+ * {@link encodePayload} → Ed25519 sign + DSSE wrap via
+ * {@link signPayload} → serialize envelope to JSON.
+ *
+ * `body` is an already-validated {@link AuditVerdictBody} (caller has
+ * either constructed it directly OR round-tripped through
+ * {@link parseAuditVerdictBody}). `secretKey` is a `CryptoKey` produced
+ * by Bun's Web Crypto API (PR-A3 key-surface + PR-A4 audit bootstrap
+ * provide this). `keyid` is the NATO identifier matching the cohort key
+ * file name.
+ *
+ * Used by:
+ *  - Test fixtures for v0.3 schema validation roundtrip
+ *  - PR-A6 audit verify CLI verb (write-side helper for cohort audit
+ *    posts that require DSSE-wrapped bodies)
+ *  - Pair A v0.4 Layer 2 lineage envelope (composes inside payload)
+ */
+export async function wrapAuditVerdictBody(
+  body: AuditVerdictBody,
+  secretKey: CryptoKey,
+  keyid: string,
+): Promise<string> {
+  const canonical = canonicalJson(body);
+  const payload = encodePayload(canonical);
+  const envelope = await signPayload(payload, secretKey, keyid);
+  return JSON.stringify(envelope);
 }

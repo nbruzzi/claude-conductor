@@ -30,8 +30,27 @@ import { describe, expect, it } from "bun:test";
 
 import {
   parseAuditVerdictBody,
+  parseAuditVerdictV0_3Wrapped,
+  wrapAuditVerdictBody,
   type AuditVerdictBody,
 } from "../../src/channels/audit-verdict.ts";
+import {
+  AUDIT_VERDICT_PAYLOAD_TYPE,
+  encodePayload,
+} from "../../src/channels/audit-signature-chain.ts";
+import { canonicalJson } from "../../src/channels/canonical-json.ts";
+
+/**
+ * Helper: generate a fresh Ed25519 keypair for sign/verify tests.
+ * Uses Bun's Web Crypto API which supports Ed25519 since Bun 1.0+.
+ * Mirrors the pattern in audit-signature-chain.test.ts.
+ */
+async function generateTestKeypair(): Promise<CryptoKeyPair> {
+  return (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ])) as unknown as CryptoKeyPair;
+}
 
 /**
  * Canonical reference body — SHIP-WITH-FOLDS with 1 fold + 0 blockers + 0 nits.
@@ -820,5 +839,151 @@ describe("parseAuditVerdictBody — Section 16: v0.2 extension fields (signed_at
     expect(parsed?.signed_at).toBe("2026-05-26T13:34:00.000Z");
     expect(parsed?.prev_audit_body_ref).toBeNull();
     expect(parsed?.signer_role).toBe("driver");
+  });
+});
+
+/**
+ * Section 17: v0.3 DSSE wrapper parser + sign-side helper. Cycle 1
+ * substrate-core PR-A5; Pair B Charlie-pen per slice plan §2.6 Migration
+ * 003 + §4.2 envelope shape.
+ *
+ *   - T17.1-T17.3: wrap + parse roundtrip succeeds (full v0.3 path)
+ *   - T17.4-T17.6: parser returns null on shape negatives (non-JSON; not
+ *     an envelope; wrong payloadType)
+ *   - T17.7-T17.8: parser returns null on payload negatives (malformed
+ *     base64; valid base64 but unparseable inner body)
+ *   - T17.9: back-compat — parser returns null for raw v0.2 body input
+ *     (raw bodies route through parseAuditVerdictBody; per Sigstore
+ *     precedent "parse all v0.1/v0.2/v0.3 simultaneously; no upconversion")
+ *   - T17.10: existing parseAuditVerdictBody unchanged on raw v0.2 body
+ *     (regression guard for back-compat dispatch)
+ *   - T17.11: canonical-JSON in payload is stable (key-sort idempotent
+ *     across re-wrap of the same logical body)
+ */
+describe("parseAuditVerdictV0_3Wrapped — Section 17: v0.3 DSSE wrapper", () => {
+  it("T17.1: wrap + parse roundtrip on SHIP-WITH-FOLDS body succeeds", async () => {
+    const kp = await generateTestKeypair();
+    const envelopeJson = await wrapAuditVerdictBody(
+      CANONICAL_AUDIT_VERDICT_BODY,
+      kp.privateKey,
+      "charlie",
+    );
+    const result = parseAuditVerdictV0_3Wrapped(envelopeJson);
+    expect(result).not.toBeNull();
+    expect(result?.envelope.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+    expect(result?.envelope.signatures.length).toBe(1);
+    expect(result?.envelope.signatures[0]?.keyid).toBe("charlie");
+    expect(result?.body.verdict).toBe("SHIP-WITH-FOLDS");
+    expect(result?.body.counts).toEqual({ blocker: 0, fold: 1, nit: 0 });
+    expect(result?.body.findings.length).toBe(1);
+  });
+
+  it("T17.2: wrap + parse roundtrip on SHIP-CLEAN body (empty findings) succeeds", async () => {
+    const kp = await generateTestKeypair();
+    const envelopeJson = await wrapAuditVerdictBody(
+      SHIP_CLEAN_BODY,
+      kp.privateKey,
+      "delta",
+    );
+    const result = parseAuditVerdictV0_3Wrapped(envelopeJson);
+    expect(result).not.toBeNull();
+    expect(result?.envelope.signatures[0]?.keyid).toBe("delta");
+    expect(result?.body.verdict).toBe("SHIP-CLEAN");
+    expect(result?.body.findings).toEqual([]);
+  });
+
+  it("T17.3: wrap + parse roundtrip preserves all v0.2 extension fields (signed_at + prev_audit_body_ref + signer_role)", async () => {
+    const kp = await generateTestKeypair();
+    const bodyWithV0_2Fields: AuditVerdictBody = {
+      ...CANONICAL_AUDIT_VERDICT_BODY,
+      signed_at: "2026-05-26T17:00:00.000Z",
+      prev_audit_body_ref:
+        "a3f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b0",
+      signer_role: "queue",
+    };
+    const envelopeJson = await wrapAuditVerdictBody(
+      bodyWithV0_2Fields,
+      kp.privateKey,
+      "charlie",
+    );
+    const result = parseAuditVerdictV0_3Wrapped(envelopeJson);
+    expect(result).not.toBeNull();
+    expect(result?.body.signed_at).toBe("2026-05-26T17:00:00.000Z");
+    expect(result?.body.prev_audit_body_ref).toBe(
+      "a3f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b04a5f9c8d2e1b0",
+    );
+    expect(result?.body.signer_role).toBe("queue");
+  });
+
+  it("T17.4: parser returns null for non-JSON input", () => {
+    expect(parseAuditVerdictV0_3Wrapped("not-json")).toBeNull();
+    expect(parseAuditVerdictV0_3Wrapped("")).toBeNull();
+  });
+
+  it("T17.5: parser returns null for valid JSON that isn't a DSSE envelope shape", () => {
+    expect(parseAuditVerdictV0_3Wrapped("{}")).toBeNull();
+    expect(parseAuditVerdictV0_3Wrapped('{"foo":"bar"}')).toBeNull();
+    expect(parseAuditVerdictV0_3Wrapped("[]")).toBeNull();
+    expect(parseAuditVerdictV0_3Wrapped("null")).toBeNull();
+  });
+
+  it("T17.6: parser returns null for envelope with wrong payloadType", () => {
+    const wrongType = JSON.stringify({
+      payloadType: "application/vnd.other.kind+json",
+      payload: encodePayload(canonicalJson(SHIP_CLEAN_BODY)),
+      signatures: [{ keyid: "charlie", sig: "x" }],
+    });
+    expect(parseAuditVerdictV0_3Wrapped(wrongType)).toBeNull();
+  });
+
+  it("T17.7: parser returns null for envelope with malformed base64 payload", () => {
+    const malformedB64 = JSON.stringify({
+      payloadType: AUDIT_VERDICT_PAYLOAD_TYPE,
+      payload: "not-base64!@#$%",
+      signatures: [{ keyid: "charlie", sig: "x" }],
+    });
+    expect(parseAuditVerdictV0_3Wrapped(malformedB64)).toBeNull();
+  });
+
+  it("T17.8: parser returns null for envelope with valid base64 but unparseable inner body", () => {
+    const validB64NotAuditVerdict = JSON.stringify({
+      payloadType: AUDIT_VERDICT_PAYLOAD_TYPE,
+      payload: encodePayload('{"not":"an-audit-verdict"}'),
+      signatures: [{ keyid: "charlie", sig: "x" }],
+    });
+    expect(parseAuditVerdictV0_3Wrapped(validB64NotAuditVerdict)).toBeNull();
+  });
+
+  it("T17.9: back-compat — parser returns null for raw v0.2 body input (Sigstore parse-all-versions precedent: no upconversion)", () => {
+    const rawV0_2 = JSON.stringify(CANONICAL_AUDIT_VERDICT_BODY);
+    expect(parseAuditVerdictV0_3Wrapped(rawV0_2)).toBeNull();
+  });
+
+  it("T17.10: back-compat — existing parseAuditVerdictBody still works unchanged on raw v0.2 bodies (regression guard)", () => {
+    const rawV0_2 = JSON.stringify(CANONICAL_AUDIT_VERDICT_BODY);
+    const parsed = parseAuditVerdictBody(rawV0_2);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.verdict).toBe("SHIP-WITH-FOLDS");
+  });
+
+  it("T17.11: canonical-JSON in payload is stable — wrapping twice produces identical payloads (key-sort idempotent)", async () => {
+    const kp = await generateTestKeypair();
+    const envelopeJson1 = await wrapAuditVerdictBody(
+      CANONICAL_AUDIT_VERDICT_BODY,
+      kp.privateKey,
+      "charlie",
+    );
+    const envelopeJson2 = await wrapAuditVerdictBody(
+      CANONICAL_AUDIT_VERDICT_BODY,
+      kp.privateKey,
+      "charlie",
+    );
+    // Same key + same body + canonical-JSON deterministic =
+    // payload field is identical; sig may differ if Ed25519 implementation
+    // uses RFC 8032 deterministic signatures (Bun should) but is allowed
+    // to differ. Assert the payload (canonical-JSON of body) is identical.
+    const env1 = JSON.parse(envelopeJson1) as { payload: string };
+    const env2 = JSON.parse(envelopeJson2) as { payload: string };
+    expect(env1.payload).toBe(env2.payload);
   });
 });

@@ -30,6 +30,11 @@ import {
   signPayload,
   verifyEnvelope,
 } from "../../src/channels/audit-signature-chain.ts";
+import {
+  parseAuditVerdictV0_3Wrapped,
+  wrapAuditVerdictBody,
+  type AuditVerdictBody,
+} from "../../src/channels/audit-verdict.ts";
 
 function unwrap<T>(value: T | null | undefined, label = "value"): T {
   if (value === null || value === undefined) {
@@ -241,5 +246,87 @@ describe("runBootstrap end-to-end — Section 5: full bootstrap → sign → ver
     // Verifying old signature with new pubkey fails (different keypair)
     const verifyResult = await verifyEnvelope(oldEnvelope, newPub);
     expect(verifyResult.ok).toBe(false);
+  });
+
+  /**
+   * T5.3 (PR-A5 extension): end-to-end v0.3 DSSE-wrapped audit-verdict
+   * roundtrip composing the full PR-A1..PR-A5 substrate-primitives stack:
+   *
+   *   - PR-A4 bootstrap → produces keypair + history
+   *   - PR-A3 import → loads CryptoKey objects from .pub/.sec files
+   *   - PR-A5 wrap → canonical-JSON-RFC-8785 + base64 + DSSE envelope
+   *   - PR-A2 verify → Ed25519 signature verify against PAE input
+   *   - PR-A5 parse → DSSE envelope shape + decode payload + inner v0.2 body
+   *   - PR-A1 v0.2 fields → all extension fields preserved through roundtrip
+   *
+   * Empirically proves the v0.3 wrapper composes cleanly on top of the
+   * substrate-primitives layer (PR-A1 schema + PR-A2 sig-chain + PR-A3
+   * key-surface + PR-A4 bootstrap). Satisfies §6.1 + §4.2 cross-pair
+   * consumer-contract for Pair A v0.4 Layer 2 lineage envelope.
+   */
+  it("T5.3: full bootstrap → wrap → verify → parse roundtrip composes PR-A1..PR-A5", async () => {
+    const result = await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: tmpDir,
+    });
+    const privKey = unwrap(await importPrivateKey(result.secretKeyPath));
+    const pubKey = unwrap(await importPublicKey(result.publicKeyPath));
+
+    const inputBody: AuditVerdictBody = {
+      kind_version: 1,
+      target_pr: { repo: "conductor", number: 127 },
+      target_peer: "Delta",
+      lens_set_applied: ["RE", "Architecture"],
+      audit_class: "inside-pair",
+      audit_axes: ["surface", "depth"],
+      verdict: "SHIP-CLEAN",
+      counts: { blocker: 0, fold: 0, nit: 0 },
+      three_option_ask: {
+        a_ratify: "PR cleared post-distance-lens.",
+        b_fold_if_applicable: null,
+        c_reframe_if_applicable: null,
+      },
+      findings: [],
+      cross_edge_consumers_verified: [
+        "dotfiles-shim",
+        "lineage-verifier",
+        "drift-verifier",
+      ],
+      signed_at: "2026-05-26T17:00:00.000Z",
+      prev_audit_body_ref: null,
+      signer_role: "queue",
+    };
+
+    // PR-A5 wrap (composes PR-A2 sign + canonical-JSON + base64)
+    const envelopeJson = await wrapAuditVerdictBody(
+      inputBody,
+      privKey,
+      "charlie",
+    );
+
+    // PR-A5 parse (extracts envelope + inner body via PR-A1 parseAuditVerdictBody)
+    const wrapped = parseAuditVerdictV0_3Wrapped(envelopeJson);
+    expect(wrapped).not.toBeNull();
+    expect(wrapped?.envelope.signatures[0]?.keyid).toBe("charlie");
+
+    // PR-A2 verify (signature against PAE input using PR-A3-imported pubkey)
+    const verifyResult = unwrap(wrapped);
+    const verify = await verifyEnvelope(verifyResult.envelope, pubKey);
+    expect(verify.ok).toBe(true);
+
+    // PR-A1 v0.2 field preservation through roundtrip
+    expect(wrapped?.body.kind_version).toBe(1);
+    expect(wrapped?.body.target_pr).toEqual({ repo: "conductor", number: 127 });
+    expect(wrapped?.body.target_peer).toBe("Delta");
+    expect(wrapped?.body.verdict).toBe("SHIP-CLEAN");
+    expect(wrapped?.body.cross_edge_consumers_verified).toEqual([
+      "dotfiles-shim",
+      "lineage-verifier",
+      "drift-verifier",
+    ]);
+    expect(wrapped?.body.signed_at).toBe("2026-05-26T17:00:00.000Z");
+    expect(wrapped?.body.prev_audit_body_ref).toBeNull();
+    expect(wrapped?.body.signer_role).toBe("queue");
   });
 });
