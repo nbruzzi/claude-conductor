@@ -1,8 +1,8 @@
 # Audit-verdict signature chain
 
-Operator + consumer documentation for the Cycle 1 substrate-core audit-verdict signature chain (PR-A1..PR-A8). Layer 1.5 substrate primitive enabling tamper-evident cohort audit trails via DSSE-wrapped Ed25519 signatures + in-payload `prev_audit_body_ref` chain construction.
+Operator + consumer documentation for the Cycle 1 substrate-core audit-verdict signature chain (Pair-B-PR-A1..PR-A8). Layer 1.5 substrate primitive enabling tamper-evident cohort audit trails via DSSE-wrapped Ed25519 signatures + in-payload `prev_audit_body_ref` chain construction.
 
-Source plan: `~/.claude/plans/cycle-1-substrate-core-slice-plan-2026-05-26.md`. Audit-shadow body_refs cited in commit messages for each PR-A1..A8 squash.
+Source plan: `~/.claude/plans/cycle-1-substrate-core-slice-plan-2026-05-26.md`. Audit-shadow body_refs cited in commit messages for each Pair-B-PR-A1..A8 squash.
 
 ## 1. Overview
 
@@ -18,7 +18,7 @@ Resolves OBS-A (HMAC framing was incorrect crypto-primitive naming per Delta Pha
 
 ## 2. Operator workflow
 
-### Bootstrap a cohort key (PR-A4)
+### Bootstrap a cohort key (Pair-B-PR-A4)
 
 ```bash
 bun run conductor audit bootstrap --identity charlie
@@ -38,7 +38,7 @@ Identity resolution order:
 2. `CLAUDE_CONDUCTOR_NATO` env var (test fixture)
 3. `~/.claude-conductor-identity` file (operator default)
 
-### Verify an audit-verdict chain (PR-A6)
+### Verify an audit-verdict chain (Pair-B-PR-A6)
 
 ```bash
 bun run conductor audit verify <channel-id> [--pubkey-dir <dir>] [--output json|human] [--strict]
@@ -72,7 +72,7 @@ Exit codes (DC-3 4-state):
 
 Precedence: broken > unsupported > partial > ok.
 
-### Revoke a key (PR-A7)
+### Revoke a key (Pair-B-PR-A7)
 
 Post a `key-revoke` channel message:
 
@@ -104,7 +104,7 @@ The `revoked_at` timestamp marks the prior `KeyHistoryEntry.active_until`; entri
 
 ## 3. Substrate primitives
 
-### DSSE envelope shape (PR-A2 + PR-A5)
+### DSSE envelope shape (Pair-B-PR-A2 + Pair-B-PR-A5)
 
 Per [DSSE protocol §3](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md):
 
@@ -127,7 +127,7 @@ PAE input per DSSE §2:
 
 Where `LEN(x)` is ASCII-decimal byte-length and `SP` is single space (0x20). Signature = `Ed25519.Sign(secret_key, PAE(payloadType, payload))` per RFC 8032.
 
-### Canonical-JSON (PR-A5)
+### Canonical-JSON (Pair-B-PR-A5)
 
 RFC 8785 JCS subset implementation at `src/channels/canonical-json.ts` (object-key-sort recursive + JSON.stringify default). Used at sign-side BEFORE PAE input construction to ensure semantically-identical bodies encode to identical bytes across cohort sessions.
 
@@ -142,7 +142,7 @@ Identity attestation via DSSE `signatures[i].keyid` (outer envelope; advisory; v
 
 Per cohort cycle 4-NATO HYBRID lock: dropped redundant in-payload `signer_nato` field (was equivalent to DSSE keyid + cross-check); kept `signer_role` for orthogonal role-tamper-detection path.
 
-## 4. Key surface (PR-A3)
+## 4. Key surface (Pair-B-PR-A3)
 
 `src/channels/key-surface.ts` provides Ed25519 keypair generation + per-NATO history file management via Bun's Web Crypto API (RFC 8032 PureEdDSA).
 
@@ -156,7 +156,7 @@ Per cohort cycle 4-NATO HYBRID lock: dropped redundant in-payload `signer_nato` 
 
 `cohortKeysDir()` (`src/shared/paths.ts`) returns the canonical directory. Substrate-clean per cohort consensus pattern — extending `paths.ts` SSOT is preferred over allowlist escape-hatches when both viable (see `memories/feedback-substrate-clean-over-escape-hatch-when-cohort-leans.md`).
 
-### KeyHistoryEntry (PR-A3 + PR-A7)
+### KeyHistoryEntry (Pair-B-PR-A3 + Pair-B-PR-A7)
 
 ```typescript
 type KeyHistoryEntry = {
@@ -168,7 +168,7 @@ type KeyHistoryEntry = {
 };
 ```
 
-### resolveKeyAtTime (PR-A3)
+### resolveKeyAtTime (Pair-B-PR-A3)
 
 ```typescript
 resolveKeyAtTime(history, signedAt): { ok: true; entry } | { ok: false; error };
