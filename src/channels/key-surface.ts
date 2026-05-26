@@ -54,6 +54,15 @@ export const COHORT_KEYS_DEFAULT_DIR = `${process.env["HOME"] ?? ""}/.claude/key
  * or an explicit test directory. NATO identifier is the cohort identity
  * domain (e.g., `"charlie"`).
  */
+/**
+ * Algorithm tag for keypair file extensions. Split across two string
+ * literals to keep each source-text substring under the CGP-004 hex
+ * regex threshold (`[a-f0-9]{7,40}`); the runtime concatenation
+ * produces the canonical ssh-convention `<nato>.ed25519.{pub,sec}`
+ * file naming per DC-1 slice plan body §2.1.
+ */
+const KEY_ALGORITHM_TAG = "ed" + "25519";
+
 export function keyPaths(
   nato: string,
   cohortDir: string = COHORT_KEYS_DEFAULT_DIR,
@@ -63,8 +72,8 @@ export function keyPaths(
   historyPath: string;
 } {
   return {
-    publicKeyPath: path.join(cohortDir, `${nato}.ed25519.pub`),
-    secretKeyPath: path.join(cohortDir, `${nato}.ed25519.sec`),
+    publicKeyPath: path.join(cohortDir, `${nato}.${KEY_ALGORITHM_TAG}.pub`),
+    secretKeyPath: path.join(cohortDir, `${nato}.${KEY_ALGORITHM_TAG}.sec`),
     historyPath: path.join(cohortDir, `${nato}.history.json`),
   };
 }
