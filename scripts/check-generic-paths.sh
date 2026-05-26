@@ -170,16 +170,6 @@ P3_FILE_ALLOWLIST=(
   # touch to recover" answer at exactly the moment the operator needs it
   # (mid-session wedge). Same rationale as channels/cli.ts + disable-hooks.ts.
   "src/hooks/registry-assertion.ts"
-  # Cycle 1 substrate-core PR-A3 (2026-05-26) — Pair B Charlie-pen
-  # key-surface.ts module declares COHORT_KEYS_DEFAULT_DIR as
-  # `~/.claude/keys/cohort/` per Decision #9 4-NATO ratify-clean
-  # (OPERATOR-GLOBAL key surface). Caller may override via keyPaths()
-  # cohortDir parameter; the COHORT_KEYS_DEFAULT_DIR const is the
-  # canonical pre-PR-A4 key location operators read/write on bootstrap.
-  # Future cycle: add `keys` ComponentName to paths.ts COMPONENT_SPECS
-  # (deferred; this allowlist entry unblocks PR-A3 ship without
-  # broadening paths.ts substrate scope in same PR).
-  "src/channels/key-surface.ts"
 )
 
 # --- 3. Patterns ---

@@ -37,15 +37,19 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { cohortKeysDir } from "../shared/paths.ts";
 
 /**
  * Operator-global root for cohort key files. Per Decision #9 4-NATO
  * ratify-clean: substrate-core writes use `~/.claude/keys/cohort/`.
+ * Resolution routed through paths.ts SSOT per
+ * `[[feedback-substrate-precedes-consumer-via-prop]]` discipline +
+ * Delta+Bravo cohort concur 2026-05-26 cohort cycle.
  *
  * Caller may override via {@link keyPaths} to support per-test
  * temporary directories without environment manipulation.
  */
-export const COHORT_KEYS_DEFAULT_DIR = `${process.env["HOME"] ?? ""}/.claude/keys/cohort`;
+export const COHORT_KEYS_DEFAULT_DIR = cohortKeysDir();
 
 /**
  * Per-NATO file paths for the canonical 3-file key surface.
