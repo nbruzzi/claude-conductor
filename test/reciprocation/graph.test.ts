@@ -25,12 +25,17 @@ import type { ChannelMessage } from "../../src/channels/index.ts";
 function makeVerdictBody(opts: {
   target_peer: string;
   pr_number: number;
+  repo?: string;
   verdict?: "SHIP-CLEAN" | "SHIP-WITH-FOLDS" | "NEEDS-REWORK";
   audit_class?: "inside-pair";
+  cross_edge_consumers_verified?: readonly string[];
 }): string {
   return JSON.stringify({
     kind_version: 1,
-    target_pr: { repo: "claude-conductor", number: opts.pr_number },
+    target_pr: {
+      repo: opts.repo ?? "claude-conductor",
+      number: opts.pr_number,
+    },
     target_peer: opts.target_peer,
     lens_set_applied: ["RE"],
     audit_class: opts.audit_class ?? "inside-pair",
@@ -43,6 +48,9 @@ function makeVerdictBody(opts: {
       c_reframe_if_applicable: null,
     },
     findings: [],
+    ...(opts.cross_edge_consumers_verified !== undefined
+      ? { cross_edge_consumers_verified: opts.cross_edge_consumers_verified }
+      : {}),
   });
 }
 
@@ -52,7 +60,9 @@ function makeVerdict(opts: {
   identity: string;
   target_peer: string;
   pr_number: number;
+  repo?: string;
   verdict?: "SHIP-CLEAN" | "SHIP-WITH-FOLDS" | "NEEDS-REWORK";
+  cross_edge_consumers_verified?: readonly string[];
 }): ChannelMessage {
   return {
     ts: opts.ts,
@@ -62,7 +72,11 @@ function makeVerdict(opts: {
     body: makeVerdictBody({
       target_peer: opts.target_peer,
       pr_number: opts.pr_number,
+      ...(opts.repo !== undefined ? { repo: opts.repo } : {}),
       ...(opts.verdict !== undefined ? { verdict: opts.verdict } : {}),
+      ...(opts.cross_edge_consumers_verified !== undefined
+        ? { cross_edge_consumers_verified: opts.cross_edge_consumers_verified }
+        : {}),
     }),
   };
 }
@@ -289,5 +303,143 @@ describe("buildReciprocationGraph", () => {
       window: FULL_WINDOW,
     });
     expect(g.edges).toHaveLength(1);
+  });
+});
+
+describe("cross_edge_coverage_by_peer", () => {
+  it("substrate-class verdict with non-empty consumers → with_consumers=1, total=1", () => {
+    const g = buildReciprocationGraph({
+      messages: [
+        makeVerdict({
+          ts: "2026-05-20T01:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Bravo",
+          pr_number: 100,
+          cross_edge_consumers_verified: ["dotfiles-shim", "dashboard-adapter"],
+        }),
+      ],
+      bodies_by_ref: new Map(),
+      channel_id: "ch",
+      window: FULL_WINDOW,
+    });
+    expect(g.cross_edge_coverage_by_peer).toEqual({
+      Alpha: { with_consumers: 1, total_substrate_class: 1 },
+    });
+  });
+
+  it("substrate-class verdict with empty consumers[] → counted in denominator only", () => {
+    const g = buildReciprocationGraph({
+      messages: [
+        makeVerdict({
+          ts: "2026-05-20T01:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Bravo",
+          pr_number: 100,
+          cross_edge_consumers_verified: [],
+        }),
+      ],
+      bodies_by_ref: new Map(),
+      channel_id: "ch",
+      window: FULL_WINDOW,
+    });
+    expect(g.cross_edge_coverage_by_peer).toEqual({
+      Alpha: { with_consumers: 0, total_substrate_class: 1 },
+    });
+  });
+
+  it("substrate-class verdict without consumers field (undefined) → excluded from coverage", () => {
+    const g = buildReciprocationGraph({
+      messages: [
+        makeVerdict({
+          ts: "2026-05-20T01:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Bravo",
+          pr_number: 100,
+        }),
+      ],
+      bodies_by_ref: new Map(),
+      channel_id: "ch",
+      window: FULL_WINDOW,
+    });
+    expect(g.cross_edge_coverage_by_peer).toEqual({});
+    expect(g.edges).toHaveLength(1);
+  });
+
+  it("non-substrate-class repo with consumers → excluded from coverage", () => {
+    const g = buildReciprocationGraph({
+      messages: [
+        makeVerdict({
+          ts: "2026-05-20T01:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Bravo",
+          pr_number: 100,
+          repo: "claude-conductor-dashboard",
+          cross_edge_consumers_verified: ["some-consumer"],
+        }),
+      ],
+      bodies_by_ref: new Map(),
+      channel_id: "ch",
+      window: FULL_WINDOW,
+    });
+    expect(g.cross_edge_coverage_by_peer).toEqual({});
+    expect(g.edges).toHaveLength(1);
+  });
+
+  it("mixed per-peer aggregation: Alpha 1/2 (one with, one empty, one undefined-excluded); Bravo 2/2", () => {
+    const g = buildReciprocationGraph({
+      messages: [
+        makeVerdict({
+          ts: "2026-05-20T01:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Charlie",
+          pr_number: 100,
+          cross_edge_consumers_verified: ["dotfiles-shim"],
+        }),
+        makeVerdict({
+          ts: "2026-05-20T02:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Charlie",
+          pr_number: 101,
+          cross_edge_consumers_verified: [],
+        }),
+        makeVerdict({
+          ts: "2026-05-20T03:00:00.000Z",
+          from: "alpha-sid",
+          identity: "Alpha",
+          target_peer: "Charlie",
+          pr_number: 102,
+        }),
+        makeVerdict({
+          ts: "2026-05-20T04:00:00.000Z",
+          from: "bravo-sid",
+          identity: "Bravo",
+          target_peer: "Charlie",
+          pr_number: 103,
+          cross_edge_consumers_verified: ["dashboard-adapter"],
+        }),
+        makeVerdict({
+          ts: "2026-05-20T05:00:00.000Z",
+          from: "bravo-sid",
+          identity: "Bravo",
+          target_peer: "Charlie",
+          pr_number: 104,
+          cross_edge_consumers_verified: ["dotfiles-shim", "dashboard-adapter"],
+        }),
+      ],
+      bodies_by_ref: new Map(),
+      channel_id: "ch",
+      window: FULL_WINDOW,
+    });
+    expect(g.cross_edge_coverage_by_peer).toEqual({
+      Alpha: { with_consumers: 1, total_substrate_class: 2 },
+      Bravo: { with_consumers: 2, total_substrate_class: 2 },
+    });
+    expect(g.edges).toHaveLength(5);
   });
 });
