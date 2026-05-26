@@ -39,6 +39,10 @@ import {
   encodePayload,
 } from "../../src/channels/audit-signature-chain.ts";
 import { canonicalJson } from "../../src/channels/canonical-json.ts";
+import {
+  createLineageEnvelope,
+  type LineageEnvelope,
+} from "../../src/channels/lineage-envelope.ts";
 
 /**
  * Helper: generate a fresh Ed25519 keypair for sign/verify tests.
@@ -985,5 +989,212 @@ describe("parseAuditVerdictV0_3Wrapped — Section 17: v0.3 DSSE wrapper", () =>
     const env1 = JSON.parse(envelopeJson1) as { payload: string };
     const env2 = JSON.parse(envelopeJson2) as { payload: string };
     expect(env1.payload).toBe(env2.payload);
+  });
+});
+
+/**
+ * Cycle 1 substrate-extension PR-A2 — `lineage?: LineageEnvelope | null`
+ * field extension on AuditVerdictBody per Pair A slice plan §1.1 + §7.1.
+ *
+ * Tests cover:
+ *   - Parser tolerates absent / undefined / null lineage (back-compat)
+ *   - Parser accepts shape-valid lineage envelope (object + JSON-string input paths)
+ *   - Parser rejects malformed lineage (delegates to parseLineageEnvelope)
+ *   - canonicalJson roundtrip with lineage absent — Bravo Condition 3 from
+ *     PR-A1 pre-impl design audit `b6df` 17:59Z (deferred to PR-A2 per
+ *     primary-source justification: canonical-json.ts on main via PR-A5)
+ *   - canonicalJson stability with lineage present (composes safely; cost-absent
+ *     Cycle 1 safe operating envelope per PUNT-OBS-CL-1 substrate-debt note)
+ *   - DSSE wrap → parseAuditVerdictV0_3Wrapped roundtrip preserves lineage
+ *     (composition-lens audit-shadow OBS-COMP-1 empirically verified)
+ */
+describe("Section 15: lineage field extension (PR-A2)", () => {
+  const VALID_LINEAGE: LineageEnvelope = {
+    kind_version: 1,
+    producer_session_id: "session-abc",
+    input_body_refs: ["body-ref-1", "body-ref-2"],
+  };
+
+  it("T15.1: parser tolerates absent lineage (back-compat)", () => {
+    const body = parseAuditVerdictBody(JSON.stringify(SHIP_CLEAN_BODY));
+    expect(body).not.toBeNull();
+    expect(body?.lineage).toBeUndefined();
+  });
+
+  it("T15.2: parser tolerates explicit null lineage", () => {
+    const raw = { ...SHIP_CLEAN_BODY, lineage: null };
+    const body = parseAuditVerdictBody(JSON.stringify(raw));
+    expect(body).not.toBeNull();
+    expect(body?.lineage).toBeNull();
+  });
+
+  it("T15.3: parser accepts valid lineage envelope as embedded object", () => {
+    const raw = { ...SHIP_CLEAN_BODY, lineage: VALID_LINEAGE };
+    const body = parseAuditVerdictBody(JSON.stringify(raw));
+    expect(body).not.toBeNull();
+    expect(body?.lineage).toEqual(VALID_LINEAGE);
+  });
+
+  it("T15.4: parser rejects malformed lineage (delegates to parseLineageEnvelope)", () => {
+    const malformed = {
+      ...SHIP_CLEAN_BODY,
+      lineage: { kind_version: 2, producer_session_id: "x" }, // wrong version
+    };
+    expect(parseAuditVerdictBody(JSON.stringify(malformed))).toBeNull();
+
+    const missingRequired = {
+      ...SHIP_CLEAN_BODY,
+      lineage: { kind_version: 1, producer_session_id: "x" }, // missing input_body_refs
+    };
+    expect(parseAuditVerdictBody(JSON.stringify(missingRequired))).toBeNull();
+  });
+
+  it("T15.5: parser accepts full lineage with all optional fields", () => {
+    const full: LineageEnvelope = {
+      kind_version: 1,
+      producer_session_id: "session-full",
+      produced_at: "2026-05-26T17:00:00.000Z",
+      input_body_refs: ["a", "b"],
+      input_handoffs: ["HANDOFF_2026-05-26_15-50.md"],
+      prompt_sha: "abc123",
+      model: "claude-opus-4-7",
+      cost: { input_tokens: 1000, output_tokens: 500 },
+    };
+    const raw = { ...SHIP_CLEAN_BODY, lineage: full };
+    const body = parseAuditVerdictBody(JSON.stringify(raw));
+    expect(body?.lineage).toEqual(full);
+  });
+
+  it("T15.6: canonicalJson roundtrip deterministic when lineage ABSENT (Bravo Condition 3)", () => {
+    // Cycle 1 safe operating envelope per PR-A1 PUNT-OBS-CL-1 substrate-debt
+    // note: canonical-json.ts RFC 8785 subset is safe when no floats present.
+    // SHIP_CLEAN_BODY has integer counts + no lineage field → canonical bytes
+    // must be deterministic across invocations.
+    const c1 = canonicalJson(SHIP_CLEAN_BODY);
+    const c2 = canonicalJson(SHIP_CLEAN_BODY);
+    expect(c1).toBe(c2);
+    // Re-ordered keys produce same canonical bytes (key-sort recursion)
+    const reordered: AuditVerdictBody = {
+      findings: SHIP_CLEAN_BODY.findings,
+      three_option_ask: SHIP_CLEAN_BODY.three_option_ask,
+      counts: SHIP_CLEAN_BODY.counts,
+      verdict: SHIP_CLEAN_BODY.verdict,
+      audit_axes: SHIP_CLEAN_BODY.audit_axes,
+      audit_class: SHIP_CLEAN_BODY.audit_class,
+      lens_set_applied: SHIP_CLEAN_BODY.lens_set_applied,
+      target_peer: SHIP_CLEAN_BODY.target_peer,
+      target_pr: SHIP_CLEAN_BODY.target_pr,
+      kind_version: 1,
+    };
+    expect(canonicalJson(reordered)).toBe(c1);
+  });
+
+  it("T15.7: canonicalJson stability with lineage present (no cost; integer-only fields)", () => {
+    // Lineage with no cost field — all canonicalJson-subset-friendly fields
+    // (strings + integer arrays). Canonical bytes must be deterministic +
+    // stable across input key orderings.
+    const withLineage: AuditVerdictBody = {
+      ...SHIP_CLEAN_BODY,
+      lineage: VALID_LINEAGE,
+    };
+    const c1 = canonicalJson(withLineage);
+    const c2 = canonicalJson(withLineage);
+    expect(c1).toBe(c2);
+    // The canonical output should contain the lineage field
+    expect(c1).toContain('"lineage"');
+    expect(c1).toContain('"producer_session_id":"session-abc"');
+  });
+
+  it("T15.8: DSSE wrap → unwrap roundtrip preserves lineage (OBS-COMP-1 composition-lens)", async () => {
+    const withLineage: AuditVerdictBody = {
+      ...SHIP_CLEAN_BODY,
+      lineage: VALID_LINEAGE,
+    };
+    const keypair = await generateTestKeypair();
+    const envelopeJson = await wrapAuditVerdictBody(
+      withLineage,
+      keypair.privateKey,
+      "Alpha",
+    );
+    const wrapped = parseAuditVerdictV0_3Wrapped(envelopeJson);
+    expect(wrapped).not.toBeNull();
+    expect(wrapped?.body.lineage).toEqual(VALID_LINEAGE);
+    // Inner-body shape preserved: target_pr + verdict + findings unchanged
+    expect(wrapped?.body.verdict).toBe(SHIP_CLEAN_BODY.verdict);
+    expect(wrapped?.body.target_pr).toEqual(SHIP_CLEAN_BODY.target_pr);
+  });
+
+  it("T15.9: lineage signature-coverage via PAE — embed inside payload bytes", async () => {
+    // Per OBS-COMP-1 from PR-A5 audit-shadow: lineage rides inside DSSE
+    // payload bytes → signature-covered automatically. Two envelopes with
+    // distinct lineage produce distinct payload bytes → distinct PAE input
+    // → callers can detect lineage-tamper via signature mismatch.
+    const lineageA: LineageEnvelope = {
+      ...VALID_LINEAGE,
+      input_body_refs: ["body-A"],
+    };
+    const lineageB: LineageEnvelope = {
+      ...VALID_LINEAGE,
+      input_body_refs: ["body-B"],
+    };
+    const keypair = await generateTestKeypair();
+    const envA = await wrapAuditVerdictBody(
+      { ...SHIP_CLEAN_BODY, lineage: lineageA },
+      keypair.privateKey,
+      "Alpha",
+    );
+    const envB = await wrapAuditVerdictBody(
+      { ...SHIP_CLEAN_BODY, lineage: lineageB },
+      keypair.privateKey,
+      "Alpha",
+    );
+    const parsedA = JSON.parse(envA) as {
+      payload: string;
+      signatures: { sig: string }[];
+    };
+    const parsedB = JSON.parse(envB) as {
+      payload: string;
+      signatures: { sig: string }[];
+    };
+    expect(parsedA.payload).not.toBe(parsedB.payload);
+    // Bun Ed25519 is RFC 8032 deterministic — distinct payload bytes →
+    // distinct signatures (same key + different input).
+    expect(parsedA.signatures[0]?.sig).not.toBe(parsedB.signatures[0]?.sig);
+  });
+
+  it("T15.10: createLineageEnvelope + canonicalJson composition path", () => {
+    // Construct a lineage via the SSOT constructor; verify it canonicalizes
+    // deterministically when embedded in an audit-verdict body.
+    const lineage = createLineageEnvelope({
+      producer_session_id: "session-from-ctor",
+      input_body_refs: ["upstream-1", "upstream-2"],
+      prompt_sha: "sha256",
+    });
+    const body: AuditVerdictBody = { ...SHIP_CLEAN_BODY, lineage };
+    const c1 = canonicalJson(body);
+    const c2 = canonicalJson(body);
+    expect(c1).toBe(c2);
+    expect(c1).toContain("session-from-ctor");
+    expect(c1).toContain("sha256");
+  });
+
+  it("T15.11: DSSE payloadType invariant — lineage extension does NOT change wire-format", async () => {
+    // PR-A2 adds a body field; DSSE envelope shape (payloadType + payload +
+    // signatures) is unchanged. Verifies that wrap output still uses the
+    // canonical audit-verdict payloadType regardless of lineage presence.
+    const withLineage: AuditVerdictBody = {
+      ...SHIP_CLEAN_BODY,
+      lineage: VALID_LINEAGE,
+    };
+    const keypair = await generateTestKeypair();
+    const envelopeJson = await wrapAuditVerdictBody(
+      withLineage,
+      keypair.privateKey,
+      "Alpha",
+    );
+    const env = JSON.parse(envelopeJson) as { payloadType: string };
+    expect(env.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+    // encodePayload is part of the wrap path; reference it to keep imports tidy
+    expect(encodePayload).toBeDefined();
   });
 });

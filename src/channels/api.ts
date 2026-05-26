@@ -245,6 +245,29 @@ export {
 } from "./audit-verdict.ts";
 export { canonicalJson } from "./canonical-json.ts";
 
+// Cycle 1 substrate-extension PR-A2 2026-05-26 — Pair A re-exports of
+// Layer 2 `LineageEnvelope` shape + parser + constructor + `lineageVerify`
+// library entry point. Plugin canonical at `src/channels/lineage-envelope.ts`
+// (PR-A1; commit b529c9a9). Cross-edge consumers (dotfiles shim today;
+// future audit-verdict body embedding via the `lineage?` field; PR-A4
+// `lineage verify` CLI dispatch) import these from
+// `claude-conductor/channels/api` for the substrate-canonical surface.
+// Substrate-shim-mirror discipline per
+// `feedback-substrate-shim-mirror-on-plugin-export-changes.md`.
+export type {
+  LineageEnvelope,
+  TokenCost,
+  LineageVerifyOptions,
+  LineageVerifyOutput,
+  CreateLineageEnvelopeOpts,
+} from "./lineage-envelope.ts";
+export {
+  parseLineageEnvelope,
+  isLineageEnvelope,
+  createLineageEnvelope,
+  lineageVerify,
+} from "./lineage-envelope.ts";
+
 // Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind shared parser +
 // inline MemoryType as-const tuple + type-guard (D2 (a) of plan v0.2 —
 // inline until 2nd consumer surfaces; future T3-E memory-attention-scoring
