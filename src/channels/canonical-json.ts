@@ -2,56 +2,75 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Canonical-JSON serialization (RFC 8785 JCS subset) for substrate
- * signature scopes (Cycle 1 substrate-core PR-A5; Pair B Charlie-pen per
- * `cycle-1-substrate-core-slice-plan-2026-05-26.md` §2.6 Migration 003
- * + §4.2 envelope shape).
+ * Canonical-JSON serialization (RFC 8785 JCS) for substrate signature
+ * scopes.
+ *
+ * **Spec compliance status on Bun.js v1.x** (verified empirically Cycle 2
+ * substrate-debt slice plan body §1; 17 number edge cases via `bun -e`):
+ *
+ * - RFC 8785 §3.2.2 (Numbers) — **COMPLIANT for all valid JSON numbers.**
+ *   Bun's `JSON.stringify` implements ECMAScript `ToString(Number)` per the
+ *   language spec across integer boundaries, float precision artifacts,
+ *   scientific-notation boundaries at 1e-6/1e-7 + 1e20/1e21, and denormal
+ *   limits (Number.MAX_VALUE / Number.MIN_VALUE). RFC 8785 §3.2.2 verbatim:
+ *   "adopts the ToString(Number) abstract operation as defined in
+ *   ECMAScript 2017".
+ * - RFC 8785 §3.2.3 (Object property sorting) — COMPLIANT (recursive
+ *   `Object.keys().sort()` per UTF-16 code-unit order per ECMA-262 §7.2.13).
+ * - RFC 8785 §3.2.4 (Array preservation) — COMPLIANT (no array sort; index
+ *   order preserved per JSON value model).
+ * - RFC 8785 §3.2.1 (Strings) — COMPLIANT for valid Unicode. RFC 8785
+ *   explicitly EXCLUDES Unicode normalization ("preserve string data as
+ *   is"); this impl follows the spec.
+ *
+ * **NaN/Infinity rejection** (Cycle 2 new contract):
+ *
+ * `JSON.stringify` silently coerces NaN/Infinity/-Infinity to JSON `"null"`,
+ * which is incorrect per RFC 8259 (which excludes non-finite numbers from
+ * valid JSON; RFC 8785 inherits this exclusion). This module THROWS on
+ * non-finite input to surface caller-side data-validation gaps rather than
+ * silently producing wrong output. The recursive guard catches both direct
+ * (`canonicalJson(NaN)`) and arbitrarily nested
+ * (`canonicalJson({a: [{b: Infinity}]})`) cases.
+ *
+ * **Cross-runtime caveat** (Cycle 3+ multi-impl scope):
+ *
+ * Determinism guarantees apply to Bun.js intra-cohort use. If a Python
+ * verifier OR alternate JS engine needs to reproduce identical canonical
+ * bytes, the verifier-side implementation must match ECMAScript
+ * ToString(Number) behavior. Provided by Bun.js + V8-based runtimes; not
+ * provided automatically by other-language implementations. Cycle 3+ scope
+ * for cross-runtime determinism contract; not in this module today.
  *
  * **Why a separate module:** RFC 8785 canonical-JSON is the payload-level
- * serialization-determinism primitive consumed by DSSE PAE (audit-signature-
- * chain.ts) + Pair A Layer 2 lineage envelope embedding. Both layers need a
- * single SSOT for canonical encoding so semantically-identical bodies encode
- * to identical bytes across cohort sessions + cross-edge consumers (Bravo +
- * Delta lens-prep findings 2026-05-26: "JCS solves payload-level
- * serialization-determinism — both load-bearing in v0.3 wrapper" +
- * "canonical-encoding rule must be consistent across both layers").
- *
- * **RFC 8785 subset scope (documented limitations):** This impl ships the
- * core object-key-sort + nested-object recursion needed by the
- * `audit-verdict` schema (integer + UTF-8 string fields only). It does NOT
- * implement RFC 8785 §3.2.2 full number canonicalization (no scientific-
- * notation normalization for large/small floats). RFC 8785 itself
- * explicitly EXCLUDES Unicode normalization (per spec: "preserve string
- * data as is") — this impl follows the spec on strings and relies on
- * V8/JSC's UTF-16 string repr being stable for our ASCII/Latin-1-dominant
- * cohort identifiers. When the audit-verdict
- * body schema extends to include floats OR non-ASCII strings, this impl
- * needs an extension or library replacement — flagged in test fixtures
- * (`test/channels/canonical-json.test.ts` documents the limitations as
- * empirical fixtures so regressions are caught).
+ * serialization-determinism primitive consumed by DSSE PAE
+ * (`audit-signature-chain.ts`) + Pair A Layer 2 lineage envelope embedding.
+ * Single SSOT for canonical encoding so semantically-identical bodies encode
+ * to identical bytes across cohort sessions + cross-edge consumers.
  *
  * **Why hand-rolled vs library:** substrate-clean over library-dep per
- * cohort consensus (PR-A3 pattern: paths.ts cohortKeysDir() SSOT chosen
- * over P3_FILE_ALLOWLIST escape-hatch). Per `[[feedback-substrate-clean-
- * over-escape-hatch-when-cohort-leans]]`. The subset is small (~20 lines);
- * a library would add dep surface for minimal incremental coverage given
- * the current scope.
+ * cohort consensus (PR-A3 paths.ts cohortKeysDir() SSOT precedent). Empirical
+ * verification (Cycle 2 substrate-debt slice plan body §1) shows
+ * `JSON.stringify` + recursive key-sort produces RFC 8785-compliant output
+ * on Bun.js — no library dependency needed for current scope.
  *
- * **Key-sort canonicality:** Object.keys().sort() default behavior compares
+ * **Key-sort canonicality:** `Object.keys().sort()` default behavior compares
  * by UTF-16 code units per ECMA-262 §7.2.13 (Abstract Relational Comparison
  * step 3.c.iv `lesser code unit`). RFC 8785 §3.2.3 specifies UTF-16 code-
  * unit order for property name sort. Match.
  */
 
 /**
- * Serialize a value to canonical-JSON-RFC-8785-subset string.
+ * Serialize a value to canonical-JSON-RFC-8785 string.
  *
  * - Recursively sorts object keys by UTF-16 code-unit order
  * - Recurses into arrays preserving index order
  * - Preserves `null` literal
- * - Numbers + booleans + strings serialized via JSON.stringify default
- *   (integers + ASCII/Latin-1 strings are stable; non-ASCII strings may
- *   have edge cases per the subset limitations above)
+ * - Numbers serialized via ECMAScript ToString (RFC 8785 §3.2.2 compliant
+ *   on Bun.js)
+ * - Strings + booleans serialized via JSON.stringify default
+ * - **Throws on NaN / Infinity / -Infinity** (not valid JSON per RFC 8259;
+ *   caller must validate input shape)
  *
  * Pure function (no I/O; no side effects). Caller passes the value as
  * a JS object/array/primitive; this module does not parse JSON itself
@@ -61,8 +80,11 @@
  *              number / boolean / null). Functions + undefined +
  *              symbols are silently elided per JSON.stringify semantics
  *              — caller's responsibility to pre-validate shape.
- * @returns Canonical-JSON-RFC-8785-subset string (no extra whitespace;
- *          object keys sorted UTF-16-code-unit order).
+ * @returns Canonical-JSON-RFC-8785 string (no extra whitespace; object keys
+ *          sorted UTF-16-code-unit order).
+ * @throws {Error} If input contains NaN / Infinity / -Infinity (direct or
+ *                 nested). RFC 8259 excludes non-finite numbers from valid
+ *                 JSON; substrate should not produce silent "null" coercion.
  */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortValueRecursive(value));
@@ -77,9 +99,18 @@ export function canonicalJson(value: unknown): string {
  *
  * Footgun: `typeof null === "object"` — explicit null-check FIRST per
  * the parent module's discipline (`audit-verdict.ts` parser pattern).
+ *
+ * NaN/Infinity guard: `Number.isFinite()` rejects non-finite numbers at the
+ * primitive branch. The recursion catches arbitrary-depth nested NaN/Infinity
+ * inside objects + arrays.
  */
 function sortValueRecursive(value: unknown): unknown {
   if (value === null) return null;
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new Error(
+      `canonicalJson: non-finite number not allowed (RFC 8259/8785 only permit finite numbers; got: ${value})`,
+    );
+  }
   if (typeof value !== "object") return value;
   if (Array.isArray(value)) {
     return value.map(sortValueRecursive);
