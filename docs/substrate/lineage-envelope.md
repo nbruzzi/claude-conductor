@@ -118,7 +118,7 @@ lineage:
 
 ### Emit on an audit-verdict body (PR-A2)
 
-`AuditVerdictBody.lineage?: LineageEnvelope | null` field; populated at audit-verdict construction time before DSSE wrap. Lineage gets canonical-JSON-encoded into the payload bytes per `canonicalJson()` and is signature-covered automatically via DSSE PAE. See `test/channels/audit-verdict.test.ts` Section 15 for shape + DSSE roundtrip coverage.
+`AuditVerdictBody.lineage?: LineageEnvelope | null` field; populated at audit-verdict construction time before DSSE wrap. Lineage gets canonical-JSON-encoded into the payload bytes per `canonicalJson()` and is signature-covered automatically via DSSE PAE. See `test/channels/audit-verdict.test.ts` Section 15 — `lineage field extension (PR-A2)` — for shape + DSSE roundtrip coverage (the file has two `describe` blocks titled "Section 15"; the relevant one is the lineage-extension block, not the `cross_edge_consumers_verified` field block).
 
 ## 4. Consumer workflow
 
@@ -162,7 +162,7 @@ if (handoff?.lineage !== undefined) {
 
 ### Walk dangling refs (PR-A7 memory-integrity hook)
 
-The dotfiles `memory-integrity` Stop hook surfaces a 6th signal (`lineage-dangling handoff refs`) when a memory's `lineage.input_handoffs` entries don't resolve to existing handoff files. See `~/.claude-dotfiles/src/hooks/checks/memory-integrity.ts:177` for the walker; env override `MEMORY_INTEGRITY_HANDOFFS_DIR` for testing.
+The dotfiles `memory-integrity` Stop hook surfaces a 6th signal (`lineage-dangling handoff refs`) when a memory's `lineage.input_handoffs` entries don't resolve to existing handoff files. The walker lives in `collectLineageDanglingHandoffs` (grep `~/.claude-dotfiles/src/hooks/checks/memory-integrity.ts` for the symbol); env override `MEMORY_INTEGRITY_HANDOFFS_DIR` for testing.
 
 ### Skip from archival (PR-A7 memory-archive script)
 
@@ -174,7 +174,7 @@ The dotfiles `memory-archive.ts` script skips memories with a `lineage:` frontma
 4. **lineage marker → silent skip (NEW PR-A7)**
 5. `mtime > thresholdDays` → flagged as `sidecar-empty-30d` candidate
 
-See `~/.claude-dotfiles/scripts/memory-archive.ts:148` for `hasLineageMarker` + line 205 for the skip.
+See `hasLineageMarker` in `~/.claude-dotfiles/scripts/memory-archive.ts` for the marker check, and the `if (hasLineageMarker(body)) continue;` skip inside `listCandidates` in the same file. (Symbolic references are grep-stable; line numbers drift as siblings edit the file.)
 
 ## 5. Cross-edge consumers
 
