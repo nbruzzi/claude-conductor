@@ -61,14 +61,21 @@ import {
  * Dispatch result returned by {@link autoWrapAuditVerdict}.
  *
  * `mode`: which Mode the dispatch resolved to.
+ *   - `"A"`: cohort key resolvable + chain ref absent or null → auto-computed
+ *     chain ref from channel JSONL walk + DSSE envelope.
+ *   - `"B"`: cohort key resolvable + operator-supplied SHA-256-hex chain ref →
+ *     operator value trusted as-is + DSSE envelope (no channel-JSONL walk;
+ *     no overwrite). Per Cycle 2 Stage 2 slice plan body §3.3 + Charlie S2-A.
+ *   - `"C"`: cohort key unresolvable OR operator chain ref non-SHA-256-shaped →
+ *     raw body emitted unchanged + stderr WARN.
  * `body`: the message body string to write to channel JSONL — either the
- *         DSSE envelope JSON (Mode A) or the original raw body unchanged
+ *         DSSE envelope JSON (Mode A or B) or the original raw body unchanged
  *         (Mode C).
  * `warn`: stderr WARN message to emit when Mode C engaged (operator-discipline
- *         signal explaining how to engage Mode A). Undefined for Mode A.
+ *         signal explaining how to engage Mode A). Undefined for Mode A + Mode B.
  */
 export type AutoWrapResult = {
-  mode: "A" | "C";
+  mode: "A" | "B" | "C";
   body: string;
   warn?: string;
 };
@@ -269,6 +276,48 @@ export async function autoWrapAuditVerdict(
     };
   }
 
+  // Mode B (Stage 2 S2-A — Charlie-pen Lane P Mode B per slice plan body §3.3):
+  // operator-supplied SHA-256-hex chain ref + cohort key resolvable → trust the
+  // operator value + wrap in DSSE envelope. Skips the channel-JSONL walk +
+  // `computePayloadHash` steps that Mode A performs; operator's explicit chain
+  // ref is preserved as-is in the inner body.
+  //
+  // Use cases for Mode B:
+  //   - Operator has external context about which prior audit-verdict the
+  //     cohort chains to (e.g., cross-channel chain reference where the
+  //     channel-JSONL walk would not find the prior payload).
+  //   - Operator builds programmatic envelope flows that pre-compute chain ref
+  //     via `computePayloadHash` against a payload not visible on the active
+  //     channel JSONL.
+  //   - Operator wants to chain to a specific historical audit-verdict
+  //     (e.g., bypassing intermediate audit-verdicts on the same channel).
+  //
+  // Mode B does NOT verify that the operator-supplied SHA-256 hex is the
+  // RIGHT SHA-256 — that would require knowing which prior payload was
+  // intended, which is precisely the context Mode B trusts the operator to
+  // supply. Cohort discipline depends on the trust chain (operator supplying
+  // legitimate chain refs); Mode B is the canonical operator path for
+  // explicit-chain-ref scenarios. Pre-Mode-B behavior at this code site
+  // OVERWROTE the operator's chain ref with the channel-JSONL-walk-computed
+  // value — that was the substrate-debt this branch closes per slice plan
+  // §3.3 Mode B framing.
+  if (
+    operatorChainRef !== undefined &&
+    operatorChainRef !== null &&
+    isSha256Hex(operatorChainRef)
+  ) {
+    const innerBody: AuditVerdictBody = {
+      ...parsedBody,
+      prev_audit_body_ref: operatorChainRef,
+    };
+    const envelopeJson = await wrapAuditVerdictBody(innerBody, secretKey, nato);
+    return {
+      mode: "B",
+      body: envelopeJson,
+    };
+  }
+
+  // Mode A: cohort key resolvable + chain ref absent or null → auto-wrap.
   // Resolve chain ref: walk channel JSONL backwards for prior audit-verdict.
   const priorPayload = lookupPriorAuditVerdictPayload(channelsDir, channelId);
   let chainRef: string | null;
