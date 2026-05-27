@@ -1,13 +1,17 @@
 /**
  * Plugin skill-content structural test slice (L:503).
  *
- * Phase 5 introduced new structure to `commands/session/handoff.md`
- * (Wind-down rules callout + Step 0/0.5/0.6 + See also) without a CI
- * signal that the structure stays. This test asserts the load-bearing
- * landmark sections of each plugin skill-class artifact in strict order.
+ * Asserts the load-bearing landmark sections of each plugin skill-class
+ * artifact in strict order.
  *
- * Two frontmatter classes:
- *   - command-skills (`commands/session/*.md`) — `description:` only
+ * Substrate-refactor 2026-05-27: `commands/session/{handoff,handoff-resume,
+ * channel,presence}.md` moved from plugin-canonical to dotfiles-canonical
+ * (user-workflow skills belong to user identity, not the plugin). Their
+ * structure assertions now live in the dotfiles repo's parallel test (or
+ * are dropped if not maintained there); this file retains only the
+ * library-class skills (`skills/<name>/SKILL.md`) that stay plugin-canonical.
+ *
+ * Frontmatter class:
  *   - library-skills (`skills/<name>/SKILL.md`) — `name:` + `description:`
  *
  * Section ordering = strict-sequential: each landmark must appear in
@@ -24,7 +28,7 @@ import path from "node:path";
 
 const PLUGIN_ROOT = path.resolve(import.meta.dir, "../..");
 
-type FrontmatterClass = "command" | "library";
+type FrontmatterClass = "library";
 
 type SkillSpec = {
   readonly path: string;
@@ -33,49 +37,6 @@ type SkillSpec = {
 };
 
 const SKILLS: readonly SkillSpec[] = [
-  {
-    path: "commands/session/handoff.md",
-    class: "command",
-    expectedSections: [
-      "Wind-down rules",
-      "Step 0",
-      "Step 1",
-      "Step 4",
-      "Step 5",
-      "Constraints",
-      "See also",
-    ],
-  },
-  {
-    path: "commands/session/handoff-resume.md",
-    class: "command",
-    expectedSections: [
-      "Step 0",
-      "Step 1",
-      "Step 2",
-      "Step 3",
-      "Step 4",
-      "Step 5",
-      "Constraints",
-    ],
-  },
-  {
-    path: "commands/session/presence.md",
-    class: "command",
-    expectedSections: ["Step 0", "Step 1", "Step 2", "Step 3", "Constraints"],
-  },
-  {
-    path: "commands/session/channel.md",
-    class: "command",
-    expectedSections: [
-      "Step 0",
-      "Step 1",
-      "Step 2",
-      "Step 3",
-      "Audit-request templates",
-      "Constraints",
-    ],
-  },
   {
     path: "skills/audit/SKILL.md",
     class: "library",

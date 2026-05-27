@@ -33,7 +33,7 @@ bash scripts/check-generic-paths.sh   # static path-leak detector
 
 The plugin's hook checks, registry, paths resolver, memory loader, channels module, todos module, active-sessions module, and bundled skills/agents/commands are all consumable today via the `package.json` `exports` map (see `INDEX.md` for the catalog). Cross-repo consumers link via `file:../claude-conductor`.
 
-> **Slash commands and CLI verbs:** the bundled `commands/session/{handoff,channel,presence,handoff-resume}.md` activate inside Claude Code today via dotfiles' substrate. A standalone `claude-conductor` CLI bin with stable verb contracts (`whoami`, `set-role`, `join`, `send`, `read`) ships in **Phase 1**, not v0.1.0.
+> **Slash commands and CLI verbs:** the session slash commands `/handoff`, `/handoff-resume`, `/channel`, `/presence` live in the user's dotfiles repo (substrate-refactor 2026-05-27 — user-workflow skills belong to user identity; conductor is primitive-only). They consume conductor primitives (channels CLI + parsers + hook framework + audit-verdict types + lineage envelope SSOT) via the `package.json` `exports` map cross-edge. A standalone `claude-conductor` CLI bin with stable verb contracts (`whoami`, `set-role`, `join`, `send`, `read`) ships in **Phase 1**, not v0.1.0.
 
 ## CLI verbs (deferred to Phase 1)
 

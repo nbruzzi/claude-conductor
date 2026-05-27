@@ -3,12 +3,20 @@
 
 /**
  * L:508 audit-request convention doc — registration smoke tests. Pins the
- * convention doc existence + 6 stage templates + SKILL.md imports + channel.md
- * subsection + INDEX.md catalog entry + bundled-memory pointer-line.
+ * convention doc existence + 6 stage templates + SKILL.md imports + INDEX.md
+ * catalog entry + bundled-memory pointer-line.
  *
  * Sibling-shape to `test/audit/posture-pool-registration.test.ts` from L:506.
  * Both pin documentation surfaces that the audit-skill depends on at
  * commission time.
+ *
+ * Substrate-refactor 2026-05-27: the `channel.md` "Audit-request templates"
+ * subsection assertion (which previously pinned `commands/session/channel.md`
+ * importing this convention doc) MOVED out of this file. `channel.md` is
+ * now dotfiles-canonical (user-workflow vs plugin-primitive split). The
+ * dotfiles repo's parallel test suite is where any channel.md content
+ * assertion now lives. Conductor still pins the convention doc itself
+ * (existence + 6 stages + 6 ask-fields + pool model + SKILL/INDEX entries).
  */
 
 import { describe, expect, it } from "bun:test";
@@ -82,15 +90,6 @@ describe("L:508 audit-request convention doc", () => {
       "utf8",
     );
     expect(skill).toContain("docs/conventions/audit-request-by-stage.md");
-  });
-
-  it("channel.md adds the audit-request-templates subsection pointing at the convention doc", () => {
-    const channel = readFileSync(
-      join(PLUGIN_ROOT, "commands", "session", "channel.md"),
-      "utf8",
-    );
-    expect(channel).toContain("Audit-request templates");
-    expect(channel).toContain("docs/conventions/audit-request-by-stage.md");
   });
 
   it("INDEX.md catalogs the convention doc under ## Conventions", () => {
