@@ -120,3 +120,71 @@ The `lint:workflows` script in `package.json` calls `actionlint` directly; the C
 ## Branching
 
 Cut a feature branch before touching code: `git checkout -b <feature-name>`. CLAUDE.md branching rule (>3 files OR plan-mode-entered) is enforced by the `branch-enforcement` PreToolUse hook on the dotfiles substrate; this repo inherits the discipline. Phase boundaries map to branches: `phase-0-<name>`, `phase-1-<name>`, etc.
+
+## What CONTRIBUTING.md is NOT (anti-positioning Cycle 3b)
+
+Sibling section to README `## What claude-conductor is NOT` (anti-positioning Cycle 3a). The contributor-facing positioning frame:
+
+- **NOT an external-contributor-friendly contribution template.** This repo is currently private/closed (per line 8 above); the document captures internal cohort contribution discipline. External contributors are not accepted at this stage. The document is preserved in-repo as a contract for future Claude instances picking up work in subsequent sessions, NOT as an invitation to drive-by PRs.
+- **NOT a general-purpose contribution standard.** The conventions encoded here (multi-persona audit, phase discipline, decision-log convention, audit transcript durability, generic-paths P1/P2/P3 enforcement, slash-command path convention, dotfiles version compatibility via feature-detection) are tuned to the nbruzzi-operator cohort workflow on Claude Code. Other multi-Claude or multi-AI workflows would need to redesign the convention layer; the discipline-as-code patterns can inform but should not be copy-pasted.
+- **NOT a substitute for the cohort discipline-thread.** This document is INSTRUCTION; cohort precedent + audit-loop + hook layer provide ENFORCEMENT. A contributor following CONTRIBUTING.md without cohort cycle precedent (cross-pair audit, ratify-clean cascade, preemptive-fold-on-OBS, memorialize-then-violate empirical accrual) would have the rules but not the practice that makes them load-bearing. The document teaches the rules; the cohort cycle teaches the discipline.
+- **NOT a complete enforcement spec.** Some items are convention-by-vigilance not gate-enforced (multi-persona audit dispatch, decision-log entries per phase, phase-boundary branch naming, smoke-run gate, per-phase test coverage floor). See §"INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)" below for explicit enumeration + Cycle 4+ deferred substrate work.
+- **NOT a CI/CD pipeline definition.** The CI workflow at `.github/workflows/test.yml` is the technical pipeline gate (typecheck + format:check + lint + check-generic-paths + check-import-extensions + test); CONTRIBUTING.md is the human-readable discipline contract. Both are required; neither substitutes for the other.
+- **NOT a static document.** Conventions evolve per cohort empirical (memorialize-then-violate accrual + preemptive-fold-on-OBS at observation surfaces). Updates land via cohort batch-memo cascades to the memory directory (`~/.claude/projects/-Users-nbruzzi/memory/`) + occasional CONTRIBUTING.md edits when the convention layer itself shifts. The cohort-cycle-precedent rhythm IS the document's continuous integration.
+
+## INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)
+
+Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread + Bravo R-3 risk-flag (Stage 1 Cycle 3a deferral framing): "INSTRUCTION-not-ENFORCEMENT will fail for AI-written PRs." This section explicitly names which items in CONTRIBUTING.md sit at which layer.
+
+**ENFORCED today (gate-driven):**
+
+- **TypeScript strict mode + no `any` + no non-null-assertion + exhaustive type checks** — ESLint config errors on violation; typecheck via `tsc --noEmit` at CI + pre-push.
+- **Prettier formatting** — pre-commit hook on dotfiles (`.husky/pre-commit`) + `bun run format` at CI.
+- **Apache-2.0 SPDX header on new source files** — ESLint rule (per CONTRIBUTING line 36 + `eslint.config.js` SPDX rule); rejected at lint stage.
+- **Forbidden patterns** (`eval` / dynamic-code / shell-string-concat) — ESLint custom rules (per CONTRIBUTING line 55); rejected at lint stage.
+- **Generic-paths P1/P2/P3** — `scripts/check-generic-paths.sh` runs at CI; CI fails on violation (per CONTRIBUTING line 63-67).
+- **Import extension discipline** — `scripts/check-import-extensions.sh` (or equivalent) at CI.
+- **Pipeline gates** (typecheck + format + lint + check-generic-paths + check-import-extensions + test) — CI workflow `.github/workflows/test.yml`; PR cannot merge without green CI per CLAUDE.md After-Every-Push mandate.
+- **Branch-enforcement** (>3 files OR plan-mode-entered → feature branch required) — `branch-enforcement` PreToolUse hook on dotfiles substrate (per CONTRIBUTING line 122); this repo inherits via cross-edge hook layer.
+- **Memory-integrity** (broken links / orphans / duplicates / byte-cap / fold issues) — `memory-integrity` Stop hook in dotfiles.
+- **Destructive-cmd discipline** — `destructive-cmd` PreToolUse hook in dotfiles (rejects `git reset --hard` / `git push --force` patterns without explicit cohort-discretion override).
+- **Audit-verdict schema validation at send-time** — `audit-verdict.ts` parser enforces `LENS_CLASSES` tuple-strict + counts-coherence + three_option_ask required + cross_edge_consumers_verified for substrate-class PRs (per `[[feedback-audit-cohort-missed-cross-edge-shim-consumer]]`).
+
+**Convention-by-vigilance today (NOT gate-enforced; cohort-precedent-enforced):**
+
+- **Multi-persona audit dispatch** (CONTRIBUTING line 14 "3 minimum personas, scope-driven scaling, hard cap 5-6") — cohort discipline; no gate validates persona count or persona diversity on PRs
+- **Decision-log entries per phase** (CONTRIBUTING line 26 + `decisions/phase-<N>.md`) — cohort discipline; no gate validates decision-log presence on phase-boundary PRs
+- **Phase-boundary branch naming** (CONTRIBUTING line 122 `phase-0-<name>` / `phase-1-<name>`) — cohort discipline; no gate validates branch name against phase
+- **Smoke-run gate** (CONTRIBUTING line 18 "run new code in a real test environment to catch sandbox/reality drift") — cohort discipline; no gate validates smoke-run output
+- **Audit transcript durability** (CONTRIBUTING line 59 `audits/phase-<N>/<persona>-<round>.md`) — cohort discipline; no gate validates audit-transcript filing
+- **Per-phase test coverage floors** (CONTRIBUTING line 40 "Phase 0 floor: 100% line coverage on extracted/refactored code") — cohort discipline; no coverage gate at CI today
+- **Dependency policy rationale** (CONTRIBUTING line 46 `dependencies-rationale.md`) — cohort discipline; no gate validates new-dep presence in rationale file
+
+**Cohort-precedent IS the enforcement for convention-only items.**
+
+The cohort discipline-thread (cycle 2026-05-27 empirical: 19 PR merges + 24+ memo deltas across 4 NATOs in 3 stages) demonstrates how cross-pair audit-shadow + ratify-clean cascade + preemptive-fold-on-OBS effectively enforce convention-only items at PR-tier:
+
+- Multi-persona audit: cohort precedent applies multi-NATO cross-pair-shadow + Pair-Internal audit on every substrate PR (4-NATO ratify-clean cascade is the discipline)
+- Decision-log entries: cohort precedent reviews commit messages + PR bodies for decision-log linkage at audit-shadow time
+- Phase-boundary branching: cohort precedent applies feature-branch + worktree-isolate-at-branch-create as cohort default (per `[[feedback-parallel-session-shared-tree-branch-race]]` rule 14)
+- Smoke-run gate: cohort precedent applies pre-commit gate suite (typecheck/format/lint/tests) as proxy at audit-shadow time
+- Audit transcript durability: cohort channel JSONL + body-ref content-addressed storage provides cohort-shared durability (not the `audits/phase-<N>/` filesystem path specifically; cohort discipline-thread evolved to channel-based)
+- Per-phase test coverage floors: cohort precedent surfaces coverage gaps at audit-shadow via test-count delta in pre-push gate output
+- Dependency policy rationale: cohort precedent surfaces new-dep concerns at audit-shadow
+
+The cohort-precedent-enforcement-mechanism is empirically effective per cycle 2026-05-27 PRISTINE-or-RECOVERED cycle character. AI-written PRs (Claude sessions modifying conductor) ARE held to convention-by-vigilance via the cohort cycle precedent + cross-pair audit + 4-NATO ratify-clean cascade.
+
+**Tech-debt forward-reference (Cycle 4+ scope):**
+
+Future substrate-fix work that would close the R-3 gap structurally (gate-enforce the convention-by-vigilance items above):
+
+- **SPDX header CI check** — script that greps `SPDX-License-Identifier` in all new source files; CI fails on absence. Substrate-fix scope: ~30 LOC bash script + workflow step.
+- **Decision-log presence CI check** — for PRs that modify substrate primitives, validate `decisions/phase-<N>.md` has new entries. Substrate-fix scope: PR-template + CI workflow validating template-section presence.
+- **Per-phase test coverage floor CI check** — coverage report at CI; fail on regression below phase floor. Substrate-fix scope: `bun test --coverage` invocation + threshold check.
+- **Dependency rationale check** — for PRs that add new runtime dependencies (package.json diff), validate `dependencies-rationale.md` has new entries. Substrate-fix scope: PR-template + CI workflow.
+- **Multi-persona audit dispatch verification** — for substrate-class PRs, validate channel JSONL has N audit-verdict bodies with N distinct `target_peer` values before merge. Substrate-fix scope: channel CLI verb + CI workflow + branch-protection rule.
+- **Branch name vs phase enforcement** — branch-enforcement hook could validate `phase-<N>-<name>` pattern + cross-reference to active phase. Substrate-fix scope: hook layer extension.
+
+These deferred items inform the next-cycle scope-decision; cohort discipline-thread has empirically demonstrated all of them via cycle 2026-05-27 cohort precedent but not yet codified as gates.
+
+— Anti-positioning Cycle 3b S4-D Alpha-pen 2026-05-27 (Pair A; sibling to Cycle 3a Alpha lane 4 README + vault entity V2.1; R-3 risk-addressed via INSTRUCTION-vs-ENFORCEMENT explicit boundary enumeration + cohort-precedent-as-enforcement framing + Cycle 4+ tech-debt forward-reference)
