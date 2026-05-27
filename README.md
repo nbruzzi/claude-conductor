@@ -83,6 +83,14 @@ These phases of work are NOT yet executing. They activate when (and if) a public
 | Distribution      | Private/closed for now                                                |
 | Audit gate state  | Sub-step 0.10 4-persona terminal audit + remediation arc (2026-04-28) |
 
+## Citation
+
+If you use claude-conductor in academic or technical work, please cite via the metadata in [`CITATION.cff`](CITATION.cff) at repository root (Citation File Format v1.2.0; consumable by GitHub's auto-generated citation widget on the repository sidebar and by reference managers like Zotero / Mendeley / Pandoc).
+
+The substrate is published as the discipline-as-code reference for AI-assisted multi-session software-engineering cohorts on Claude Code; citing helps surface the discipline-thread + cohort-precedent vocabulary for future research and adoption.
+
+A Zenodo DOI is reserved for a next-cycle archival upload (Anti-positioning Cycle 3c framing). Until then, the GitHub repository URL in `CITATION.cff` is the canonical citation pointer.
+
 ## License
 
 Apache-2.0. See `LICENSE` for full text and `SECURITY.md` for the threat model and vulnerability disclosure path.
