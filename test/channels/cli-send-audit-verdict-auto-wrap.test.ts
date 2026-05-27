@@ -103,6 +103,7 @@ function runSend(
   channelId: string,
   bodyFilePath: string,
   sessionId: string = TEST_SESSION_ID,
+  extraArgs: readonly string[] = [],
 ): RunResult {
   const proc = Bun.spawnSync({
     cmd: [
@@ -113,6 +114,7 @@ function runSend(
       "audit-verdict",
       "--body-file",
       bodyFilePath,
+      ...extraArgs,
     ],
     stdout: "pipe",
     stderr: "pipe",
@@ -543,6 +545,143 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // Operator value preserved; the channel-JSONL walk that Mode A would
       // have performed against the first audit-verdict's payload is bypassed.
       expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
+    });
+  });
+
+  describe("Section 6 — Mode D operator-explicit chain-ref opt-out via CLI --no-chain (Stage 3 S3-A)", () => {
+    it("C6.1: claim + cohort key + --no-chain → Mode D envelope with prev_audit_body_ref: null on JSONL", async () => {
+      const channelId = "c-lane-p-mode-d-no-chain";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: TEST_SESSION_ID,
+        identity: "Charlie",
+        force: false,
+      });
+      await runBootstrap({
+        identity: "charlie",
+        force: false,
+        cohortDir: cohortKeysDirAbs,
+      });
+
+      const bodyPath = writeBodyFile(CANONICAL_BODY);
+      const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
+        "--no-chain",
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      // Mode D → no stderr WARN (canonical operator path; explicit opt-out).
+      expect(result.stderr).toBe("");
+
+      const messages = readChannelJsonl(channelId);
+      const auditVerdicts = messages.filter(
+        (m) => m["kind"] === "audit-verdict",
+      );
+      expect(auditVerdicts.length).toBe(1);
+      const auditMsg = unwrap(auditVerdicts[0], "audit verdict");
+      const bodyStr = resolveJsonlBody(channelId, auditMsg);
+      const envelope = unwrap(parseDsseEnvelope(bodyStr), "DSSE envelope");
+      expect(envelope.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+      expect(envelope.signatures.length).toBe(1);
+      expect(unwrap(envelope.signatures[0], "signature").keyid).toBe("charlie");
+
+      const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+      const inner = JSON.parse(decoded) as AuditVerdictBody;
+      // Mode D contract via CLI: prev_audit_body_ref MUST be null.
+      expect(inner.prev_audit_body_ref).toBeNull();
+    });
+
+    it("C6.2: --no-chain + non-null prev_audit_body_ref in body → CLI dies with VALIDATION (mutex)", async () => {
+      const channelId = "c-lane-p-mode-d-mutex";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: TEST_SESSION_ID,
+        identity: "Charlie",
+        force: false,
+      });
+      await runBootstrap({
+        identity: "charlie",
+        force: false,
+        cohortDir: cohortKeysDirAbs,
+      });
+
+      const OPERATOR_SHA256_HEX =
+        "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+      const bodyWithChainRef: AuditVerdictBody = {
+        ...CANONICAL_BODY,
+        prev_audit_body_ref: OPERATOR_SHA256_HEX,
+      };
+      const result = runSend(
+        channelId,
+        writeBodyFile(bodyWithChainRef),
+        TEST_SESSION_ID,
+        ["--no-chain"],
+      );
+
+      // CLI semantic mutex fires → die with VALIDATION exit 2 BEFORE dispatcher invocation.
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("--no-chain");
+      expect(result.stderr).toContain("mutually exclusive");
+      // No message landed in JSONL (die fires before appendMessage).
+      try {
+        const messages = readChannelJsonl(channelId);
+        const auditVerdicts = messages.filter(
+          (m) => m["kind"] === "audit-verdict",
+        );
+        expect(auditVerdicts.length).toBe(0);
+      } catch (e) {
+        if (!(e instanceof Error) || !e.message.includes("ENOENT")) throw e;
+      }
+    });
+
+    it("C6.3: --no-chain + cohort key UNRESOLVABLE → Mode C fallback (raw + stderr WARN)", async () => {
+      const channelId = "c-lane-p-mode-d-no-cohort-key";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: TEST_SESSION_ID,
+        identity: "Charlie",
+        force: false,
+      });
+      // No runBootstrap — cohort key unresolvable.
+
+      const bodyPath = writeBodyFile(CANONICAL_BODY);
+      const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
+        "--no-chain",
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      // Mode C fallback because cohort key unresolvable; Mode D requires
+      // resolvable key for the DSSE envelope wrap.
+      expect(result.stderr).toContain("cohort key file");
+      expect(result.stderr).toContain("audit bootstrap");
+
+      const messages = readChannelJsonl(channelId);
+      const auditVerdicts = messages.filter(
+        (m) => m["kind"] === "audit-verdict",
+      );
+      expect(auditVerdicts.length).toBe(1);
+      const auditMsg = unwrap(auditVerdicts[0], "audit verdict");
+      const bodyStr = resolveJsonlBody(channelId, auditMsg);
+      // Mode C emits raw body unchanged — NOT a DSSE envelope. The --no-chain
+      // flag does not override the cohort-key requirement; Mode D requires
+      // signing capability same as Mode A.
+      expect(parseDsseEnvelope(bodyStr)).toBeNull();
+      const parsed = JSON.parse(bodyStr) as AuditVerdictBody;
+      expect(parsed.target_pr.number).toBe(CANONICAL_BODY.target_pr.number);
     });
   });
 });
