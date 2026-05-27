@@ -90,6 +90,8 @@ Check for `~/.claude/handoffs/LATEST.md`.
 
 Also read `~/.claude/handoffs/SESSION_LOG.md` if it exists. This is a running log of all past sessions — use it for broader context. Don't dump the whole log in the briefing, but note how many prior sessions are logged and reference any past entries that are relevant to the current handoff's work.
 
+**Lineage envelope parse (Cycle 1 Pair-A-PR-A8).** If the active handoff's YAML frontmatter carries a `lineage:` field, parse it via the substrate `parseHandoffFrontmatter` (importable as `claude-conductor/channels/api`, PR-A5) — that parser dispatches the `lineage` sub-object through `parseLineageEnvelope` (PR-A1 SSOT). Hold the parsed `LineageEnvelope` for Step 3's briefing. If the parser returns `null` for the whole frontmatter (strict schema rejected by a shape violation somewhere), proceed without lineage — the legacy frontmatter shape is back-compat valid; do not block the resume on a lineage parse failure.
+
 ### Step 1a (default only): Concurrent-pair detection
 
 `LATEST.md` is a single symlink — if two sessions end within minutes of each other on different work, whichever wrote last wins and the other is silently buried. Step 1a catches that case and offers a picker before proceeding.
@@ -220,8 +222,25 @@ Present a concise summary:
 > **Status:** [X of Y items completed]
 > **Next up:** [first item from Next Steps]
 > **Drift:** [any drift detected, or "None — state matches handoff"]
+> **Lineage:** [omit when no lineage envelope on the active handoff; otherwise one line summarizing it — see below]
 
 **If `MODE == "parallel"`:** prepend `**Mode:** parallel — context load only, no actions will be taken.` to the briefing, and reframe drift as `Observed (likely parallel session): …` rather than flagging it as something to reconcile.
+
+**Lineage row format (Cycle 1 Pair-A-PR-A8).** When Step 1's lineage parse succeeded, render a one-line summary:
+
+> **Lineage:** producer `<producer_session_id-prefix-8>`, produced `<produced_at>`, inputs `<N>` handoff(s) + `<M>` body_ref(s)`<model-suffix>`
+
+Where:
+
+- `producer_session_id-prefix-8` is the first 8 chars of the producer id (`slice(0, Math.min(8, id.length))` — UUIDs are the conductor-canonical session_id shape per `effectiveHome()` + `paths.ts` conventions, so 8 chars is usually disambiguating; the `Math.min` guard is defense-in-depth against a future emitter using a shorter non-UUID id form). Per Charlie PR-A8 cross-pair-shadow observation (c51f9de1).
+- `<produced_at>` is the ISO-8601 timestamp from the envelope (skip if absent/null).
+- `<N>` is `input_handoffs.length` (treat null/undefined as 0).
+- `<M>` is `input_body_refs.length`.
+- `<model-suffix>` is `, model <model>` when set, otherwise empty.
+
+If `input_handoffs` is non-empty, also include the first handoff filename inline so the user sees the supersedes chain head: append `; chain head: <handoffs[0]>` to the same line. Omit additional handoffs (just the head, to keep the briefing tight).
+
+Omit the entire Lineage row when no envelope was parsed in Step 1 — adds no signal for back-compat / legacy handoffs.
 
 ## Step 4: Wait for confirmation
 
