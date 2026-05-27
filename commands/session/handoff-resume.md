@@ -232,7 +232,7 @@ Present a concise summary:
 
 Where:
 
-- `producer_session_id-prefix-8` is the first 8 chars of the UUID (full id is verbose; prefix is usually disambiguating).
+- `producer_session_id-prefix-8` is the first 8 chars of the producer id (`slice(0, Math.min(8, id.length))` — UUIDs are the conductor-canonical session_id shape per `effectiveHome()` + `paths.ts` conventions, so 8 chars is usually disambiguating; the `Math.min` guard is defense-in-depth against a future emitter using a shorter non-UUID id form). Per Charlie PR-A8 cross-pair-shadow observation (c51f9de1).
 - `<produced_at>` is the ISO-8601 timestamp from the envelope (skip if absent/null).
 - `<N>` is `input_handoffs.length` (treat null/undefined as 0).
 - `<M>` is `input_body_refs.length`.
