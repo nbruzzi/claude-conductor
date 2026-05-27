@@ -31,6 +31,7 @@ function fakeFlags(overrides: Partial<FlagValues> = {}): FlagValues {
     base: "alpha/old-base",
     dryRun: false,
     onto: undefined,
+    noChain: false,
     ...overrides,
   };
 }

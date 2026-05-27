@@ -711,6 +711,10 @@ export async function runChannelsCli(
     role: true,
     force: true,
     fromSession: true,
+    // Cycle 2 Stage 3 S3-A — opt-in `--no-chain` flag for `send <ch>
+    // audit-verdict` Mode D engagement (operator-explicit chain-ref
+    // opt-out). Other verbs ignore. Per slice plan body §3.3 Mode D.
+    noChain: true,
   });
   // Phase 2 Slice 0 RE-W2-3 fix: per-invocation DieContext replaces the
   // prior module-level `outputJson` toggle. Threaded through every die()
@@ -1136,12 +1140,37 @@ export async function runChannelsCli(
             // + keyid emission with the canonical file-naming + the verifier's
             // lookup convention. Caught locally by macOS case-insensitive FS
             // masking; would fail on Linux CI without this normalization.
+            //
+            // Cycle 2 Stage 3 S3-A — Mode D semantic-mutex check: if operator
+            // passed `--no-chain` AND supplied a non-null chain ref in body,
+            // reject before reaching the dispatcher (operator-explicit-opt-out
+            // contradicts operator-explicit-chain-ref). The dispatcher would
+            // engage Mode D unconditionally on `forceNoChain=true` per its
+            // defense-in-depth shape; the CLI is the affordance-layer
+            // enforcement point per `[[feedback-substrate-API-affordance-bridge]]`.
+            if (
+              flags.noChain &&
+              parsedVerdict.prev_audit_body_ref !== undefined &&
+              parsedVerdict.prev_audit_body_ref !== null
+            ) {
+              die(
+                ctx,
+                `[send] --no-chain flag is mutually exclusive with non-null prev_audit_body_ref in audit-verdict body. The flag signals operator-explicit chain-ref opt-out (Mode D); supplying a chain ref alongside contradicts that intent. Per Cycle 2 Stage 3 slice plan body §3.3 Mode D mutex.`,
+                {
+                  code: 2,
+                  category: "VALIDATION",
+                  remediation:
+                    "Drop --no-chain to use Mode A (auto-compute from channel JSONL) OR Mode B (operator-supplied chain ref), OR omit/null the prev_audit_body_ref field to use --no-chain Mode D.",
+                },
+              );
+            }
             const wrap = await autoWrapAuditVerdict({
               parsedBody: parsedVerdict,
               rawBody: body,
               channelId,
               channelsDir: channelsDir(),
               nato: claim.identity.toLowerCase(),
+              forceNoChain: flags.noChain,
             });
             if (wrap.warn !== undefined) {
               process.stderr.write(wrap.warn);

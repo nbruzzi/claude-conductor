@@ -90,6 +90,22 @@ export type FlagSpec = {
    * stack-detection axis (`--base`) from rebase-target axis (`--onto`).
    */
   readonly onto?: boolean;
+  /**
+   * Accept `--no-chain` (standalone — no value). Used by `send <ch>
+   * audit-verdict` to engage Mode D (operator-explicit chain-ref opt-out)
+   * in the auto-wrap dispatcher: produces DSSE envelope with
+   * `prev_audit_body_ref: null`, bypassing both Mode A walk-and-compute AND
+   * Mode B operator-supplied trust paths. Per Cycle 2 Stage 3 slice plan
+   * body §3.3 Mode D + Charlie S3-A.
+   *
+   * **Mutual exclusion**: caller must reject the combination of `--no-chain`
+   * AND a non-null `prev_audit_body_ref` in the audit-verdict body — that
+   * combination is semantically contradictory (operator asked to opt out
+   * AND supplied a chain ref). Validation happens at the send-subcommand
+   * level, not in `parseFlags` (parseFlags is shape-only; semantic mutex
+   * lives at the verb dispatch).
+   */
+  readonly noChain?: boolean;
 };
 
 export type FlagValues = {
@@ -139,6 +155,13 @@ export type FlagValues = {
    * absent. Slice 0 v0.3 (`pr cascade-rebase` Delta F-NEW-1 fold).
    */
   readonly onto: string | undefined;
+  /**
+   * True when `--no-chain` was present and accepted. Cycle 2 Stage 3 S3-A
+   * (`send <ch> audit-verdict` Mode D engagement). Mutually exclusive with
+   * non-null operator-supplied `prev_audit_body_ref`; mutex enforced at
+   * verb dispatch (parseFlags is shape-only).
+   */
+  readonly noChain: boolean;
 };
 
 const DEFAULT_SPEC: Required<FlagSpec> = {
@@ -154,6 +177,7 @@ const DEFAULT_SPEC: Required<FlagSpec> = {
   base: false,
   dryRun: false,
   onto: false,
+  noChain: false,
 };
 
 export type ParsedFlags = {
@@ -195,6 +219,7 @@ export function parseFlags(
   const acceptBase = spec.base ?? DEFAULT_SPEC.base;
   const acceptDryRun = spec.dryRun ?? DEFAULT_SPEC.dryRun;
   const acceptOnto = spec.onto ?? DEFAULT_SPEC.onto;
+  const acceptNoChain = spec.noChain ?? DEFAULT_SPEC.noChain;
 
   const positional: string[] = [];
   const parseErrors: string[] = [];
@@ -210,6 +235,7 @@ export function parseFlags(
   let base: string | undefined = undefined;
   let dryRun = false;
   let onto: string | undefined = undefined;
+  let noChain = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -270,6 +296,8 @@ export function parseFlags(
       const consumed = consumeStringValue(argv, i, "--onto", parseErrors);
       if (consumed.value !== undefined) onto = consumed.value;
       i += consumed.advance;
+    } else if (acceptNoChain && arg === "--no-chain") {
+      noChain = true;
     } else {
       positional.push(arg);
     }
@@ -296,6 +324,7 @@ export function parseFlags(
       base,
       dryRun,
       onto,
+      noChain,
     },
     parseErrors,
   };

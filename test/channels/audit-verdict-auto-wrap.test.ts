@@ -453,3 +453,129 @@ describe("autoWrapAuditVerdict — Section 5: Mode B operator-supplied SHA-256 c
     );
   });
 });
+
+describe("autoWrapAuditVerdict — Section 6: Mode D operator-explicit chain-ref opt-out (--no-chain)", () => {
+  it("T6.1: forceNoChain=true + cohort key resolvable → Mode D envelope with prev_audit_body_ref: null", async () => {
+    await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const result = await autoWrapAuditVerdict({
+      parsedBody: CANONICAL_BODY,
+      rawBody: JSON.stringify(CANONICAL_BODY),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+      forceNoChain: true,
+    });
+    expect(result.mode).toBe("D");
+    expect(result.warn).toBeUndefined();
+    const envelope = unwrap(parseDsseEnvelope(result.body), "envelope");
+    expect(envelope.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+    expect(envelope.signatures.length).toBe(1);
+    expect(unwrap(envelope.signatures[0], "signature").keyid).toBe("charlie");
+
+    const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+    const inner = JSON.parse(decoded) as AuditVerdictBody;
+    // Mode D contract: prev_audit_body_ref MUST be null (explicit opt-out).
+    expect(inner.prev_audit_body_ref).toBeNull();
+  });
+
+  it("T6.2: forceNoChain=true + prior audit-verdict on channel → Mode D bypasses Mode A walk (precedence)", async () => {
+    await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    // Seed a prior audit-verdict — Mode A would walk this and compute a chain
+    // ref. Mode D contract: forceNoChain=true bypasses the walk; envelope has
+    // null chain ref despite the prior existing on channel.
+    const priorBody = JSON.stringify({
+      ...CANONICAL_BODY,
+      target_pr: { repo: "conductor", number: 1 },
+    });
+    appendChannelMessage({
+      ts: "2026-05-26T18:00:00.000Z",
+      from: "session-1",
+      kind: "audit-verdict",
+      body: priorBody,
+    });
+
+    const result = await autoWrapAuditVerdict({
+      parsedBody: CANONICAL_BODY,
+      rawBody: JSON.stringify(CANONICAL_BODY),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+      forceNoChain: true,
+    });
+    expect(result.mode).toBe("D");
+    const envelope = unwrap(parseDsseEnvelope(result.body), "envelope");
+    const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+    const inner = JSON.parse(decoded) as AuditVerdictBody;
+    // Mode D bypassed the walk — chain ref null, NOT the Mode-A-equivalent
+    // computed hash. Independent negative assertion via computePayloadHash
+    // proves the walk was skipped.
+    expect(inner.prev_audit_body_ref).toBeNull();
+    const computedFromPrior =
+      await import("../../src/channels/audit-signature-chain.ts").then((m) =>
+        m.computePayloadHash(priorBody),
+      );
+    expect(inner.prev_audit_body_ref).not.toBe(computedFromPrior);
+  });
+
+  it("T6.3: forceNoChain=true + cohort key UNRESOLVABLE → Mode C fallback (Mode D requires resolvable key, same as Mode A)", async () => {
+    // No runBootstrap — cohort key unresolvable.
+    const result = await autoWrapAuditVerdict({
+      parsedBody: CANONICAL_BODY,
+      rawBody: JSON.stringify(CANONICAL_BODY),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+      forceNoChain: true,
+    });
+    // Mode D requires a resolvable cohort key (DSSE envelope wrap needs the
+    // private key); without it, dispatcher falls back to Mode C — same shape
+    // as Mode A's unresolvable-key behavior. Mode D is NOT a bypass for the
+    // signing requirement; only a bypass for the chain-ref computation.
+    expect(result.mode).toBe("C");
+    expect(result.body).toBe(JSON.stringify(CANONICAL_BODY));
+    expect(result.warn).toBeDefined();
+    expect(result.warn).toContain("cohort key file");
+  });
+
+  it("T6.4: forceNoChain=false (or omitted) → Mode A path unaffected (regression coverage)", async () => {
+    // forceNoChain omitted is equivalent to forceNoChain=false (undefined !==
+    // true). This test locks the regression class: pre-Mode-D consumers that
+    // don't pass forceNoChain must continue to get Mode A behavior.
+    await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const resultOmitted = await autoWrapAuditVerdict({
+      parsedBody: CANONICAL_BODY,
+      rawBody: JSON.stringify(CANONICAL_BODY),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+    });
+    expect(resultOmitted.mode).toBe("A");
+
+    const resultExplicitFalse = await autoWrapAuditVerdict({
+      parsedBody: CANONICAL_BODY,
+      rawBody: JSON.stringify(CANONICAL_BODY),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+      forceNoChain: false,
+    });
+    expect(resultExplicitFalse.mode).toBe("A");
+  });
+});
