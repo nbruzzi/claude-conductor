@@ -180,30 +180,30 @@ Skip the frontmatter entirely if the telemetry file is missing or unreadable —
 
 Alongside the telemetry fields, emit a `lineage:` envelope per the Layer 2 substrate (`src/channels/lineage-envelope.ts` — type + parser + constructor; PR-A1) so this handoff carries composition-symmetric provenance metadata with the other lineage-bearing surfaces (memory frontmatter via PR-A6, audit-verdict bodies via PR-A2, channel-message structured bodies).
 
-Assemble these fields:
+Assemble these fields (ordered to match the substrate `LineageEnvelope` type at `src/channels/lineage-envelope.ts:78-87` so write-side, read-side, and template emission stay in lockstep):
 
-- **`kind_version: 1`** — fixed; required for forward-compat parsing.
-- **`producer_session_id`** — same value as the frontmatter `session_id`. Required by the envelope spec; cross-surface symmetry overrides the duplicate-field optics.
-- **`produced_at`** — same value as the frontmatter `ended_at`. Same symmetry tradeoff.
-- **`input_body_refs`** — channel `body_ref` UUIDs that informed this handoff's content. Introspect the session conversation for explicit body_ref citations (audit-verdict bodies you authored or referenced, peer status posts you replied to). Default to `[]` when no specific refs are load-bearing; do not invent.
-- **`input_handoffs`** — predecessor handoff filenames in the supersedes chain. Populate from (in order, de-duplicated):
+- **`kind_version: 1`** — fixed; substrate-required for forward-compat parsing.
+- **`producer_session_id`** — same value as the frontmatter `session_id`. Substrate-required; cross-surface symmetry overrides the duplicate-field optics.
+- **`produced_at`** — same value as the frontmatter `ended_at`. Optional per substrate (`?: string | null`), but required for handoffs as a cross-surface convention (handoffs always carry `ended_at`; emitting the envelope without it would lose the produced-at signal other surfaces honor). Per the fail-silent contract: if `ended_at` is unavailable, omit the whole envelope, not just this field.
+- **`input_body_refs`** — channel `body_ref` UUIDs that informed this handoff's content. Substrate-required. Introspect the session conversation for explicit body_ref citations (audit-verdict bodies you authored or referenced, peer status posts you replied to). Default to `[]` when no specific refs are load-bearing; do not invent.
+- **`input_handoffs`** — predecessor handoff filenames in the supersedes chain. Optional. Populate from (in order, de-duplicated):
   1. The handoff named in the new handoff body's `**Supersedes:**` line or frontmatter `supersedes:` field (if any).
   2. The `LATEST.md` target read at session-start (Step 1's `readlink ~/.claude/handoffs/LATEST.md`), if not already in the list.
   3. Handoffs explicitly cited inline in this session's body (e.g., "per Alpha 20:50 handoff" → `HANDOFF_2026-05-26_20-50.md`).
-- **`model`** (optional) — the active model id powering this session (e.g., `claude-opus-4-7`). Skip if unavailable.
 - **`prompt_sha`** (optional) — leave omitted in Cycle 1 (no canonical prompt-hash convention yet).
+- **`model`** (optional) — the active model id powering this session (e.g., `claude-opus-4-7`). Skip if unavailable.
 - **`cost`** (optional) — leave omitted in Cycle 1 per PUNT-OBS-CL-1 (`cost_usd` float canonicalization is Cycle 2 substrate-debt).
 
-The envelope is emitted in Step 4's YAML frontmatter as a block-style sub-object alongside the existing telemetry fields. Reference the substrate `LineageEnvelope` type for the locked field shape:
+The envelope is emitted in Step 4's YAML frontmatter as a block-style sub-object alongside the existing telemetry fields. Reference the substrate `LineageEnvelope` type for the locked field shape; the field ordering below matches the substrate type definition (and the list above) for cross-section reader consistency:
 
 ```yaml
 lineage:
   kind_version: 1
   producer_session_id: <session-id>
+  produced_at: <ended_at>
   input_body_refs: []
   input_handoffs:
     - HANDOFF_<prior>.md
-  produced_at: <ended_at>
 ```
 
 **Fail-silent on missing inputs.** If any required field cannot be resolved (e.g., telemetry absent → no `session_id`), OMIT the entire `lineage:` field rather than emitting a partial envelope. A missing envelope is back-compat valid (the optional read-side per `parseHandoffFrontmatter` PR-A5 + `parseMemoryFrontmatter` PR-A6 tolerates absence); a malformed one is not — the strict-parser will reject the whole frontmatter on a shape violation, causing the next `/handoff-resume` Step 1a or downstream consumers to silent-skip the handoff.
@@ -238,10 +238,10 @@ verifications_run:
 lineage:
   kind_version: 1
   producer_session_id: <id>
+  produced_at: <iso-8601>
   input_body_refs: []
   input_handoffs:
     - HANDOFF_<prior>.md
-  produced_at: <iso-8601>
 ---
 
 # Handoff: [Brief Descriptive Title]
