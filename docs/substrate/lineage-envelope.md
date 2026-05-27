@@ -205,7 +205,23 @@ Exit code matrix per §3.1 LOCKED contract:
 - `2` = partial (unresolved inputs OR skip semantics)
 - `3` = unsupported (envelope unparseable)
 
-## 7. Forward-compat notes
+## 7. Skill-doc substrate-fidelity discipline
+
+The 4 lineage-bearing surfaces are touched by 4 distinct authoring lanes — substrate type (`lineage-envelope.ts`), audit-verdict body (`audit-verdict.ts`), strict-frontmatter parsers (`handoff-body-parser.ts` + `memory-frontmatter-parser.ts`), and skill docs (`commands/session/handoff.md` + `commands/session/handoff-resume.md`). The Cycle 1 audit cycle surfaced three discipline instances where a skill-doc lane drifted from the substrate-canonical truth (Charlie cross-pair-shadow `5516484a` rule-of-3 codification; Bravo concur `7790c4e5`):
+
+1. **substrate-required vs handoff-convention-required conflation** — PR-A8 Step 3.5 originally annotated `produced_at` as "Required by the envelope spec"; substrate has `produced_at?: string | null` (optional). Convention requires it for handoffs only. The annotation now clarifies "Optional per substrate (`?: string | null`), but required for handoffs as a cross-surface convention". (Bravo `e3d89316` NIT-1; folded `420ef9c`.)
+2. **field-ordering divergence across the 3 emit sections** — Step 3.5 list, Step 4 template, and test helpers MUST all match the substrate type ordering at `lineage-envelope.ts:78-87`: `kind_version → producer_session_id → produced_at → input_body_refs → input_handoffs → prompt_sha → model → cost`. YAML object keys are not parser-order-sensitive, but cross-section consistency matters for skill-doc readability and audit cross-referencing. (Bravo `e3d89316` NIT-2 + `82c08b10` NIT; partially folded `420ef9c` + PR-A9 test helper aligned at `7d9b5e0`.)
+3. **rendering assumptions about substrate-allowed values** — handoff-resume Step 3 briefing originally rendered `producer_session_id-prefix-8` (first 8 chars) assuming UUID-shape ids; substrate allows any non-empty string. The render now uses `slice(0, Math.min(8, id.length))` so non-UUID emitters don't over-read. (Charlie `c51f9de1`; folded `a334e2d`.)
+
+**The discipline:** **When a skill doc, schema doc, or test helper annotates or assumes a substrate type's shape, primary-source-verify against the substrate type definition BEFORE writing.** Concretely:
+
+- **Annotate required-vs-optional from the substrate type, not the convention** — if the convention adds a stricter requirement, say so explicitly ("optional per substrate, required for handoffs as a cross-surface convention") rather than collapsing it to "required" without qualifier.
+- **Order fields to match the substrate type declaration** — across docs, templates, and helpers; treat the substrate type as the SSOT for ordering even when YAML/JSON parsers don't enforce it.
+- **Render substrate-allowed-but-rare shapes safely** — bounds-check slices, validate format assumptions, prefer defense-in-depth (`Math.min(8, id.length)` over bare `slice(0, 8)`) when substrate spec permits values the rendering didn't anticipate.
+
+Audit recommendation: when reviewing a PR touching any lineage-bearing surface, lens-check substrate fidelity as a Contract-class lens dimension. Three instances accruing across PR-A7..PR-A9 is the rule-of-3 codification threshold — the next instance gets framed as a CONTRACT class concern by default rather than re-extrapolated.
+
+## 8. Forward-compat notes
 
 **Cycle 2 substrate-debt items** referenced from this envelope:
 
