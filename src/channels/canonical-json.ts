@@ -33,14 +33,25 @@
  * (`canonicalJson(NaN)`) and arbitrarily nested
  * (`canonicalJson({a: [{b: Infinity}]})`) cases.
  *
- * **Cross-runtime caveat** (Cycle 3+ multi-impl scope):
+ * **Cross-runtime determinism** (Cycle 3 Stage 3 S3-B empirical closure):
  *
- * Determinism guarantees apply to Bun.js intra-cohort use. If a Python
- * verifier OR alternate JS engine needs to reproduce identical canonical
- * bytes, the verifier-side implementation must match ECMAScript
- * ToString(Number) behavior. Provided by Bun.js + V8-based runtimes; not
- * provided automatically by other-language implementations. Cycle 3+ scope
- * for cross-runtime determinism contract; not in this module today.
+ * Bun.js v1.x + Node.js V8 produce byte-identical canonical-JSON output for
+ * the cross-runtime fixture corpus per
+ * `test/channels/canonical-json-cross-runtime.test.ts` (Bun-native call vs
+ * Node.js subprocess via `child_process.spawnSync`; SHA-256 hash equality
+ * across all fixture cases — number boundaries + scientific-notation
+ * boundaries + denormal limits + escape-string edge cases + object key-sort
+ * cases including numeric-string keys sorted lexicographically + nested
+ * structures + audit-verdict-like realistic shapes). CI canary locks
+ * Bun-vs-Node determinism going forward. Both runtimes implement ECMAScript
+ * ToString(Number) per V8/JSC; the shared spec is the cross-runtime
+ * contract.
+ *
+ * **Non-V8 runtimes** (Python verifier, alternate JS engines without ToString
+ * conformance, etc.) still require their own implementation matching
+ * ECMAScript ToString(Number) behavior. Cohort scope remains Bun + Node V8;
+ * non-V8 cross-runtime parity is out of substrate scope (deferred to a
+ * dedicated verifier impl per language if/when needed).
  *
  * **Why a separate module:** RFC 8785 canonical-JSON is the payload-level
  * serialization-determinism primitive consumed by DSSE PAE
