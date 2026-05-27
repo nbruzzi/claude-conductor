@@ -733,6 +733,99 @@ pair_b: Charlie + Delta
     expect(result?.pair_b).toBe("Charlie + Delta");
     expect(result?.verifications_run).toEqual([]);
   });
+
+  // FM-25b / c / d — Delta cross-pair-shadow NIT fold pre-merge (audit
+  // body_ref `877e99bc` 2026-05-27T00:49Z). Three additional real-handoff
+  // shape variants empirically verified by Delta's primary-source smoke
+  // harness to parse SHIP-CLEAN; folding inline pre-merge per cohort
+  // discipline-of-coverage anchored at `[[feedback-no-known-gaps]]`.
+
+  it("FM-25b: parses HANDOFF_2026-05-26_16-00_delta (STRING-form verifications_run discriminated union branch)", () => {
+    const fm = `---
+session_id: 787e36a4-f6df-45bd-8bd3-9ccb776f7ed6
+started_at: 2026-05-26T11:38:00Z
+ended_at: 2026-05-26T16:00:00Z
+nato: Delta
+pair: B (with Charlie)
+cohort_channel: 2026-05-25_23-30
+cohort_arc: bernstein-review-arc continuation → Cycle 1 substrate-core impl phase (Pair B Delta-pen audit-shadow lane)
+entries_touched:
+  - feedback-phase-0-prior-art-fact-base-empirically-validated.md (no new write; foundation cited)
+verifications_run:
+  - bun run check-generic-paths (informational; ran via PR-A3 CI diagnosis chain)
+  - gh pr checks #124 #125 #126 #127 (CI green per PR; cohort 4-NATO ratify-clean)
+---
+
+# Body
+`;
+    const result = parseHandoffFrontmatter(fm);
+    expect(result).not.toBeNull();
+    expect(result?.nato).toBe("Delta");
+    expect(result?.verifications_run).toEqual([
+      "bun run check-generic-paths (informational; ran via PR-A3 CI diagnosis chain)",
+      "gh pr checks #124 #125 #126 #127 (CI green per PR; cohort 4-NATO ratify-clean)",
+    ]);
+  });
+
+  it("FM-25c: parses HANDOFF_2026-05-26_21-15_bravo (supersedes field arc-2 class)", () => {
+    const fm = `---
+session_id: 4cd3a7f3-6115-4619-a19a-6bbfb6af4802
+started_at: 2026-05-26T17:23:30.083Z
+ended_at: 2026-05-26T21:15:00Z
+entries_touched:
+  - feedback-cohort-discipline-cycle-internal-stress-test.md
+verifications_run: []
+cohort_channel: 2026-05-25_23-30
+cohort_arc: bernstein-review-arc Cycle 1 substrate-core+extension FORMAL CLOSE
+nato: Bravo
+pair: A (with Alpha)
+supersedes: HANDOFF_2026-05-26_19-55_bravo.md (arc-1 checkpoint)
+---
+
+# Body
+`;
+    const result = parseHandoffFrontmatter(fm);
+    expect(result).not.toBeNull();
+    expect(result?.nato).toBe("Bravo");
+    expect(result?.supersedes).toBe(
+      "HANDOFF_2026-05-26_19-55_bravo.md (arc-1 checkpoint)",
+    );
+    expect(result?.entries_touched).toEqual([
+      "feedback-cohort-discipline-cycle-internal-stress-test.md",
+    ]);
+  });
+
+  it("FM-25d: parses HANDOFF_2026-05-26_19-55_charlie (entries_touched non-empty + flow-object verifications_run combined)", () => {
+    const fm = `---
+session_id: 7135371e-5906-44a4-b005-bdeee99c7486
+started_at: 2026-05-26T17:03:18Z
+ended_at: 2026-05-26T19:55:00Z
+nato: Charlie
+pair: B (with Delta)
+cohort_channel: 2026-05-25_23-30
+cohort_arc: bernstein-review-arc Cycle 1 substrate-core impl phase (Pair-B-PR-A5 + Pair-B-PR-A6 merged)
+entries_touched:
+  - feedback-substrate-clean-over-escape-hatch-when-cohort-leans.md
+  - feedback-edit-tool-success-not-persisted-trap.md
+verifications_run:
+  - { cmd: "bun run typecheck", ts: "2026-05-26T18:13:00Z", exit_code: 0 }
+  - { cmd: "bun run lint", ts: "2026-05-26T18:13:00Z", exit_code: 0 }
+---
+
+# Body
+`;
+    const result = parseHandoffFrontmatter(fm);
+    expect(result).not.toBeNull();
+    expect(result?.nato).toBe("Charlie");
+    expect(result?.entries_touched).toHaveLength(2);
+    expect(result?.verifications_run).toHaveLength(2);
+    const firstRun = result?.verifications_run?.[0];
+    expect(firstRun).toEqual({
+      cmd: "bun run typecheck",
+      ts: "2026-05-26T18:13:00Z",
+      exit_code: 0,
+    });
+  });
 });
 
 describe("parseHandoffFrontmatterFromFile — file wrapper", () => {
