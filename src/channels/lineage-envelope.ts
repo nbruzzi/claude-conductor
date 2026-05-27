@@ -27,36 +27,55 @@
  * unwraps DSSE → parses inner AuditVerdictBody → accesses
  * `body.lineage` if present.
  *
- * **Substrate-debt note:** `TokenCost.cost_usd` is a float per locked
- * spec §1.1. `canonical-json.ts` RFC 8785 subset does NOT implement
- * §3.2.2 full number canonicalization (per Pair-B-PR-A5 audit-shadow
- * PUNT-OBS-CL-1 + canonical-json.ts JSDoc). For Cycle 1 cost field is
- * opt-in (OQ-A4); risk does not surface unless cost is populated.
- * Filed as Cycle 2 substrate-debt for canonical-json.ts full RFC 8785
- * upgrade.
+ * **Substrate-debt CLOSED 2026-05-27 cycle 3 S3-D:** `TokenCost.cost_usd`
+ * (float) → `TokenCost.cost_usd_micros` (integer micros) per Stripe/PayPal
+ * precedent. Integer-micros representation sidesteps the
+ * `canonical-json.ts` RFC 8785 §3.2.2 full-number-canonicalization gap
+ * entirely — integers serialize identically across runtimes regardless
+ * of the §3.2.2 subset status. Substrate-debt forward-reference at
+ * PR-A1 PUNT-OBS-CL-1 (Option B; Bravo RATIFY-CLEAN-w-3-CONDITIONS
+ * 2026-05-26T17:59Z) resolved: this PR amends the field shape (Option B)
+ * rather than promoting canonical-json.ts to full RFC 8785 (Option A).
+ * Breaking change for any pre-existing consumers that populated the
+ * field; per cycle 2 empirical (Delta canonical-json scope-pivot), no
+ * production audit-verdicts had `cost_usd` populated, so the break is
+ * empirically safe at write-time.
  */
 
 /**
  * Token cost record for opt-in lineage envelope cost capture (OQ-A4
- * Cycle 1).
+ * Cycle 1; Cycle 3 S3-D field rename from `cost_usd` float to
+ * `cost_usd_micros` integer per Stripe/PayPal precedent).
  */
 export type TokenCost = {
   input_tokens: number;
   output_tokens: number;
   /**
-   * Optional cost in USD (float). Cycle 1: opt-in only. If populated,
-   * may cause canonical-encoding non-determinism across runtimes —
-   * `canonical-json.ts` (PR-A5 substrate-core SSOT) ships an RFC 8785
-   * SUBSET that does NOT implement §3.2.2 full number canonicalization
-   * (no scientific-notation normalization for large/small floats).
-   * Cycle 2 will promote `canonical-json.ts` to full RFC 8785 OR amend
-   * this field to integer micros (Stripe/PayPal precedent: 1200 micros
-   * = $0.0012). Substrate-debt filed at
-   * `~/Documents/Obsidian Vault/wiki/backlog.md` per PR-A1 PUNT-OBS-CL-1
-   * cohort discretion (Option B; Bravo RATIFY-CLEAN-w-3-CONDITIONS
-   * 2026-05-26T17:59Z body_ref TBD).
+   * Optional cost in USD micros (integer; `1_000_000 micros = $1.00`;
+   * Stripe/PayPal precedent: `1200 micros = $0.0012`). Opt-in field —
+   * lineage envelopes without populated cost data omit this entirely.
+   *
+   * **Integer-micros representation rationale:** integers serialize
+   * identically across runtimes regardless of RFC 8785 §3.2.2 (full
+   * number canonicalization for floats). The `canonical-json.ts`
+   * (PR-A5 substrate-core SSOT) subset does not implement §3.2.2;
+   * using float `cost_usd` would risk cross-runtime canonical-encoding
+   * non-determinism. Integer micros sidesteps the gap entirely —
+   * `JSON.stringify(1200) === "1200"` on every JS runtime + identical
+   * canonical-JSON output under any RFC 8785-subset implementation.
+   *
+   * **Parser invariant:** must be a non-negative integer
+   * (`Number.isInteger(v) === true && v >= 0`). Floats reject (e.g.,
+   * `1200.5` → parse `null`); negatives reject; non-finite (NaN /
+   * Infinity) reject.
+   *
+   * **Cycle 3 S3-D origin:** substrate-debt closure per the file-level
+   * JSDoc note above; renamed from `cost_usd` (float) which was OQ-A4
+   * Cycle 1 opt-in scope. No production audit-verdicts populated
+   * `cost_usd` per Delta cycle 2 canonical-json scope-pivot empirical,
+   * so the rename is empirically safe at write-time.
    */
-  cost_usd?: number;
+  cost_usd_micros?: number;
 };
 
 /**
@@ -250,23 +269,25 @@ export function parseLineageEnvelope(input: unknown): LineageEnvelope | null {
     ) {
       return null;
     }
-    const costUsdRaw = costObj["cost_usd"];
-    let costUsd: number | undefined;
-    if (costUsdRaw === undefined) {
-      costUsd = undefined;
+    const costUsdMicrosRaw = costObj["cost_usd_micros"];
+    let costUsdMicros: number | undefined;
+    if (costUsdMicrosRaw === undefined) {
+      costUsdMicros = undefined;
     } else if (
-      typeof costUsdRaw === "number" &&
-      Number.isFinite(costUsdRaw) &&
-      costUsdRaw >= 0
+      typeof costUsdMicrosRaw === "number" &&
+      Number.isInteger(costUsdMicrosRaw) &&
+      costUsdMicrosRaw >= 0
     ) {
-      costUsd = costUsdRaw;
+      costUsdMicros = costUsdMicrosRaw;
     } else {
       return null;
     }
     cost = {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+      ...(costUsdMicros !== undefined
+        ? { cost_usd_micros: costUsdMicros }
+        : {}),
     };
   } else {
     return null;

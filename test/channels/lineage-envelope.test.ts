@@ -48,7 +48,7 @@ describe("parseLineageEnvelope — happy path", () => {
       input_handoffs: ["HANDOFF_2026-05-26_15-50.md"],
       prompt_sha: "abc123def",
       model: "claude-opus-4-7",
-      cost: { input_tokens: 1000, output_tokens: 500, cost_usd: 0.0123 },
+      cost: { input_tokens: 1000, output_tokens: 500, cost_usd_micros: 12300 },
     };
     expect(parseLineageEnvelope(full)).toEqual(full);
   });
@@ -189,17 +189,17 @@ describe("parseLineageEnvelope — optional-field tolerance", () => {
 });
 
 describe("parseLineageEnvelope — TokenCost", () => {
-  it("parses valid cost with cost_usd float (per locked spec)", () => {
+  it("parses valid cost with cost_usd_micros integer (Stripe/PayPal precedent: 1200 micros = $0.0012)", () => {
     const cost: TokenCost = {
       input_tokens: 1000,
       output_tokens: 500,
-      cost_usd: 0.0012,
+      cost_usd_micros: 1200,
     };
     const out = parseLineageEnvelope({ ...VALID_MINIMAL, cost });
     expect(out?.cost).toEqual(cost);
   });
 
-  it("parses valid cost without cost_usd (opt-in field absent)", () => {
+  it("parses valid cost without cost_usd_micros (opt-in field absent)", () => {
     const cost: TokenCost = { input_tokens: 100, output_tokens: 50 };
     const out = parseLineageEnvelope({ ...VALID_MINIMAL, cost });
     expect(out?.cost).toEqual(cost);
@@ -229,26 +229,51 @@ describe("parseLineageEnvelope — TokenCost", () => {
     ).toBeNull();
   });
 
-  it("rejects negative cost_usd", () => {
+  it("rejects negative cost_usd_micros", () => {
     expect(
       parseLineageEnvelope({
         ...VALID_MINIMAL,
-        cost: { input_tokens: 100, output_tokens: 50, cost_usd: -0.01 },
+        cost: { input_tokens: 100, output_tokens: 50, cost_usd_micros: -100 },
       }),
     ).toBeNull();
   });
 
-  it("rejects NaN / Infinity cost_usd", () => {
+  it("rejects NaN / Infinity cost_usd_micros", () => {
     expect(
       parseLineageEnvelope({
         ...VALID_MINIMAL,
-        cost: { input_tokens: 100, output_tokens: 50, cost_usd: NaN },
+        cost: { input_tokens: 100, output_tokens: 50, cost_usd_micros: NaN },
       }),
     ).toBeNull();
     expect(
       parseLineageEnvelope({
         ...VALID_MINIMAL,
-        cost: { input_tokens: 100, output_tokens: 50, cost_usd: Infinity },
+        cost: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cost_usd_micros: Infinity,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects non-integer cost_usd_micros (Cycle 3 S3-D integer-micros invariant)", () => {
+    expect(
+      parseLineageEnvelope({
+        ...VALID_MINIMAL,
+        cost: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cost_usd_micros: 1200.5,
+        },
+      }),
+    ).toBeNull();
+    // Float that rounds to a positive integer should also reject — the
+    // integer-micros invariant is structural, not value-equivalent.
+    expect(
+      parseLineageEnvelope({
+        ...VALID_MINIMAL,
+        cost: { input_tokens: 100, output_tokens: 50, cost_usd_micros: 0.0012 },
       }),
     ).toBeNull();
   });
@@ -361,13 +386,13 @@ describe("createLineageEnvelope — constructor", () => {
       input_handoffs: ["h.md"],
       prompt_sha: "sha1",
       model: "claude-opus-4-7",
-      cost: { input_tokens: 100, output_tokens: 50, cost_usd: 0.01 },
+      cost: { input_tokens: 100, output_tokens: 50, cost_usd_micros: 10000 },
     });
     expect(env.produced_at).toBe("2026-05-26T17:00:00Z");
     expect(env.input_handoffs).toEqual(["h.md"]);
     expect(env.prompt_sha).toBe("sha1");
     expect(env.model).toBe("claude-opus-4-7");
-    expect(env.cost?.cost_usd).toBe(0.01);
+    expect(env.cost?.cost_usd_micros).toBe(10000);
   });
 
   it("omits optional fields when not provided (clean shape)", () => {

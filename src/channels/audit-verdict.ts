@@ -272,8 +272,11 @@ export type AuditVerdictBody = {
    *
    * Cross-pair contract: the inner shape comes from `parseLineageEnvelope`
    * in `src/channels/lineage-envelope.ts` (PR-A1 SSOT); see that module
-   * JSDoc for the per-field schema + RFC 8785 §3.2.2 substrate-debt note
-   * on `TokenCost.cost_usd` opt-in canonical-encoding limitation.
+   * JSDoc for the per-field schema. Cycle 3 S3-D closed the RFC 8785
+   * §3.2.2 substrate-debt by renaming `TokenCost.cost_usd` (float) →
+   * `TokenCost.cost_usd_micros` (integer micros; Stripe/PayPal precedent).
+   * Integer-micros serialize identically across runtimes regardless of
+   * the §3.2.2 subset status.
    */
   lineage?: LineageEnvelope | null;
 };
