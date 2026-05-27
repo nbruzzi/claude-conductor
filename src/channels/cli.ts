@@ -84,6 +84,7 @@ import {
 import { parseDigestBody } from "./digest.ts";
 import { parseAuditAskBody } from "./audit-ask.ts";
 import { parseAuditVerdictBody } from "./audit-verdict.ts";
+import { autoWrapAuditVerdict } from "./audit-verdict-auto-wrap.ts";
 import { isSubstrateClassPR } from "./substrate-class.ts";
 import { parseMemoryProposalBody } from "./memory-proposal.ts";
 import { parseWindDownCheckinBody } from "./wind-down-checkin.ts";
@@ -93,6 +94,7 @@ import {
   summarizeChannelForHandoff,
 } from "./handoff-resolver.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
+import { channelsDir } from "../shared/paths.ts";
 import {
   claimIdentity,
   claimIdentityNamed,
@@ -1007,12 +1009,14 @@ export async function runChannelsCli(
           );
         }
 
-        const message: ChannelMessage = {
-          ts: new Date().toISOString(),
-          from: sid(),
-          kind: kind as ChannelKind,
-          body,
-        };
+        // `message` construction was moved from here to after the
+        // kind-specific validator gates so that the audit-verdict
+        // auto-wrap dispatcher (Lane P CLI integration follow-up to
+        // PR #146) can mutate `body` post-validation. The validators
+        // below only `die()` on schema failure — none of them needs
+        // `message` in scope. See construction site just before the
+        // `const result =` appendMessage call below.
+        //
         // appendMessage auto-attaches identity+role from the sender's
         // claim (Slice 6 — see src/channels/index.ts:appendMessage). If
         // the sender has no claim (legacy / pre-join), the message
@@ -1105,7 +1109,62 @@ export async function runChannelsCli(
               },
             );
           }
+          // Cycle 2 Pair B substrate-debt Lane P CLI integration follow-up
+          // (Charlie-pen, follow-on to PR #146 MVP). Wires the
+          // `autoWrapAuditVerdict` dispatcher into the operator-send path so
+          // `bun run src/channels/cli.ts send <ch> audit-verdict --body-file
+          // <body>` engages Mode A auto-wrap when (a) the operator has
+          // claimed a NATO identity on this channel AND (b) the cohort key
+          // file is resolvable AND (c) the body has no malformed chain ref.
+          // Mode C fallback: raw body unchanged + stderr WARN. Claimless
+          // senders skip the dispatcher entirely (no NATO to sign with;
+          // matches pre-Lane-P emit shape).
+          //
+          // Per `[[feedback-substrate-fix-pattern-must-self-mirror]]`: the
+          // operator-path bridge IS the substrate-API-affordance fix; this
+          // CLI wiring is what closes the gap Charlie's empirical-43
+          // substrate-finding identified (`e74b0971` 2026-05-27T11:05Z —
+          // 0/43 audit-verdicts DSSE-wrapped + 10/43 UUID-shaped chain refs
+          // prior cycle despite Layer 1.5 primitives existing).
+          if (claim !== null) {
+            // Per `src/channels/audit-verdict-auto-wrap.ts:88` JSDoc + cohort
+            // file-naming convention at `keyPaths(nato, cohortDir)` (see
+            // `src/channels/key-surface.ts:74`): cohort key files live at
+            // `<cohortDir>/<lowercase-nato>.ed25519.{pub,sec}`. `NatoIdentity`
+            // claims surface as capitalized (`"Alpha"`, `"Charlie"`, ...);
+            // lowercasing here aligns the dispatcher's key-resolution path
+            // + keyid emission with the canonical file-naming + the verifier's
+            // lookup convention. Caught locally by macOS case-insensitive FS
+            // masking; would fail on Linux CI without this normalization.
+            const wrap = await autoWrapAuditVerdict({
+              parsedBody: parsedVerdict,
+              rawBody: body,
+              channelId,
+              channelsDir: channelsDir(),
+              nato: claim.identity.toLowerCase(),
+            });
+            if (wrap.warn !== undefined) {
+              process.stderr.write(wrap.warn);
+            }
+            body = wrap.body;
+          }
         }
+
+        // INVARIANT (Lane P CLI integration follow-up — PR #148; Delta NIT
+        // 2026-05-27T18:50Z preemptive-fold-on-OBS): validators below this
+        // line MUST NOT mutate `body`. The `const message` construction at
+        // the end of this block (just before the `appendMessage` call)
+        // captures the final body string; only the audit-verdict path above
+        // is permitted to mutate body (via autoWrapAuditVerdict's Mode A
+        // wrap). Future kind-validators added here must either preserve
+        // `body` unchanged (die-on-fail-only pattern, like memory-proposal /
+        // wind-down-checkin / key-revoke below) OR refactor `const message`
+        // construction to follow the audit-verdict pattern.
+        //
+        // Per `[[feedback-substrate-fix-pattern-must-self-mirror]]`:
+        // documenting the body-immutability invariant structurally (here +
+        // at the message-construction site) prevents the regression class
+        // where a future validator silently breaks the refactor's safety.
 
         // Tier 2 Verb 2 2026-05-20 — `memory-proposal` validator gate
         // (parallel to audit-ask + audit-verdict above). Body must
@@ -1185,6 +1244,18 @@ export async function runChannelsCli(
             },
           );
         }
+
+        // `message` construction moved here (post-validators + post Lane P
+        // auto-wrap dispatch) so the audit-verdict auto-wrap path can
+        // mutate `body` before this constant captures the final string.
+        // For non-audit-verdict kinds, `body` is unchanged since the last
+        // validator runs, so the move is behavior-preserving.
+        const message: ChannelMessage = {
+          ts: new Date().toISOString(),
+          from: sid(),
+          kind: kind as ChannelKind,
+          body,
+        };
 
         // Phase 4 Step A Layer 3 (plan v5 RE-3 fold): manual `send out`
         // is a true terminal transition — pass `makeSendOutMutator(sid)`
