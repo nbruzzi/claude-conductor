@@ -135,6 +135,10 @@ type AuditVerifyOutputJson = {
   key_ids_used: string[];
   total_audit_verdicts: number;
   breaks: { ts: string; reason: string; detail: string }[];
+  // S2-B (Pair B Cycle 2 substrate-debt) — both counters now exposed in
+  // JSON output for silent-success-masking gap closure per slice plan §4.4.
+  skipped_pre_v0_3: number;
+  unparseable: number;
 };
 
 type SubprocessResult = SpawnSyncReturns<string> & {
@@ -341,20 +345,21 @@ describe("audit verify CLI subprocess — Section 2: broken-chain fixture", () =
   });
 });
 
-describe("audit verify CLI subprocess — Section 3: mixed-pre-v3 fixture (SILENT-SUCCESS-MASKING DEMONSTRATION)", () => {
+describe("audit verify CLI subprocess — Section 3: mixed-pre-v3 fixture (S2-B GAP CLOSED)", () => {
   /**
-   * Asserts the current behavior: pre-v0.3 raw bodies are silently
-   * skipped from JSON output (only `total_audit_verdicts` counts v0.3;
-   * `breaks` doesn't list skipped pre-v0.3 entries). The INTERNAL
-   * `skipped_pre_v0_3` counter is NOT serialized into stdout JSON per
-   * `src/audit/verify.ts:135-149`. Only the EXIT CODE distinguishes
-   * partial (skipped present) from clean-ok (no skipped).
+   * Per Pair B Cycle 2 substrate-debt S2-B (slice plan §4.4): the
+   * `skipped_pre_v0_3` + `unparseable` counters are now exposed in
+   * `AuditVerifyOutput` JSON output. Prior to S2-B these were
+   * internal-only (only the EXIT CODE distinguished partial from
+   * vacuous-ok); now JSON consumers can distinguish at the structural
+   * shape level. This section locks the closed-gap behavior as CI
+   * canary going forward — any future regression that removes the
+   * field would fail T3.1 + T4.1 + T11 in verify.test.ts.
    *
-   * Cycle 3+ substrate fix should expose `skipped_pre_v0_3` in JSON
-   * output — this test will need to be updated then to assert the new
-   * field. Per Charlie slice plan body §4.4 (Cycle 3 deferred scope).
+   * Original gap framing preserved in git history at PRs #143 / #144 /
+   * #146 / #148 plus [[feedback-verifier-silent-success-skip-conditional]].
    */
-  it("T3.1: pre-v0.3 raw body only → exit 2 partial (JSON shape masks skipped pre-v0.3 from operator)", () => {
+  it("T3.1: pre-v0.3 raw body only → exit 2 partial + skipped_pre_v0_3 visible in JSON (S2-B closure)", () => {
     // Emit a pre-v0.3 raw audit-verdict body (no payloadType envelope; just an inner-body JSON)
     const rawBody = JSON.stringify(CANONICAL_BODY);
     appendChannelMessage({
@@ -370,19 +375,16 @@ describe("audit verify CLI subprocess — Section 3: mixed-pre-v3 fixture (SILEN
     // Per src/audit/cli.ts:299-302 exit-code mapping.
     expect(result.status).toBe(2);
     const out = unwrap(result.parsed);
-    // SILENT-SUCCESS-MASKING: ok:true + total:0 + breaks:[] is INDISTINGUISHABLE
-    // from "empty channel with no audit-verdicts" per T1.1 at the JSON-output
-    // level. Operator reading JSON output cannot tell that 1 pre-v0.3 entry
-    // exists and was skipped — only the EXIT CODE distinguishes (0 vacuous-ok
-    // vs 2 partial). See T4.1 cross-test for the explicit demonstration.
+    // ok:true + total:0 + breaks:[] preserved (chain-eligible state unchanged).
     expect(out.ok).toBe(true);
     expect(out.total_audit_verdicts).toBe(0);
     expect(out.breaks).toEqual([]);
-    // Per src/audit/verify.ts:120-133: AuditVerifyOutput shape has no
-    // `skipped_pre_v0_3` field. Cycle 3 substrate-debt: expose this in
-    // output JSON so operators can distinguish partial from clean-ok at
-    // the JSON-shape level, not just via exit-code.
-    expect(out).not.toHaveProperty("skipped_pre_v0_3");
+    // S2-B GAP CLOSURE: skipped_pre_v0_3 + unparseable now exposed in JSON.
+    // Operators can distinguish "vacuous-ok empty channel" from "ok with N
+    // skipped pre-v0.3 entries" at the JSON-shape level — no exit-code-only
+    // signal required. Per src/audit/verify.ts:120-152.
+    expect(out.skipped_pre_v0_3).toBe(1);
+    expect(out.unparseable).toBe(0);
   });
 
   it("T3.2: pre-v0.3 raw body only + --strict → exit 1 (partial elevated to broken)", () => {
@@ -445,20 +447,28 @@ describe("audit verify CLI subprocess — Section 3: mixed-pre-v3 fixture (SILEN
   });
 });
 
-describe("audit verify CLI subprocess — Section 4: silent-success-masking demonstration cross-test", () => {
+describe("audit verify CLI subprocess — Section 4: S2-B silent-success-masking gap closure cross-test", () => {
   /**
-   * Cross-test: stdout JSON shape is IDENTICAL between "T1.1 empty
-   * channel" (no audit-verdicts at all) and "T3.1 pre-v0.3 raw body
-   * only" (1 skipped entry). The only signal that distinguishes them
-   * is the EXIT CODE — vacuous-ok=0 vs partial=2. This is the
-   * silent-success-masking gap; Cycle 3+ substrate fix should expose
-   * `skipped_pre_v0_3` in JSON output to enable operators to
-   * distinguish without parsing exit codes from shell.
+   * Per Pair B Cycle 2 substrate-debt S2-B (slice plan §4.4 + Charlie
+   * Lane R PR #144 origin): stdout JSON shape is now STRUCTURALLY
+   * DISTINGUISHABLE between "empty channel" (no audit-verdicts) and
+   * "pre-v0.3 raw body only" (1 skipped entry). The JSON output exposes
+   * `skipped_pre_v0_3` + `unparseable` counters so consumers can detect
+   * partial state without depending on the CLI exit-code matrix.
+   *
+   * This test was the canary that LOCKED the gap as CI evidence prior
+   * to S2-B; it now FLIPS to lock the CLOSURE — any future regression
+   * that removes the JSON field would fail this assertion. Per
+   * [[feedback-deny-list-over-allow-list-for-skip-gates]] +
+   * [[feedback-verifier-silent-success-skip-conditional]] (Bravo §11 NEW).
    */
-  it("T4.1: empty-channel JSON shape == pre-v0.3-only JSON shape (only exit code differs)", () => {
+  it("T4.1: empty-channel JSON shape != pre-v0.3-only JSON shape (structural distinction via skipped_pre_v0_3)", () => {
     const emptyResult = runVerifySubprocess();
     expect(emptyResult.status).toBe(0);
     const emptyOut = unwrap(emptyResult.parsed);
+    // Empty channel: skipped_pre_v0_3 = 0 (S2-B field present + zero).
+    expect(emptyOut.skipped_pre_v0_3).toBe(0);
+    expect(emptyOut.unparseable).toBe(0);
 
     // Reset channel state by removing messages file
     const messagesPath = path.join(channelsDirAbs, channelId, "messages.jsonl");
@@ -475,20 +485,25 @@ describe("audit verify CLI subprocess — Section 4: silent-success-masking demo
     });
     const partialResult = runVerifySubprocess();
     const partialOut = unwrap(partialResult.parsed);
+    // Partial state: skipped_pre_v0_3 = 1 (S2-B field present + non-zero).
+    expect(partialOut.skipped_pre_v0_3).toBe(1);
+    expect(partialOut.unparseable).toBe(0);
 
-    // JSON SHAPES IDENTICAL
-    expect(partialOut).toEqual(emptyOut);
-    expect(partialOut.ok).toBe(emptyOut.ok); // both true
+    // S2-B CLOSURE: JSON SHAPES STRUCTURALLY DIFFER on the new field.
+    // Operators no longer need to inspect exit codes from shell to
+    // distinguish vacuous-ok from partial — the JSON shape carries the
+    // signal directly. Same-shaped fields (ok / total / breaks /
+    // key_ids_used) still match because those are unchanged by skip state.
+    expect(partialOut).not.toEqual(emptyOut);
+    expect(partialOut.ok).toBe(emptyOut.ok); // both still true
     expect(partialOut.total_audit_verdicts).toBe(emptyOut.total_audit_verdicts); // both 0
     expect(partialOut.breaks).toEqual(emptyOut.breaks); // both []
     expect(partialOut.key_ids_used).toEqual(emptyOut.key_ids_used); // both []
+    // The distinguishing field — locked as CI canary going forward.
+    expect(partialOut.skipped_pre_v0_3).not.toBe(emptyOut.skipped_pre_v0_3);
 
-    // EXIT CODES DIFFER — the only operator-visible signal
+    // Exit codes still differ (operator-visible signal preserved).
     expect(emptyResult.status).toBe(0); // vacuous-ok
     expect(partialResult.status).toBe(2); // partial (pre-v0.3 skipped)
-
-    // Cycle 3+ substrate-debt: expose skipped_pre_v0_3 in JSON output
-    // so this assertion class can move from "exit code only" to
-    // "JSON-output-distinguishable" — closes the silent-success-masking gap.
   });
 });

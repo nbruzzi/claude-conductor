@@ -129,6 +129,10 @@ describe("verifyChannelAuditChain — Section 1: empty channel", () => {
     expect(result.output.total_audit_verdicts).toBe(0);
     expect(result.output.key_ids_used).toEqual([]);
     expect(result.output.breaks).toEqual([]);
+    // S2-B (Pair B Cycle 2 substrate-debt): both counters now mirrored
+    // into JSON output for silent-success-masking gap closure.
+    expect(result.output.skipped_pre_v0_3).toBe(0);
+    expect(result.output.unparseable).toBe(0);
     expect(result.internal.skipped_pre_v0_3).toBe(0);
     expect(result.internal.unparseable).toBe(0);
     expect(exitCodeFor(result, false)).toBe(0);
@@ -398,6 +402,9 @@ describe("verifyChannelAuditChain — Section 6: skipped pre-v0.3 (partial)", ()
     expect(result.output.ok).toBe(true);
     expect(result.output.total_audit_verdicts).toBe(0);
     expect(result.output.breaks).toEqual([]);
+    // S2-B: silent-success-masking gap closure — pre-v0.3 skips visible in JSON.
+    expect(result.output.skipped_pre_v0_3).toBe(1);
+    expect(result.output.unparseable).toBe(0);
     expect(result.internal.skipped_pre_v0_3).toBe(1);
     expect(result.internal.unparseable).toBe(0);
     expect(exitCodeFor(result, false)).toBe(2);
@@ -419,6 +426,9 @@ describe("verifyChannelAuditChain — Section 7: unparseable (unsupported)", () 
     });
     expect(result.output.ok).toBe(true);
     expect(result.output.total_audit_verdicts).toBe(0);
+    // S2-B: unparseable count visible in JSON output (silent-success-masking gap closure).
+    expect(result.output.skipped_pre_v0_3).toBe(0);
+    expect(result.output.unparseable).toBe(1);
     expect(result.internal.unparseable).toBe(1);
     expect(exitCodeFor(result, false)).toBe(3);
   });
@@ -530,6 +540,10 @@ describe("verifyChannelAuditChain — Section 10: human render", () => {
           key_id: "charlie",
         },
       ],
+      // S2-B: skipped_pre_v0_3 + unparseable now part of AuditVerifyOutput
+      // (Pair B Cycle 2 substrate-debt — silent-success-masking gap closure).
+      skipped_pre_v0_3: 0,
+      unparseable: 0,
     };
     const internal = { skipped_pre_v0_3: 0, unparseable: 0 };
     const text = renderHuman(out, internal);
@@ -540,5 +554,111 @@ describe("verifyChannelAuditChain — Section 10: human render", () => {
     expect(text).toContain("at_msg_seq=1");
     expect(text).toContain("reason=tamper");
     expect(text).toContain("key_id=charlie");
+  });
+});
+
+describe("verifyChannelAuditChain — Section 11: S2-B silent-success-masking gap closure", () => {
+  // Per Pair B Cycle 2 substrate-debt S2-B (Charlie Lane R slice plan
+  // body §4.4): JSON output must expose skipped_pre_v0_3 + unparseable
+  // counters so consumers can distinguish "clean ok" from "ok-with-skips"
+  // without depending on the CLI exit-code matrix. Pre-S2-B these two
+  // states produced byte-identical JSON. These tests lock the
+  // structural distinction.
+
+  it("T11.1: intact-only chain JSON differs from intact-plus-skipped JSON (structural distinction)", async () => {
+    // Intact chain — single bootstrap audit-verdict, no skips.
+    const bootstrap = await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const priv = unwrap(await importPrivateKey(bootstrap.secretKeyPath));
+    const envJson = await wrapAuditVerdictBody(CANONICAL_BODY, priv, "charlie");
+    appendChannelMessage({
+      ts: "2026-05-26T18:00:00.000Z",
+      from: "session-1",
+      kind: "audit-verdict",
+      body: envJson,
+      body_ref: "body-ref-intact",
+    });
+    const intactOnly = await verifyChannelAuditChain(channelId, {
+      pubkeyDir: cohortDirAbs,
+    });
+    expect(intactOnly.output.ok).toBe(true);
+    expect(intactOnly.output.skipped_pre_v0_3).toBe(0);
+    expect(intactOnly.output.unparseable).toBe(0);
+    expect(exitCodeFor(intactOnly, false)).toBe(0);
+
+    // Append a raw v0.2 body — should bump skipped_pre_v0_3 but NOT break ok.
+    appendChannelMessage({
+      ts: "2026-05-26T18:01:00.000Z",
+      from: "session-1",
+      kind: "audit-verdict",
+      body: JSON.stringify(CANONICAL_BODY),
+      body_ref: "body-ref-raw",
+    });
+    const intactPlusSkipped = await verifyChannelAuditChain(channelId, {
+      pubkeyDir: cohortDirAbs,
+    });
+    expect(intactPlusSkipped.output.ok).toBe(true);
+    expect(intactPlusSkipped.output.skipped_pre_v0_3).toBe(1);
+    expect(intactPlusSkipped.output.unparseable).toBe(0);
+    expect(exitCodeFor(intactPlusSkipped, false)).toBe(2);
+
+    // The two output JSONs are STRUCTURALLY DIFFERENT — the
+    // silent-success-masking gap is closed. Pre-S2-B these would have
+    // been byte-identical at the AuditVerifyOutput level.
+    expect(intactOnly.output.skipped_pre_v0_3).not.toBe(
+      intactPlusSkipped.output.skipped_pre_v0_3,
+    );
+    expect(JSON.stringify(intactOnly.output)).not.toBe(
+      JSON.stringify(intactPlusSkipped.output),
+    );
+  });
+
+  it("T11.2: intact-only chain JSON differs from intact-plus-unparseable JSON (structural distinction)", async () => {
+    // Intact chain — single bootstrap audit-verdict, no unparseable bodies.
+    const bootstrap = await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const priv = unwrap(await importPrivateKey(bootstrap.secretKeyPath));
+    const envJson = await wrapAuditVerdictBody(CANONICAL_BODY, priv, "charlie");
+    appendChannelMessage({
+      ts: "2026-05-26T18:00:00.000Z",
+      from: "session-1",
+      kind: "audit-verdict",
+      body: envJson,
+      body_ref: "body-ref-intact",
+    });
+    const intactOnly = await verifyChannelAuditChain(channelId, {
+      pubkeyDir: cohortDirAbs,
+    });
+    expect(intactOnly.output.ok).toBe(true);
+    expect(intactOnly.output.unparseable).toBe(0);
+
+    // Append a garbage body — bumps unparseable.
+    appendChannelMessage({
+      ts: "2026-05-26T18:01:00.000Z",
+      from: "session-1",
+      kind: "audit-verdict",
+      body: "not-json-and-not-envelope",
+      body_ref: "body-ref-garbage",
+    });
+    const intactPlusUnparseable = await verifyChannelAuditChain(channelId, {
+      pubkeyDir: cohortDirAbs,
+    });
+    expect(intactPlusUnparseable.output.ok).toBe(true);
+    expect(intactPlusUnparseable.output.unparseable).toBe(1);
+    expect(exitCodeFor(intactPlusUnparseable, false)).toBe(3);
+
+    // Structural distinction at JSON level — same closure.
+    expect(intactOnly.output.unparseable).not.toBe(
+      intactPlusUnparseable.output.unparseable,
+    );
+    expect(JSON.stringify(intactOnly.output)).not.toBe(
+      JSON.stringify(intactPlusUnparseable.output),
+    );
   });
 });
