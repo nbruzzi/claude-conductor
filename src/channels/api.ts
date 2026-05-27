@@ -290,15 +290,40 @@ export {
   parseHandoffFrontmatterFromFile,
 } from "./handoff-body-parser.ts";
 
-// Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind shared parser +
-// inline MemoryType as-const tuple + type-guard (D2 (a) of plan v0.2 —
-// inline until 2nd consumer surfaces; future T3-E memory-attention-scoring
-// is the candidate that would trigger extraction to a shared module).
+// Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind shared parser. The
+// `MEMORY_TYPES` const + `isMemoryType` guard originally lived inline
+// here (D2 (a) of plan v0.2: "extract when a 2nd consumer surfaces").
+// Cycle 1 substrate-extension PR-A6 (memory-frontmatter-parser.ts) IS
+// that trigger — `MEMORY_TYPES + MemoryType + isMemoryType` now live in
+// `./memory-type.ts` and re-export transitively via memory-proposal.ts;
+// the public surface here remains stable (downstream consumers continue
+// importing `MEMORY_TYPES` + `isMemoryType` from `claude-conductor/channels/api`).
 export {
   MEMORY_TYPES,
   isMemoryType,
   parseMemoryProposalBody,
 } from "./memory-proposal.ts";
+
+// Cycle 1 substrate-extension PR-A6 2026-05-26 — Pair A Alpha-pen
+// `MemoryFrontmatter` shape + `parseMemoryFrontmatter` (in-memory) +
+// `parseMemoryFrontmatterFromFile` (file-reading wrapper) per slice plan
+// `cycle-1-substrate-extension-slice-plan-2026-05-26.md` §7 row 6.
+// Plugin canonical at `src/channels/memory-frontmatter-parser.ts`. Layer
+// 2 `lineage?` field dispatches through `parseLineageEnvelope` (PR-A1
+// SSOT, re-exported above) — same pattern as PR-A2 `AuditVerdictBody.lineage`
+// and PR-A5 `HandoffFrontmatter.lineage`. Consumers: PR-A7 dotfiles
+// memory-integrity hook + scripts/regen-memory-index + scripts/memory-archive
+// (per §7 row 7); future memory-attention-scoring (T3-E candidate).
+// Substrate-shim-mirror discipline per
+// `feedback-substrate-shim-mirror-on-plugin-export-changes.md`.
+export type {
+  MemoryFrontmatter,
+  MemoryArchiveMarker,
+} from "./memory-frontmatter-parser.ts";
+export {
+  parseMemoryFrontmatter,
+  parseMemoryFrontmatterFromFile,
+} from "./memory-frontmatter-parser.ts";
 
 // Tier 1 Slice 3 2026-05-20 — bandwidth-inference SSOT tuple + guard.
 // Slice 3 does NOT add a new CHANNEL_KINDS entry (no new message kind);
