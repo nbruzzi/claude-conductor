@@ -1150,6 +1150,22 @@ export async function runChannelsCli(
           }
         }
 
+        // INVARIANT (Lane P CLI integration follow-up — PR #148; Delta NIT
+        // 2026-05-27T18:50Z preemptive-fold-on-OBS): validators below this
+        // line MUST NOT mutate `body`. The `const message` construction at
+        // the end of this block (just before the `appendMessage` call)
+        // captures the final body string; only the audit-verdict path above
+        // is permitted to mutate body (via autoWrapAuditVerdict's Mode A
+        // wrap). Future kind-validators added here must either preserve
+        // `body` unchanged (die-on-fail-only pattern, like memory-proposal /
+        // wind-down-checkin / key-revoke below) OR refactor `const message`
+        // construction to follow the audit-verdict pattern.
+        //
+        // Per `[[feedback-substrate-fix-pattern-must-self-mirror]]`:
+        // documenting the body-immutability invariant structurally (here +
+        // at the message-construction site) prevents the regression class
+        // where a future validator silently breaks the refactor's safety.
+
         // Tier 2 Verb 2 2026-05-20 — `memory-proposal` validator gate
         // (parallel to audit-ask + audit-verdict above). Body must
         // JSON.parse into the MemoryProposalBody shape per
