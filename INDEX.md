@@ -129,14 +129,9 @@ Operator-facing recovery + observability runbooks (commands to run, errors to tr
 - `skills/audit/SKILL.md` — multi-persona audit dispatch skill (vault context references; CLI-4 anonymization deferred to Phase 1 backlog).
 - `skills/commit-push-pr/SKILL.md` — pre-commit gate runner + push + PR-creation skill.
 
-## Bundled commands (`commands/`)
+## Session slash commands (now dotfiles-canonical)
 
-Slash commands consumable inside Claude Code. Use `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}` for cross-edge invocation per Slice 3 / Decision N convention; v0.1.0 ships these as `.md` bodies (Phase 1 introduces standalone CLI verbs).
-
-- `commands/session/handoff.md` — `/handoff` end-of-session handoff writer with Wind-down rules preflight (tier selection + backlog scan + ordering + teardown gate) before capturing Next Steps + decisions trail.
-- `commands/session/handoff-resume.md` — `/handoff-resume` resume-from-handoff with Step 1a concurrent-pair detection + parallel-mode context-load.
-- `commands/session/channel.md` — `/channel` cross-session channel verbs (create, join, send, read, peers).
-- `commands/session/presence.md` — `/presence` active-sessions registry verbs.
+Substrate-refactor 2026-05-27 moved the session-protocol slash commands (`/handoff`, `/handoff-resume`, `/channel`, `/presence`) from this repo's `commands/session/` to the user's dotfiles repo at `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/commands/session/*.md`. Rationale: user-workflow skills belong to user identity; if conductor is swapped or breaks, those workflows must not vaporize with it. Conductor remains primitive-only (channels CLI + parsers + hook framework + audit-verdict types + lineage envelope SSOT) — the skills consume conductor primitives via the cross-edge `package.json` `exports` map.
 
 ## Source code (`src/`)
 

@@ -87,7 +87,7 @@ The eight components split into two **defaultSuffix** classes:
 
 ### Slash-command path convention
 
-The bundled session slash commands (`commands/session/*.md`) shell out to dotfiles' channel/todos/active-sessions CLI via `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}`. Default works for the sibling-clone install layout (`~/claude-conductor` and `~/.claude-dotfiles` as siblings). Non-default installs export `CLAUDE_DOTFILES_ROOT` once. CLI-1 (sub-step 0.10) — see Decision N.
+Session slash commands (`handoff`, `handoff-resume`, `channel`, `presence`) now live in the dotfiles repo at `${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/commands/session/*.md` (substrate-refactor 2026-05-27 — user-workflow skills belong to user identity; conductor remains primitive-only). The skills shell out to dotfiles' channel/todos/active-sessions CLI via the same `${CLAUDE_DOTFILES_ROOT}` root for the sibling-clone install layout (`~/claude-conductor` and `~/.claude-dotfiles` as siblings). Non-default installs export `CLAUDE_DOTFILES_ROOT` once. CLI-1 (sub-step 0.10) — see Decision N.
 
 ### Dotfiles version compatibility
 
@@ -96,7 +96,7 @@ The plugin pins its dotfiles substrate via `package.json` `file:..` (sibling-clo
 Detection happens at slash-command invocation, not at install. The preflight is a single `bun run "${CLAUDE_DOTFILES_ROOT:-$HOME/.claude-dotfiles}/src/<area>/cli.ts" --help` invocation (read-only, no side-effects); a non-zero exit short-circuits the command with a diagnostic naming:
 
 1. The expected CLI path (with `CLAUDE_DOTFILES_ROOT` interpolated)
-2. The dotfiles ref the plugin's session commands were authored against (`commit SHA` or `HEAD` if unpinned — see `commands/session/*.md` preflight blocks)
+2. The dotfiles ref the session commands were authored against (`commit SHA` or `HEAD` if unpinned — see `${CLAUDE_DOTFILES_ROOT}/commands/session/*.md` preflight blocks)
 3. The remediation: update the dotfiles checkout, or set `CLAUDE_DOTFILES_ROOT` to point at a compatible ref
 
 This is option (c) "feature-detection" from slice 6 plan v2 §B3 FOLD-4 — chosen over (a) freeze a specific dotfiles SHA in this file or (b) version-marker file in dotfiles substrate. Feature-detection has the smallest coupling: no symbol the plugin pins on (just observed CLI shape), no SemVer ceremony, and the failure mode is a specific operator-readable diagnostic instead of `command not found`.
