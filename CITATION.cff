@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 nbruzzi
+#
+# Citation File Format v1.2.0 (https://citation-file-format.github.io/)
+#
+# Zenodo DOI is reserved for next-cycle archival upload per Anti-positioning
+# Cycle 3c framing (Bravo Stage 4 S4-C, 2026-05-27). On first Zenodo deposit,
+# add an `identifiers:` section above with `type: doi` + the assigned value
+# (e.g., `10.5281/zenodo.NNNNNNN`). Until then, GitHub repository URL is the
+# canonical citation pointer.
+
+cff-version: 1.2.0
+message: >-
+  If you use claude-conductor in academic or technical work, please cite it
+  using the metadata below. The substrate is published as the discipline-as-
+  code reference for AI-assisted multi-session software-engineering cohorts
+  on Claude Code; cited work helps surface the discipline-thread + cohort-
+  precedent vocabulary for future research + adoption.
+type: software
+title: claude-conductor
+abstract: >-
+  Discipline-as-code substrate for AI-assisted multi-session software-
+  engineering cohorts on Claude Code. Provides primitives for inter-session
+  coordination channels, NATO-phonetic identity claims, audit-verdict
+  schemas, lineage envelopes, memory-attention scoring, canonical-JSON
+  cross-runtime determinism, and reciprocation graph accounting. Designed
+  for one operator running 2-4 Claude Code sessions in parallel with
+  cohort-internal coordination + audit reciprocity discipline.
+authors:
+  - family-names: Bruzzi
+    given-names: Nick
+    # Optional ORCID — uncomment + populate when assigned
+    # orcid: https://orcid.org/0000-0000-0000-0000
+license: Apache-2.0
+version: 0.1.0
+date-released: "2026-05-27"
+url: https://github.com/nbruzzi/claude-conductor
+repository-code: https://github.com/nbruzzi/claude-conductor
+keywords:
+  - claude-code
+  - multi-session-coordination
+  - audit-loop
+  - discipline-as-code
+  - canonical-json
+  - dsse-envelope
+  - cohort-cycle
+  - substrate-precedent

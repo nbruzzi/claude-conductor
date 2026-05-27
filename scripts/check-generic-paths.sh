@@ -86,6 +86,7 @@ cd "$REPO_ROOT"
 EXCLUDE_PATHSPECS=(
   # User-facing docs (top-level)
   ":(exclude)CHANGELOG.md"
+  ":(exclude)CITATION.cff"
   ":(exclude)CONTRIBUTING.md"
   ":(exclude)README.md"
   ":(exclude)INDEX.md"
