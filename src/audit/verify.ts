@@ -130,6 +130,27 @@ export type AuditVerifyOutput = {
   total_audit_verdicts: number;
   /** Empty array iff ok=true. Charlie Obs-1 + Delta multi-break resolution. */
   breaks: AuditVerifyBreak[];
+  /**
+   * Count of raw v0.1/v0.2 audit-verdict bodies in the channel (unsigned;
+   * outside chain scope). Non-zero indicates partial-success: chain entries
+   * verified but legacy bodies were skipped. Closes the silent-success-
+   * masking gap per Pair B Cycle 2 substrate-debt slice plan §4.4 — JSON
+   * consumers can now distinguish "ok with no skipped entries" from "ok
+   * with N skipped entries" without depending on the CLI exit-code matrix.
+   * Mirrored from {@link AuditVerifyInternalState.skipped_pre_v0_3} during
+   * output construction; both copies hold the same value (internal copy
+   * retained for renderHuman + exitCodeFor consumers).
+   */
+  skipped_pre_v0_3: number;
+  /**
+   * Count of `kind=audit-verdict` messages whose body neither parsed as
+   * DSSE envelope nor as raw v0.2 body. Non-zero indicates unsupported:
+   * structural failure distinct from pre-v0.3 chain-gap. Sibling counter
+   * to {@link skipped_pre_v0_3}; same silent-success-masking gap class
+   * addressed by S2-B (Pair B Cycle 2 substrate-debt). Mirrored from
+   * {@link AuditVerifyInternalState.unparseable}.
+   */
+  unparseable: number;
 };
 
 /**
@@ -349,6 +370,8 @@ export async function verifyChannelAuditChain(
     key_ids_used: keyIdsUsed,
     total_audit_verdicts: totalAuditVerdicts,
     breaks,
+    skipped_pre_v0_3: skippedPreV0_3,
+    unparseable,
   };
   const internal: AuditVerifyInternalState = {
     skipped_pre_v0_3: skippedPreV0_3,
