@@ -60,25 +60,21 @@
  * affects how reader-side surfaces filter / route the entry.
  *
  * Per D2 (a) of plan v0.2: inline here for v1; extract to a shared module
- * when a 2nd consumer surfaces (T3-E memory-attention-scoring is the
- * current candidate).
+ * when a 2nd consumer surfaces. **Extracted 2026-05-26 (PR-A6 trigger)**
+ * to `./memory-type.ts` per the predicted plan; this module re-exports
+ * the shared surface so the public api.ts re-export path remains stable.
+ * PR-A6 (`memory-frontmatter-parser.ts`) is the 2nd consumer.
  */
-export const MEMORY_TYPES = [
-  "user",
-  "feedback",
-  "project",
-  "reference",
-] as const;
-export type MemoryType = (typeof MEMORY_TYPES)[number];
+import { MEMORY_TYPES, isMemoryType } from "./memory-type.ts";
+import type { MemoryType } from "./memory-type.ts";
 
-/**
- * Type-guard: `v` is one of the valid `MemoryType` literals.
- */
-export function isMemoryType(v: unknown): v is MemoryType {
-  return (
-    typeof v === "string" && (MEMORY_TYPES as readonly string[]).includes(v)
-  );
-}
+// Preserve the original public surface (api.ts re-exports MEMORY_TYPES +
+// isMemoryType via this module; downstream consumers may also import
+// directly from `./memory-proposal.ts`). Per
+// `feedback-type-only-exports-erase-at-runtime`: separate value-side and
+// type-side re-exports so values keep their runtime bindings.
+export { MEMORY_TYPES, isMemoryType };
+export type { MemoryType };
 
 /**
  * Schema for the `memory-proposal` kind's body field (JSON-serialized to
