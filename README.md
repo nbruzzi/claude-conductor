@@ -19,6 +19,17 @@ Differentiation in the ecosystem (full comparison table ships in Phase 4):
 - **MCP Agent Mail** provides provider-agnostic coordination infrastructure — identities, threads, file reservations — but doesn't integrate with Claude Code's hooks or surface ceiling-standard discipline.
 - **claude-conductor** does NOT compete with either. It extends them.
 
+## What claude-conductor is NOT
+
+To prevent positioning ambiguity:
+
+- **NOT a memory-compounding system on its own.** The memory directory (`~/.claude/projects/<id>/memory/`) plus the TOC index, PostToolUse index-sync hook, bloat-signal Stop hook, and sidecar-age-gated archival pass live in the Claude Code home directory plus the dotfiles substrate, not in `claude-conductor`. The substrate contributes the **scoring layer**: the `memory-attention` CLI verb (canonical formula in `feedback-memory-attention-scoring-algorithm`) computes recency-and-utility weighted scoring over Claude-home's memory directory. Without Claude-home, the scoring has no input substrate to score.
+- **NOT a Claude Code replacement or fork.** The Claude Code harness is the runtime; `claude-conductor` is a Claude Code plugin (Phase 4 plugin manifest target). Without Claude Code, the substrate primitives have nothing to host them.
+- **NOT a CI/CD or build system.** Audit-loops produce structured `audit-verdict` bodies validated at send-time; gating fires via PR-tier human ratify plus Stop-hooks (pre-commit verify gate, dotfiles auto-sync, memory-integrity). GitHub Actions / GitLab CI / Buildkite remain the build/test substrate. `claude-conductor` consumes CI; it does not replace CI.
+- **NOT a multi-agent framework or orchestrator.** Sessions are operator-spawned via Claude Code instances. The substrate coordinates already-running sessions; it does not dispatch agents, schedule tasks, or own session lifecycle. Agent Teams provides the substrate for the operator to spawn a multi-session team in the first place — `claude-conductor` adds discipline-as-code on top of that, not a competing dispatcher.
+- **NOT a substitute for the operator.** Cohort coordination removes the per-message middleman, but cycle direction (what to work on, when to wind down, which next-cycle lanes to prioritize) remains with the operator. The substrate's design goal is to make the operator a _planner_ — setting scope, ratifying convergent output, intervening on cohort gaps — not a _router_ shuttling messages between Claude windows.
+- **NOT a general-purpose multi-Claude library.** Built for one operator's NATO-cohort workflow on Claude Code; conventions (Alpha/Bravo/Charlie/Delta pairing, 3-axis audit-class taxonomy, `LENS_CLASSES` tuple-strict validator, recursion-dogfood as quality signal, cycle character labels) are tuned to that specific workflow. Reusability across other multi-Claude workflows is a happy second-order property, not the design target.
+
 ## Dev install (Phase 0)
 
 Plugin-marketplace install ships in deferred Phase 4. There is no `claude-conductor` binary in v0.1.0 — Phase 1 introduces the CLI verb surface. For active development today:
