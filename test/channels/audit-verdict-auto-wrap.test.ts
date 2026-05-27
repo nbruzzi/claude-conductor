@@ -321,3 +321,135 @@ describe("autoWrapAuditVerdict — Section 4: round-trip envelope shape verifica
     expect(inner.prev_audit_body_ref).toBeNull();
   });
 });
+
+describe("autoWrapAuditVerdict — Section 5: Mode B operator-supplied SHA-256 chain ref trust path", () => {
+  // Canonical SHA-256 hex shape: 64 lowercase hex chars. Fixture chosen as a
+  // recognizable pattern (alternating 0/f) so test failures surface clearly if
+  // anything mutates the operator value. Real-world SHA-256 hex from
+  // `computePayloadHash` would be cryptographically random.
+  const OPERATOR_SHA256_HEX =
+    "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f";
+
+  it("T5.1: cohort key + operator-supplied SHA-256 chain ref → Mode B preserves operator value in DSSE envelope", async () => {
+    await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const bodyWithOperatorChainRef: AuditVerdictBody = {
+      ...CANONICAL_BODY,
+      prev_audit_body_ref: OPERATOR_SHA256_HEX,
+    };
+    const result = await autoWrapAuditVerdict({
+      parsedBody: bodyWithOperatorChainRef,
+      rawBody: JSON.stringify(bodyWithOperatorChainRef),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+    });
+    expect(result.mode).toBe("B");
+    expect(result.warn).toBeUndefined();
+    const envelope = unwrap(parseDsseEnvelope(result.body), "envelope");
+    expect(envelope.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+    expect(envelope.signatures.length).toBe(1);
+    expect(unwrap(envelope.signatures[0], "signature").keyid).toBe("charlie");
+
+    const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+    const inner = JSON.parse(decoded) as AuditVerdictBody;
+    // Mode B contract: operator-supplied chain ref preserved verbatim.
+    expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
+  });
+
+  it("T5.2: operator-supplied SHA-256 chain ref takes precedence over channel-JSONL prior audit-verdict (Mode B trust vs Mode A walk)", async () => {
+    await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    // Seed channel with a prior audit-verdict so Mode A would have a chain ref
+    // to compute. Mode B contract: even WITH a prior on the channel, operator-
+    // supplied SHA-256 hex takes precedence and the JSONL-walk is skipped.
+    const priorBody = JSON.stringify({
+      ...CANONICAL_BODY,
+      target_pr: { repo: "conductor", number: 1 },
+    });
+    appendChannelMessage({
+      ts: "2026-05-26T18:00:00.000Z",
+      from: "session-1",
+      kind: "audit-verdict",
+      body: priorBody,
+    });
+
+    const bodyWithOperatorChainRef: AuditVerdictBody = {
+      ...CANONICAL_BODY,
+      prev_audit_body_ref: OPERATOR_SHA256_HEX,
+    };
+    const result = await autoWrapAuditVerdict({
+      parsedBody: bodyWithOperatorChainRef,
+      rawBody: JSON.stringify(bodyWithOperatorChainRef),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+    });
+    expect(result.mode).toBe("B");
+    const envelope = unwrap(parseDsseEnvelope(result.body), "envelope");
+    const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+    const inner = JSON.parse(decoded) as AuditVerdictBody;
+    // Operator value wins; Mode A walk-computed value would have been a
+    // different hash (computePayloadHash of priorBody). The operator
+    // alternating-hex pattern is preserved verbatim, proving Mode B
+    // bypassed the walk.
+    expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
+    // Negative assertion: not the computed-from-priorBody value Mode A would
+    // have injected. computePayloadHash uses canonical-JSON of priorBody;
+    // independent computation confirms Mode B bypassed the walk.
+    const computedFromPrior =
+      await import("../../src/channels/audit-signature-chain.ts").then((m) =>
+        m.computePayloadHash(priorBody),
+      );
+    expect(inner.prev_audit_body_ref).not.toBe(computedFromPrior);
+  });
+
+  it("T5.3: Mode B envelope round-trips through parseDsseEnvelope with operator chain ref intact", async () => {
+    await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const bodyWithOperatorChainRef: AuditVerdictBody = {
+      ...CANONICAL_BODY,
+      prev_audit_body_ref: OPERATOR_SHA256_HEX,
+    };
+    const result = await autoWrapAuditVerdict({
+      parsedBody: bodyWithOperatorChainRef,
+      rawBody: JSON.stringify(bodyWithOperatorChainRef),
+      channelId,
+      channelsDir: channelsDirAbs,
+      nato: "charlie",
+      cohortDir: cohortDirAbs,
+    });
+    expect(result.mode).toBe("B");
+    const envelope = unwrap(parseDsseEnvelope(result.body), "envelope");
+    expect(envelope.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+    expect(envelope.payload.length).toBeGreaterThan(0);
+    expect(envelope.signatures.length).toBe(1);
+    expect(unwrap(envelope.signatures[0], "signature").keyid).toBe("charlie");
+    expect(
+      unwrap(envelope.signatures[0], "signature").sig.length,
+    ).toBeGreaterThan(0);
+
+    const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+    const inner = JSON.parse(decoded) as AuditVerdictBody;
+    expect(inner.kind_version).toBe(1);
+    expect(inner.verdict).toBe("SHIP-CLEAN");
+    expect(inner.target_pr.repo).toBe("conductor");
+    expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
+    // Verify the signature is a base64-encoded non-empty string (signature
+    // bytes; not the payload).
+    expect(unwrap(envelope.signatures[0], "signature").sig).toMatch(
+      /^[A-Za-z0-9+/=_-]+$/,
+    );
+  });
+});

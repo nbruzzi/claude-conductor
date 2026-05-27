@@ -429,4 +429,120 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       }
     });
   });
+
+  describe("Section 5 — Mode B operator-supplied SHA-256 chain ref via CLI (Stage 2 S2-A)", () => {
+    // Canonical 64-hex SHA-256 fixture; alternating-pattern keeps surface
+    // recognizable if anything mutates the operator value during the round-
+    // trip. Real-world SHA-256 hex from `computePayloadHash` would be random.
+    const OPERATOR_SHA256_HEX =
+      "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+    it("C5.1: claim + cohort key + operator-supplied SHA-256 prev_audit_body_ref → Mode B envelope with operator value preserved", async () => {
+      const channelId = "c-lane-p-mode-b-operator-sha";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: TEST_SESSION_ID,
+        identity: "Charlie",
+        force: false,
+      });
+      await runBootstrap({
+        identity: "charlie",
+        force: false,
+        cohortDir: cohortKeysDirAbs,
+      });
+
+      const bodyWithOperatorChainRef: AuditVerdictBody = {
+        ...CANONICAL_BODY,
+        prev_audit_body_ref: OPERATOR_SHA256_HEX,
+      };
+      const result = runSend(
+        channelId,
+        writeBodyFile(bodyWithOperatorChainRef),
+      );
+
+      expect(result.exitCode).toBe(0);
+      // Mode B → no stderr WARN (canonical operator path, no operator-
+      // discipline signal needed).
+      expect(result.stderr).toBe("");
+
+      const messages = readChannelJsonl(channelId);
+      const auditVerdicts = messages.filter(
+        (m) => m["kind"] === "audit-verdict",
+      );
+      expect(auditVerdicts.length).toBe(1);
+      const auditMsg = unwrap(auditVerdicts[0], "audit verdict");
+      const bodyStr = resolveJsonlBody(channelId, auditMsg);
+      // Mode B emits a DSSE envelope (same shape as Mode A).
+      const envelope = unwrap(parseDsseEnvelope(bodyStr), "DSSE envelope");
+      expect(envelope.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
+      expect(envelope.signatures.length).toBe(1);
+      expect(unwrap(envelope.signatures[0], "signature").keyid).toBe("charlie");
+
+      const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+      const inner = JSON.parse(decoded) as AuditVerdictBody;
+      // Mode B contract via CLI: operator-supplied chain ref preserved.
+      expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
+    });
+
+    it("C5.2: Mode B precedence — operator-supplied SHA-256 wins over channel-JSONL prior audit-verdict via CLI", async () => {
+      const channelId = "c-lane-p-mode-b-precedence";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: TEST_SESSION_ID,
+        identity: "Charlie",
+        force: false,
+      });
+      await runBootstrap({
+        identity: "charlie",
+        force: false,
+        cohortDir: cohortKeysDirAbs,
+      });
+
+      // First send — bootstrap audit-verdict via Mode A path (no operator
+      // chain ref); seeds the channel JSONL with a prior audit-verdict that
+      // Mode A would normally walk to. Mode B contract: even WITH this prior
+      // on the channel, the operator-supplied SHA-256 on the second send
+      // takes precedence.
+      const firstBody: AuditVerdictBody = {
+        ...CANONICAL_BODY,
+        target_pr: { repo: "conductor", number: 1 },
+      };
+      const firstResult = runSend(channelId, writeBodyFile(firstBody));
+      expect(firstResult.exitCode).toBe(0);
+
+      const secondBody: AuditVerdictBody = {
+        ...CANONICAL_BODY,
+        target_pr: { repo: "conductor", number: 2 },
+        prev_audit_body_ref: OPERATOR_SHA256_HEX,
+      };
+      const secondResult = runSend(channelId, writeBodyFile(secondBody));
+      expect(secondResult.exitCode).toBe(0);
+      expect(secondResult.stderr).toBe("");
+
+      const messages = readChannelJsonl(channelId);
+      const auditVerdicts = messages.filter(
+        (m) => m["kind"] === "audit-verdict",
+      );
+      expect(auditVerdicts.length).toBe(2);
+
+      const secondMsg = unwrap(auditVerdicts[1], "second audit verdict");
+      const bodyStr = resolveJsonlBody(channelId, secondMsg);
+      const envelope = unwrap(parseDsseEnvelope(bodyStr), "envelope");
+      const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+      const inner = JSON.parse(decoded) as AuditVerdictBody;
+      // Operator value preserved; the channel-JSONL walk that Mode A would
+      // have performed against the first audit-verdict's payload is bypassed.
+      expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
+    });
+  });
 });
