@@ -268,6 +268,28 @@ export {
   lineageVerify,
 } from "./lineage-envelope.ts";
 
+// Cycle 1 substrate-extension PR-A5 2026-05-26 — Pair A Alpha-pen re-exports
+// of `HandoffFrontmatter` shape + `parseHandoffFrontmatter` (in-memory) +
+// `parseHandoffFrontmatterFromFile` (file-reading wrapper) per slice plan
+// `cycle-1-substrate-extension-slice-plan-2026-05-26.md` §7 row 5. Plugin
+// canonical at `src/channels/handoff-body-parser.ts`. Layer 2 `lineage?`
+// field dispatches through `parseLineageEnvelope` (PR-A1 SSOT, re-exported
+// above). Consumers (future PR-A8 handoff-emitting + handoff-resume skills;
+// existing `pattern-trace/cli.ts` + `reciprocation/cli.ts` ad-hoc
+// frontmatter-reading callers awaiting migration) import these from
+// `claude-conductor/channels/api` for the substrate-canonical surface.
+// Substrate-shim-mirror discipline per
+// `feedback-substrate-shim-mirror-on-plugin-export-changes.md`.
+export type {
+  HandoffFrontmatter,
+  HandoffVerificationRun,
+  CohortArc,
+} from "./handoff-body-parser.ts";
+export {
+  parseHandoffFrontmatter,
+  parseHandoffFrontmatterFromFile,
+} from "./handoff-body-parser.ts";
+
 // Tier 2 Verb 2 2026-05-20 — `memory-proposal` kind shared parser +
 // inline MemoryType as-const tuple + type-guard (D2 (a) of plan v0.2 —
 // inline until 2nd consumer surfaces; future T3-E memory-attention-scoring
