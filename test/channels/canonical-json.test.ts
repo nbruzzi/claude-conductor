@@ -2,9 +2,9 @@
 // Copyright 2026 nbruzzi
 
 /**
- * Tests for the RFC 8785 JCS subset canonical-JSON serializer
- * (`canonicalJson`). Cycle 1 substrate-core PR-A5; Pair B Charlie-pen per
- * `cycle-1-substrate-core-slice-plan-2026-05-26.md` §2.6 + §4.2.
+ * Tests for the RFC 8785 JCS canonical-JSON serializer (`canonicalJson`).
+ * Cycle 1 substrate-core PR-A5 baseline; Cycle 2 substrate-debt
+ * extension per Delta-pen `cycle-2-substrate-debt-pair-b-canonical-json-2026-05-27.md`.
  *
  * Coverage organized by Section:
  *   1. Primitives (string / number / boolean / null pass-through)
@@ -15,7 +15,10 @@
  *   6. Idempotence (canonicalJson(canonicalJson(x)) ≡ canonicalJson(x))
  *   7. Stability across input orderings (ABCDEF vs FEDCBA → same output)
  *   8. AuditVerdictBody fixture (realistic substrate use case)
- *   9. Subset limitation fixtures (Unicode + number edge cases documented)
+ *   9. §3.2.2 number lock fixtures — empirical fixtures locking RFC 8785
+ *      number canonicalization behavior on Bun.js (T9.1-T9.2 baseline +
+ *      T9.3-T9.9 Cycle 2 substrate-debt extension)
+ *  10. NaN/Infinity REJECT contract (Cycle 2 substrate-debt new behavior)
  */
 
 import { describe, expect, it } from "bun:test";
@@ -130,17 +133,87 @@ describe("canonicalJson — Section 8: audit-verdict fixture", () => {
   });
 });
 
-describe("canonicalJson — Section 9: subset limitations (regression fixtures)", () => {
+describe("canonicalJson — Section 9: §3.2.2 number lock fixtures", () => {
   it("T9.1: ASCII strings round-trip stably (cohort-relevant case)", () => {
     expect(canonicalJson({ a: "Alpha" })).toBe('{"a":"Alpha"}');
     expect(canonicalJson({ k: "queue" })).toBe('{"k":"queue"}');
   });
 
-  it("T9.2: integers within Number.MAX_SAFE_INTEGER round-trip stably (cohort-relevant case)", () => {
+  it("T9.2: integers within Number.MAX_SAFE_INTEGER round-trip stably", () => {
     expect(canonicalJson({ n: 42 })).toBe('{"n":42}');
     expect(canonicalJson({ n: 0 })).toBe('{"n":0}');
     expect(canonicalJson({ n: Number.MAX_SAFE_INTEGER })).toBe(
       `{"n":${Number.MAX_SAFE_INTEGER}}`,
+    );
+  });
+
+  it("T9.3: float precision artifact (0.1 + 0.2)", () => {
+    expect(canonicalJson({ n: 0.1 + 0.2 })).toBe('{"n":0.30000000000000004}');
+  });
+
+  it("T9.4: scientific-notation boundary 1e-6 (no exponent) vs 1e-7 (exponent)", () => {
+    expect(canonicalJson({ n: 1e-6 })).toBe('{"n":0.000001}');
+    expect(canonicalJson({ n: 1e-7 })).toBe('{"n":1e-7}');
+  });
+
+  it("T9.5: scientific-notation boundary 1e20 (no exponent) vs 1e21 (exponent)", () => {
+    expect(canonicalJson({ n: 1e20 })).toBe('{"n":100000000000000000000}');
+    expect(canonicalJson({ n: 1e21 })).toBe('{"n":1e+21}');
+  });
+
+  it("T9.6: very large float Number.MAX_VALUE", () => {
+    expect(canonicalJson({ n: Number.MAX_VALUE })).toBe(
+      `{"n":${Number.MAX_VALUE}}`,
+    );
+  });
+
+  it("T9.7: denormal small float Number.MIN_VALUE", () => {
+    expect(canonicalJson({ n: Number.MIN_VALUE })).toBe(
+      `{"n":${Number.MIN_VALUE}}`,
+    );
+  });
+
+  it("T9.8: negative-zero canonicalizes to '0'", () => {
+    expect(canonicalJson({ n: -0 })).toBe('{"n":0}');
+  });
+
+  it("T9.9: extreme denormal 1e-300", () => {
+    expect(canonicalJson({ n: 1e-300 })).toBe('{"n":1e-300}');
+  });
+});
+
+describe("canonicalJson — Section 10: NaN/Infinity REJECT contract", () => {
+  it("T10.1: direct NaN throws Error", () => {
+    expect(() => canonicalJson(NaN)).toThrow(/non-finite number not allowed/);
+  });
+
+  it("T10.2: direct Infinity throws Error", () => {
+    expect(() => canonicalJson(Infinity)).toThrow(
+      /non-finite number not allowed/,
+    );
+  });
+
+  it("T10.3: direct -Infinity throws Error", () => {
+    expect(() => canonicalJson(-Infinity)).toThrow(
+      /non-finite number not allowed/,
+    );
+  });
+
+  it("T10.4: NaN nested in object throws Error", () => {
+    expect(() => canonicalJson({ n: NaN })).toThrow(
+      /non-finite number not allowed/,
+    );
+  });
+
+  it("T10.5: Infinity nested in array throws Error", () => {
+    expect(() => canonicalJson([1, 2, Infinity])).toThrow(
+      /non-finite number not allowed/,
+    );
+  });
+
+  it("T10.6: NaN deeply nested (3+ levels) throws Error", () => {
+    expect(() => canonicalJson({ a: { b: [NaN] } })).toThrow(
+      /non-finite number not allowed/,
     );
   });
 });
