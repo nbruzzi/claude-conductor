@@ -61,7 +61,17 @@ jobs:
         run: bun run check-decision-log
 
       - name: Test
-        run: bun test
+        # Run the suite once WITH coverage and tee the output so the
+        # "Check coverage floor" gate below reads it via --from-file instead
+        # of re-running the whole suite (previously a double-run). GHA bash
+        # already sets -o pipefail; set it explicitly so a test failure still
+        # propagates through the `| tee` rather than being masked by tee's
+        # exit code.
+        run: |
+          set -o pipefail
+          bun test --coverage 2>&1 | tee "$RUNNER_TEMP/coverage.txt"
 
       - name: Check coverage floor
-        run: bun run check-coverage-floor
+        # Read the coverage output captured by the Test step above (single
+        # suite run) instead of re-running `bun test --coverage`.
+        run: bun run check-coverage-floor -- --from-file "$RUNNER_TEMP/coverage.txt"
