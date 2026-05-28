@@ -72,7 +72,7 @@
 
 import type { ChannelKind, ChannelMessage } from "./index.ts";
 import {
-  parseAuditVerdictBodyAnyVersion,
+  parseAuditVerdictBody,
   parseAuditVerdictV0_3Wrapped,
 } from "./audit-verdict.ts";
 
@@ -166,10 +166,16 @@ function renderBody(kind: ChannelKind, body: string): string {
  * fields; appends `(signed)` for a v0.3 DSSE envelope, `(raw)` otherwise.
  */
 function renderAuditVerdictSummary(body: string): string | null {
-  const v = parseAuditVerdictBodyAnyVersion(body);
+  // Single-parse: parseAuditVerdictV0_3Wrapped does the wrapped-envelope work
+  // once; reuse its result for both the inner body and the `signed` flag, then
+  // fall back to the raw parser. Avoids the double-parse (composing
+  // parseAuditVerdictBodyAnyVersion + a second wrapped-parse) Bravo/Charlie
+  // flagged on #168.
+  const wrapped = parseAuditVerdictV0_3Wrapped(body);
+  const v = wrapped !== null ? wrapped.body : parseAuditVerdictBody(body);
   if (v === null) return null;
   const c = v.counts;
-  const signed = parseAuditVerdictV0_3Wrapped(body) !== null;
+  const signed = wrapped !== null;
   return (
     `audit-verdict ${v.verdict} PR#${v.target_pr.number} → ${v.target_peer} ` +
     `[${v.audit_class}] B${c.blocker}/F${c.fold}/N${c.nit} ` +
