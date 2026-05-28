@@ -48,4 +48,4 @@ Following the frontmatter, each entry uses this structure:
 
 ## Enforcement
 
-PRs that modify substrate primitives are expected to add a corresponding decision-log entry. This is gate-checked at CI by `scripts/check-decision-log.sh` and prompted by the `## Decision log` section of the pull-request template. See `CONTRIBUTING.md` "INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)" for where this sits relative to other gate-driven vs convention-by-vigilance items.
+PRs that modify substrate primitives are expected to add a corresponding decision-log entry — a **net-new** entry (an added `ts:` frontmatter line), not merely a touch of an existing entry. This is gate-checked at CI by `scripts/check-decision-log.sh` (which detects the added `ts:` field in the PR-scope diff) and prompted by the `## Decision log` section of the pull-request template. See `CONTRIBUTING.md` "INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)" for where this sits relative to other gate-driven vs convention-by-vigilance items.

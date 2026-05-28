@@ -4,9 +4,11 @@
 #
 # Decision-log presence gate (DLOG-001).
 #
-# For PRs that modify substrate source, require a corresponding decision-log
-# entry (a change under decisions/) in the same diff range — OR an explicit
-# opt-out trailer in a commit message.
+# For PRs that modify substrate source, require a NET-NEW decision-log entry
+# (an added `ts:` frontmatter line under decisions/) in the same diff range —
+# OR an explicit opt-out trailer in a commit message. A mere touch of a
+# decisions/ file (a typo/whitespace edit on an existing entry, or a header-only
+# file) is NOT sufficient (DLOG-001 net-new-entry hardening).
 #
 # Per CONTRIBUTING.md "Decision-log discipline" + the INSTRUCTION-vs-ENFORCEMENT
 # boundary: substrate-modifying PRs are expected to log within-phase decisions.
@@ -22,7 +24,7 @@
 #           (e.g. a pure mechanical rename), include a trailer line
 #               Decision-log: none (<reason>)
 #           in any commit message in the diff range.
-# Exit:   0 = clean (no substrate change, OR decision entry present, OR opt-out)
+# Exit:   0 = clean (no substrate change, OR net-new decision entry added, OR opt-out)
 #         1 = violation (substrate changed; no decision entry; no opt-out)
 #         2+ = error (not a git repo / base ref unresolvable / no merge-base)
 #
@@ -88,13 +90,13 @@ CHANGED="$(git diff --name-only "$MERGE_BASE" HEAD)"
 
 # --- 4. classify changed files ---
 # Substrate source = production .ts under src/ (excluding *.test.ts).
-# PROVISIONAL (pending cohort ratify — see channel mechanism-fork post): the
-# trigger is ALL src/ production .ts rather than a curated primitive-dir
-# allowlist. Broad-by-default + explicit opt-out trailer = deny-list direction
-# (per cohort convention) and avoids allowlist drift as src/ grows (21 dirs and
-# counting). A curated allowlist is the considered alternative; revisit at audit.
+# RATIFIED (Charlie cross-pair shadow, PR #161; deny-list direction per cohort
+# convention): the trigger is ALL src/ production .ts rather than a curated
+# primitive-dir allowlist. Broad-by-default + explicit opt-out trailer avoids
+# allowlist drift as src/ grows (21 dirs and counting). A curated allowlist was
+# the considered alternative; kept broad-by-default.
 SUBSTRATE_CHANGED=0
-DECISION_CHANGED=0
+DECISION_FILE_TOUCHED=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   # bash `case` patterns: `*` matches `/`, so `src/*.ts` is recursive.
@@ -103,9 +105,25 @@ while IFS= read -r f; do
     src/*.ts) SUBSTRATE_CHANGED=1 ;;
   esac
   case "$f" in
-    decisions/*.md) DECISION_CHANGED=1 ;;
+    decisions/*.md) DECISION_FILE_TOUCHED=1 ;;
   esac
 done <<<"$CHANGED"
+
+# A touched decisions/ file is necessary but NOT sufficient (DLOG-001 net-new-
+# entry hardening): the gate requires a NET-NEW entry, not a typo/whitespace
+# edit on an existing entry (or a header-only file). Detect a net-new entry as
+# an ADDED `ts:` field line in the decisions/ PR-scope diff — every entry opens
+# with exactly one `ts: <ISO-8601>` per docs/conventions/decision-log-schema.md.
+# Key on the structural `ts:` marker ONLY, never kind/severity enum values: real
+# entries carry values beyond the schema's illustrative enum (e.g. kind: process,
+# severity: load-bearing), so enum-matching would false-reject valid logs.
+DECISION_ENTRY_ADDED=0
+if [ "$DECISION_FILE_TOUCHED" -eq 1 ]; then
+  if git diff "$MERGE_BASE" HEAD -- 'decisions/' \
+    | grep -qE '^\+[[:space:]]*ts:[[:space:]]*[^[:space:]]'; then
+    DECISION_ENTRY_ADDED=1
+  fi
+fi
 
 # --- 5. opt-out trailer scan over commit messages in range ---
 OPT_OUT=0
@@ -115,10 +133,14 @@ if git log "$MERGE_BASE..HEAD" --format='%B' 2>/dev/null \
 fi
 
 # --- 6. verdict ---
-if [ "$SUBSTRATE_CHANGED" -eq 1 ] && [ "$DECISION_CHANGED" -eq 0 ] && [ "$OPT_OUT" -eq 0 ]; then
-  MSG="substrate source changed under src/ but no decisions/ entry was added and no 'Decision-log: none (<reason>)' opt-out trailer was found"
+if [ "$SUBSTRATE_CHANGED" -eq 1 ] && [ "$DECISION_ENTRY_ADDED" -eq 0 ] && [ "$OPT_OUT" -eq 0 ]; then
+  if [ "$DECISION_FILE_TOUCHED" -eq 1 ]; then
+    MSG="substrate source changed under src/ and a decisions/ file was touched, but no NET-NEW entry was added (a typo/whitespace edit on an existing entry does not count) and no 'Decision-log: none (<reason>)' opt-out trailer was found"
+  else
+    MSG="substrate source changed under src/ but no decisions/ entry was added and no 'Decision-log: none (<reason>)' opt-out trailer was found"
+  fi
   echo "check-decision-log: error[$ERR_CODE]: $MSG" >&2
-  echo "  Fix: add a decision entry to decisions/phase-<N>.md" >&2
+  echo "  Fix: add a decision entry to decisions/phase-<N>.md with a 'ts: <ISO-8601>' frontmatter field" >&2
   echo "       (schema: docs/conventions/decision-log-schema.md)," >&2
   echo "       OR add a commit trailer 'Decision-log: none (<reason>)' if no decision is warranted." >&2
   if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
@@ -127,5 +149,5 @@ if [ "$SUBSTRATE_CHANGED" -eq 1 ] && [ "$DECISION_CHANGED" -eq 0 ] && [ "$OPT_OU
   exit 1
 fi
 
-echo "check-decision-log: clean (substrate_changed=$SUBSTRATE_CHANGED decision_entry=$DECISION_CHANGED opt_out=$OPT_OUT; base=$BASE_REF @ ${MERGE_BASE} — 'git fetch origin main' if this base looks stale locally)"
+echo "check-decision-log: clean (substrate_changed=$SUBSTRATE_CHANGED decision_entry_added=$DECISION_ENTRY_ADDED decision_file_touched=$DECISION_FILE_TOUCHED opt_out=$OPT_OUT; base=$BASE_REF @ ${MERGE_BASE} — 'git fetch origin main' if this base looks stale locally)"
 exit 0

@@ -20,6 +20,44 @@ const SCRIPT_PATH = join(
   "check-decision-log.sh",
 );
 
+// A schema-valid decision entry. The structural signal the gate keys on is the
+// single `ts:` frontmatter field every entry opens with (not kind/severity).
+const SAMPLE_ENTRY = `# Decision Log — Phase 9
+
+---
+ts: 2026-05-28T00:00:00Z
+kind: tooling
+severity: minor
+phase: 9
+affects: [scripts/check-decision-log.sh]
+---
+
+- **Context:** original context line.
+- **Chosen:** the choice.
+- **Reason:** the reason.
+`;
+
+// Same entry with a prose typo fixed — no new ts: line, so NOT a net-new entry.
+const SAMPLE_ENTRY_TYPO_FIXED = SAMPLE_ENTRY.replace(
+  "original context line.",
+  "corrected context line.",
+);
+
+// A second, genuinely net-new entry (its own ts:) appended after the first.
+const SAMPLE_ENTRY_PLUS_SECOND = `${SAMPLE_ENTRY}
+---
+ts: 2026-05-29T00:00:00Z
+kind: sequencing
+severity: minor
+phase: 9
+affects: [scripts/check-decision-log.sh]
+---
+
+- **Context:** second context.
+- **Chosen:** second choice.
+- **Reason:** second reason.
+`;
+
 let repo: string;
 
 function git(dir: string, args: readonly string[]): void {
@@ -92,7 +130,21 @@ describe("scripts/check-decision-log.sh", () => {
     expect(stderr).toContain("DLOG-001");
   });
 
-  it("clean: substrate change WITH a decision entry in the same diff", () => {
+  it("clean: substrate change WITH a net-new decision entry (added ts: line)", () => {
+    const base = writeCommit(repo, { "README.md": "# x\n" }, "base");
+    writeCommit(
+      repo,
+      {
+        "src/channels/foo.ts": "export const x = 1;\n",
+        "decisions/phase-9.md": SAMPLE_ENTRY,
+      },
+      "substrate + decision",
+    );
+    const { exitCode } = runScript(repo, [base]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("violation: substrate change + decisions/ touched but NO net-new entry (header-only)", () => {
     const base = writeCommit(repo, { "README.md": "# x\n" }, "base");
     writeCommit(
       repo,
@@ -100,7 +152,46 @@ describe("scripts/check-decision-log.sh", () => {
         "src/channels/foo.ts": "export const x = 1;\n",
         "decisions/phase-9.md": "# Decision Log — Phase 9\n",
       },
-      "substrate + decision",
+      "substrate + header-only decisions touch (no entry)",
+    );
+    const { exitCode, stderr } = runScript(repo, [base]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("DLOG-001");
+    expect(stderr).toContain("no NET-NEW entry");
+  });
+
+  it("violation: substrate change + typo edit on an existing entry (no net-new ts:)", () => {
+    const base = writeCommit(
+      repo,
+      { "README.md": "# x\n", "decisions/phase-9.md": SAMPLE_ENTRY },
+      "base with an existing decision entry",
+    );
+    writeCommit(
+      repo,
+      {
+        "src/channels/foo.ts": "export const x = 1;\n",
+        "decisions/phase-9.md": SAMPLE_ENTRY_TYPO_FIXED,
+      },
+      "substrate + typo edit on existing entry",
+    );
+    const { exitCode, stderr } = runScript(repo, [base]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("DLOG-001");
+  });
+
+  it("clean: substrate change + net-new entry appended to an existing decisions file", () => {
+    const base = writeCommit(
+      repo,
+      { "README.md": "# x\n", "decisions/phase-9.md": SAMPLE_ENTRY },
+      "base with an existing decision entry",
+    );
+    writeCommit(
+      repo,
+      {
+        "src/channels/foo.ts": "export const x = 1;\n",
+        "decisions/phase-9.md": SAMPLE_ENTRY_PLUS_SECOND,
+      },
+      "substrate + appended new entry",
     );
     const { exitCode } = runScript(repo, [base]);
     expect(exitCode).toBe(0);
