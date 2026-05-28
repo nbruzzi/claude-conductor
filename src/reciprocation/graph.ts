@@ -16,7 +16,7 @@
  * Plan: `~/.claude/plans/slice-T2V3-reciprocation-cli-2026-05-20.md` v0.1.
  */
 
-import { parseAuditVerdictBody } from "../channels/audit-verdict.ts";
+import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
 import type { AuditClass, AuditVerdict } from "../channels/audit-types.ts";
 import type { ChannelMessage } from "../channels/index.ts";
 import { isSubstrateClassPR } from "../channels/substrate-class.ts";
@@ -123,7 +123,7 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
     if (ts_ms < start_ms || ts_ms > end_ms) continue;
     const bodyRaw = resolveMessageBody(m, bodies_by_ref);
     if (bodyRaw === null) continue;
-    const body = parseAuditVerdictBody(bodyRaw);
+    const body = parseAuditVerdictBodyAnyVersion(bodyRaw);
     if (body === null) continue;
     edges.push({
       ts: m.ts,

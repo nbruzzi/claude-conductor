@@ -38,12 +38,14 @@
  * into the cohort audit-loop-closure discipline instead. See the doc-fix
  * landed in the same PR.
  *
- * **Composition, not reimplementation:** reuses the SSOT
- * {@link parseAuditVerdictBody} (same parser `reciprocation/graph.ts` +
- * `audit/verify.ts` consume). Counts PARSEABLE verdicts; a future
- * `--require-signed` tightening can compose `audit/verify.ts` to count
- * only crypto-valid chain entries (deferred — back-compat with pre-v0.3
- * unsigned verdicts + YAGNI for v1).
+ * **Composition, not reimplementation:** counts shape-PARSEABLE verdicts
+ * across BOTH wire-shapes via the SSOT {@link parseAuditVerdictBodyAnyVersion}
+ * helper (raw v0.1/v0.2 + v0.3 DSSE-wrapped). Without wrapped-dispatch, signed
+ * verdicts would be silently skipped → false quorum-NOT-met once the cohort
+ * signs. SHAPE-only — does NOT verify the signature (a signed-but-tampered
+ * verdict still counts here). A future opt-in `--require-signed` axis will
+ * compose `audit/verify.ts` to count only crypto-VALID chain entries
+ * (default off preserves back-compat with pre-v0.3 unsigned verdicts).
  *
  * **Known boundaries** (cross-pair audit OBS, cohort cycle 2026-05-28):
  *
@@ -70,7 +72,7 @@
  * `reciprocation/graph.ts` + `audits/cli.ts`).
  */
 
-import { parseAuditVerdictBody } from "../channels/audit-verdict.ts";
+import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
 import type { AuditClass, LensClass } from "../channels/audit-types.ts";
 import type { ChannelMessage } from "../channels/index.ts";
 
@@ -169,7 +171,10 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
     if (m.identity === undefined || m.identity.length === 0) continue;
     const bodyRaw = resolveMessageBody(m, args.bodies_by_ref);
     if (bodyRaw === null) continue;
-    const body = parseAuditVerdictBody(bodyRaw);
+    // Dispatch both wire-shapes (raw v0.1/v0.2 + v0.3 DSSE-wrapped) via the
+    // SSOT helper so signed verdicts are counted. SHAPE-only; --require-signed
+    // (future) adds the crypto-verification filter.
+    const body = parseAuditVerdictBodyAnyVersion(bodyRaw);
     if (body === null) continue;
     if (body.target_pr.number !== args.target_pr.number) continue;
     if (!repoMatches(body.target_pr.repo, args.target_pr.repo)) continue;

@@ -31,7 +31,7 @@
  */
 
 import { queryPendingAuditAsks } from "../audits/queue.ts";
-import { parseAuditVerdictBody } from "../channels/audit-verdict.ts";
+import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
 import {
   type BandwidthInputs,
   type BandwidthState,
@@ -193,7 +193,7 @@ export function inferBandwidth(args: InferBandwidthArgs): {
             ? (bodies_by_ref.get(m.body_ref) ?? null)
             : null;
       if (raw === null) continue;
-      if (parseAuditVerdictBody(raw) === null) continue;
+      if (parseAuditVerdictBodyAnyVersion(raw) === null) continue;
       auditsDelivered += 1;
     }
   }

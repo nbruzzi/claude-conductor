@@ -26,7 +26,7 @@
  */
 
 import { parseAuditAskBody } from "../channels/audit-ask.ts";
-import { parseAuditVerdictBody } from "../channels/audit-verdict.ts";
+import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
 import {
   type AuditAskTier,
   type AuditClass,
@@ -144,7 +144,7 @@ export function queryPendingAuditAsks(
   type ParsedVerdict = {
     identity: string;
     ts_ms: number;
-    body: NonNullable<ReturnType<typeof parseAuditVerdictBody>>;
+    body: NonNullable<ReturnType<typeof parseAuditVerdictBodyAnyVersion>>;
   };
 
   const asks: ParsedAsk[] = [];
@@ -163,7 +163,7 @@ export function queryPendingAuditAsks(
     } else if (m.kind === "audit-verdict") {
       const raw = resolveBody(m, bodies_by_ref);
       if (raw === null) continue;
-      const body = parseAuditVerdictBody(raw);
+      const body = parseAuditVerdictBodyAnyVersion(raw);
       if (body === null) continue;
       const identity = m.identity;
       if (identity === undefined || identity.length === 0) continue;
