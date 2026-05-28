@@ -37,6 +37,7 @@ const TEST_SESSION_BRAVO = "22222222-3333-4444-5555-666666666666";
 
 let tmpRoot: string;
 let channelsDir: string;
+let keysDir: string;
 const channelId = "recip-cli-test";
 
 function envFor(sid: string): NodeJS.ProcessEnv {
@@ -44,6 +45,13 @@ function envFor(sid: string): NodeJS.ProcessEnv {
     ...process.env,
     CLAUDE_SESSION_ID: sid,
     CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDir,
+    // Hermetic keys-dir isolation. Without this the spawned `send
+    // audit-verdict` inherits the real ~/.claude/keys/cohort/; once a cohort
+    // keypair for the sent identity exists (post-`audit bootstrap`), the send
+    // auto-wraps (DSSE) and the raw-only reciprocation parser (graph.ts
+    // parseAuditVerdictBody) goes blind → 0 edges. Point at an empty tmp dir
+    // so verdicts always send raw, independent of operator key state.
+    CLAUDE_CONDUCTOR_KEYS_DIR: keysDir,
   };
 }
 
@@ -102,7 +110,9 @@ function makeVerdictBody(opts: {
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "recip-cli-test-"));
   channelsDir = join(tmpRoot, "channels");
+  keysDir = join(tmpRoot, "keys");
   mkdirSync(channelsDir, { recursive: true });
+  mkdirSync(keysDir, { recursive: true });
 
   const create = runChannels(["create", channelId, "test-handoff"]);
   if (create.status !== 0) {
