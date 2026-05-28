@@ -205,7 +205,7 @@ describe("computeAuditQuorum — target_pr matching", () => {
       }),
       verdictMsg("Bravo", {
         lens_set_applied: ["Architecture"],
-        target_pr: { repo: "nbruzzi/claude-conductor", number: 200 },
+        target_pr: { repo: "owner/claude-conductor", number: 200 },
       }),
       verdictMsg("Delta", {
         lens_set_applied: ["TA"],
@@ -216,7 +216,7 @@ describe("computeAuditQuorum — target_pr matching", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "nbruzzi/claude-conductor", number: 200 },
+      target_pr: { repo: "owner/claude-conductor", number: 200 },
     });
     expect(r.verdicts_considered).toBe(3);
     expect(r.ok).toBe(true);
