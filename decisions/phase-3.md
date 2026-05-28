@@ -1268,3 +1268,38 @@ affects:
 - Audit doc: `docs/audits/2026-05-18-gc-fallback-symmetry.md` (Bravo B4) — slice-6 NIT-2 closure; verdict-as-output finding: byDotfilesRoot risk class unique to dotfiles-worktree-gc.ts; PR #86 fix sufficient at current substrate GC surface
 
 ---
+
+## 2026-05-28 — Decision: verify:fold de-brittle via manifest-driven fold gates (Cycle-5 SSOT-pointer lane)
+
+```yaml
+---
+ts: 2026-05-28T20:45:00Z
+kind: tooling
+severity: major
+phase: 3
+affects:
+  [
+    verify-manifest.json,
+    src/verify/drift.ts,
+    src/verify/cli.ts,
+    package.json,
+    CONTRIBUTING.md,
+  ]
+---
+```
+
+**Context:** The verify-manifest drift detector enforced only manifest↔`.github/workflows/test.yml` parity. Two _other_ inline enumerations of the gate set could silently drift from the manifest SSOT: (1) `package.json`'s `verify:fold` — an inline `&&`-chain of the local gate commands (the local-fold-drift class behind the #157 false-green: a gate added to manifest + CI but forgotten in the fold chain runs a stale local subset); (2) prose gate lists in `CONTRIBUTING.md` (lines 19/132/147), one of which claimed "this list cannot silently drift" while being itself an unprotected inline enumeration.
+
+**Options considered:**
+
+1. **Eliminate the duplications; manifest-drive `verify:fold` (CHOSEN).** Add `fold: boolean` to each manifest gate; add a `--fold` mode to the verify CLI that runs the `fold: true` gates via a pure `selectFoldGates`; repoint `package.json` `verify:fold` → `bun run src/verify/cli.ts --fold`; convert the CONTRIBUTING prose enumerations to manifest-pointers.
+2. **Detect-only — add a third drift dimension** asserting `verify:fold`'s parsed command list matches the manifest. Keeps the inline chain; lower blast radius but preserves the duplication.
+3. **Docs-only — convert just the CONTRIBUTING prose**; leave `verify:fold` inline (highest-value drift left unaddressed).
+
+**Chosen:** Option 1.
+
+**Reason:** The #162 doc-pointer philosophy is _eliminate the duplicate, point at the SSOT_. `test.yml` cannot be eliminated (CI needs literal YAML steps) so it stays drift-DETECTED; `verify:fold` and the prose CAN be eliminated, so they should be — a detector for an avoidable duplication is weaker than removing the duplication. Blast radius is contained: `verify:fold` has no external caller (only `package.json`'s own `verify` chain; the dotfiles telemetry tracker only pattern-detects `bun run verify*`, it does not invoke it). The `fold: boolean` field also corrects a latent inaccuracy — `check-coverage-floor` was modeled as a plain local gate but is CI-only (now `fold: false`). `--fold` deliberately skips the drift check to preserve fast pre-commit semantics (`verify:drift` stays a separate step).
+
+**Considered limit:** `fold` is required by the strict parser with `version` held at 1 — there is a single in-repo manifest, updated atomically in the same change, so an external-consumer version bump buys nothing.
+
+---

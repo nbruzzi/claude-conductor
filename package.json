@@ -28,7 +28,7 @@
     "smoke:phase-2": "./scripts/smoke-phase-2.sh",
     "smoke:all": "./scripts/smoke-phase-1.sh && ./scripts/smoke-phase-2.sh",
     "lint:workflows": "actionlint",
-    "verify:fold": "bun run typecheck && bun run format:check && bun run lint && bun run check-generic-paths && bun run check-import-extensions && bun run check-dep-rationale && bun run check-spdx-headers && bun run check-decision-log",
+    "verify:fold": "bun run src/verify/cli.ts --fold",
     "verify:drift": "bun run src/verify/cli.ts --check",
     "verify": "bun run verify:fold && bun test --timeout 30000",
     "check": "bun run verify"

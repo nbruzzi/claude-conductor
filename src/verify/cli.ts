@@ -8,6 +8,7 @@
  * Usage:
  *   claude-conductor verify              Run drift check + all gates from manifest
  *   claude-conductor verify --check      Run drift check ONLY (no gate execution)
+ *   claude-conductor verify --fold       Run only the local fold gates (no drift check)
  *   claude-conductor verify --gate <n>   Run only gate <n>; skip others
  *   claude-conductor verify --json       Emit structured JSON output
  *
@@ -29,6 +30,7 @@ import { spawnSync } from "node:child_process";
 import {
   detectDrift,
   parseVerifyManifest,
+  selectFoldGates,
   type DriftReport,
   type VerifyManifest,
 } from "./drift.ts";
@@ -61,7 +63,7 @@ function consumeStringValue(
 }
 
 type Flags = {
-  mode: "default" | "check" | "gate";
+  mode: "default" | "check" | "fold" | "gate";
   gate_name: string;
   json: boolean;
 };
@@ -79,6 +81,9 @@ function parseFlags(argv: readonly string[]): Flags {
     }
     if (arg === "--check") {
       mode = "check";
+      i += 1;
+    } else if (arg === "--fold") {
+      mode = "fold";
       i += 1;
     } else if (arg === "--json") {
       json = true;
@@ -178,6 +183,24 @@ function checkCommand(json: boolean): never {
   process.exit(report.status === "clean" ? 0 : 1);
 }
 
+function foldCommand(): never {
+  const manifest = readManifest();
+  const foldGates = selectFoldGates(manifest);
+  for (const gate of foldGates) {
+    const status = runGate(gate);
+    if (status !== 0) {
+      process.stderr.write(
+        `[verify] gate '${gate.name}' failed (exit ${status})\n`,
+      );
+      process.exit(status);
+    }
+  }
+  process.stdout.write(
+    `\n[verify] all ${foldGates.length} fold gates passed\n`,
+  );
+  process.exit(0);
+}
+
 function gateCommand(name: string): never {
   const manifest = readManifest();
   const gate = manifest.gates.find((g) => g.name === name);
@@ -222,6 +245,7 @@ function printHelp(): void {
       "Usage:",
       "  verify                  Run drift check + all gates from manifest",
       "  verify --check          Run drift check ONLY (no gate execution)",
+      "  verify --fold           Run only the local fold gates (no drift check)",
       "  verify --gate <name>    Run only gate <name>; skip others",
       "  verify --json           Emit structured JSON output (drift report)",
       "",
@@ -244,6 +268,8 @@ function main(): void {
   const flags = parseFlags(argv);
   if (flags.mode === "check") {
     checkCommand(flags.json);
+  } else if (flags.mode === "fold") {
+    foldCommand();
   } else if (flags.mode === "gate") {
     gateCommand(flags.gate_name);
   } else {
