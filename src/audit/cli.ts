@@ -50,6 +50,13 @@ import {
   type KeyHistoryEntry,
 } from "../channels/key-surface.ts";
 import { exitCodeFor, renderHuman, verifyChannelAuditChain } from "./verify.ts";
+import { readBodyFile, readMessages } from "../channels/index.ts";
+import {
+  computeAuditQuorum,
+  renderQuorumHuman,
+  type AuditQuorumOptions,
+  type TargetPr,
+} from "./quorum.ts";
 
 function die(message: string, code: number = 2): never {
   process.stderr.write(`[audit] ${message}\n`);
@@ -265,11 +272,87 @@ function parseVerifyFlags(argv: readonly string[]): VerifyFlags {
   return { channelId, pubkeyDir, output, strict };
 }
 
+export type QuorumFlags = {
+  channelId: string | null;
+  targetPr: TargetPr | null;
+  minLenses: number | null;
+  minAuditors: number | null;
+  output: "json" | "human";
+};
+
+/** Parse a `<repo>#<number>` (or `<owner>/<repo>#<number>`) target-PR ref. */
+function parseTargetPr(raw: string): TargetPr {
+  const hashIdx = raw.lastIndexOf("#");
+  if (hashIdx === -1) {
+    die(`--target-pr must be '<repo>#<number>' (got '${raw}')`);
+  }
+  const repo = raw.slice(0, hashIdx).trim();
+  const numStr = raw.slice(hashIdx + 1).trim();
+  if (repo.length === 0) die(`--target-pr repo part is empty (got '${raw}')`);
+  const number = Number(numStr);
+  if (!Number.isInteger(number) || number <= 0) {
+    die(`--target-pr number must be a positive integer (got '${numStr}')`);
+  }
+  return { repo, number };
+}
+
+function parseNonNegativeIntFlag(value: string, flag: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    die(`${flag} must be a non-negative integer (got '${value}')`);
+  }
+  return n;
+}
+
+function parseQuorumFlags(argv: readonly string[]): QuorumFlags {
+  let channelId: string | null = null;
+  let targetPr: TargetPr | null = null;
+  let minLenses: number | null = null;
+  let minAuditors: number | null = null;
+  let output: "json" | "human" = "json";
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === undefined) {
+      i += 1;
+      continue;
+    }
+    if (arg === "--channel" || arg.startsWith("--channel=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--channel");
+      channelId = value;
+      i += consumed;
+    } else if (arg === "--target-pr" || arg.startsWith("--target-pr=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--target-pr");
+      targetPr = parseTargetPr(value);
+      i += consumed;
+    } else if (arg === "--min-lenses" || arg.startsWith("--min-lenses=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--min-lenses");
+      minLenses = parseNonNegativeIntFlag(value, "--min-lenses");
+      i += consumed;
+    } else if (arg === "--min-auditors" || arg.startsWith("--min-auditors=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--min-auditors");
+      minAuditors = parseNonNegativeIntFlag(value, "--min-auditors");
+      i += consumed;
+    } else if (arg === "--output" || arg.startsWith("--output=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--output");
+      if (value !== "json" && value !== "human") {
+        die(`invalid --output value '${value}' — expected 'json' or 'human'`);
+      }
+      output = value;
+      i += consumed;
+    } else {
+      die(`unknown flag '${arg}' for audit quorum`);
+    }
+  }
+  return { channelId, targetPr, minLenses, minAuditors, output };
+}
+
 const HELP_TEXT = `claude-conductor audit — signature-chain CLI (Cycle 1 substrate-core)
 
 Usage:
   claude-conductor audit bootstrap [--identity <nato>] [--force] [--cohort-dir <dir>]
   claude-conductor audit verify <channel-id> [--pubkey-dir <dir>] [--output json|human] [--strict]
+  claude-conductor audit quorum --channel <id> --target-pr <repo>#<n> [--min-lenses N] [--min-auditors M] [--output json|human]
 
 Verbs:
   bootstrap   Generate Ed25519 keypair + write .pub/.sec/.history.json
@@ -300,6 +383,19 @@ Verbs:
                 1 = broken (one or more breaks[] entries)
                 2 = partial (skipped pre-v0.3 entries; --strict → 1)
                 3 = unsupported (unparseable bodies)
+
+  quorum      Multi-persona audit-quorum check for a PR (LOCAL pre-merge
+              gate; channel JSONL is operator-local so this is NOT a CI
+              step). Conjunction: lens-diversity >= --min-lenses AND
+              auditor-independence >= --min-auditors, self-audits excluded.
+              --channel       Required; channel whose audit-verdicts to scan
+              --target-pr     Required; '<repo>#<number>' (owner prefix OK)
+              --min-lenses    Distinct LENS_CLASSES required (default 3)
+              --min-auditors  Distinct auditor identities required (default 2)
+              --output        'json' (default) or 'human'
+              Exit codes:
+                0 = quorum met (both thresholds satisfied)
+                1 = quorum NOT met (one or both thresholds short)
 `;
 
 export async function runAuditCli(argv: readonly string[]): Promise<void> {
@@ -335,6 +431,41 @@ export async function runAuditCli(argv: readonly string[]): Promise<void> {
       process.stdout.write(renderHuman(result.output, result.internal));
     }
     process.exit(exitCodeFor(result, flags.strict));
+  }
+
+  if (verb === "quorum") {
+    const flags = parseQuorumFlags(rest);
+    if (flags.channelId === null) {
+      die("audit quorum requires --channel <channel-id>");
+    }
+    if (flags.targetPr === null) {
+      die("audit quorum requires --target-pr <repo>#<number>");
+    }
+    const messages = readMessages(flags.channelId);
+    // Hydrate body_ref-only messages so the pure logic needs no filesystem
+    // (mirrors audits/cli.ts). Inline `body` skips the lookup.
+    const bodies_by_ref = new Map<string, string>();
+    for (const m of messages) {
+      if (m.body !== undefined) continue;
+      if (m.body_ref === undefined) continue;
+      const raw = readBodyFile(flags.channelId, m.body_ref);
+      if (raw !== null) bodies_by_ref.set(m.body_ref, raw);
+    }
+    const options: AuditQuorumOptions = {};
+    if (flags.minLenses !== null) options.minLenses = flags.minLenses;
+    if (flags.minAuditors !== null) options.minAuditors = flags.minAuditors;
+    const report = computeAuditQuorum({
+      messages,
+      bodies_by_ref,
+      target_pr: flags.targetPr,
+      options,
+    });
+    if (flags.output === "json") {
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    } else {
+      process.stdout.write(renderQuorumHuman(report));
+    }
+    process.exit(report.ok ? 0 : 1);
   }
 
   die(`unknown verb '${verb}' — see 'claude-conductor audit --help'`);
