@@ -27,6 +27,11 @@
       "ci_step_name": "Check import extensions"
     },
     {
+      "name": "check-dep-rationale",
+      "local_cmd": "bun run check-dep-rationale",
+      "ci_step_name": "Check dep rationale"
+    },
+    {
       "name": "test",
       "local_cmd": "bun test",
       "ci_step_name": "Test"
