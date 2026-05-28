@@ -16,7 +16,7 @@ Work proceeds in phases per the parent plan (`~/.claude/plans/disciplined-multi-
 3. **Post-phase audit** — same persona set re-runs against the implementation diff.
 4. **Verification round** — each persona verifies only their own findings against the integration. Bounded 1 round by default; up to 3 rounds when integration substantively changed the surface.
 5. **Smoke-run gate** — run new code in a real (no-op) test environment to catch sandbox/reality drift.
-6. **Pipeline gates** — typecheck + format + lint + tests all clean. Single-command equivalent: `bun run check` (alias for `bun run verify` — orchestrates typecheck + format:check + lint + check-generic-paths + check-import-extensions + `bun test`).
+6. **Pipeline gates** — typecheck + format + lint + tests all clean. Single-command equivalent: `bun run check` (alias for `bun run verify` — orchestrates typecheck + format:check + lint + check-generic-paths + check-import-extensions + check-spdx-headers + `bun test`).
 7. **Autonomous merge** — when all gates pass, the implementing Claude merges on the user's behalf without asking.
 
 Any gate failure stops the merge and surfaces the issue.
@@ -129,7 +129,7 @@ Sibling section to README `## What claude-conductor is NOT` (anti-positioning Cy
 - **NOT a general-purpose contribution standard.** The conventions encoded here (multi-persona audit, phase discipline, decision-log convention, audit transcript durability, generic-paths P1/P2/P3 enforcement, slash-command path convention, dotfiles version compatibility via feature-detection) are tuned to the nbruzzi-operator cohort workflow on Claude Code. Other multi-Claude or multi-AI workflows would need to redesign the convention layer; the discipline-as-code patterns can inform but should not be copy-pasted.
 - **NOT a substitute for the cohort discipline-thread.** This document is INSTRUCTION; cohort precedent + audit-loop + hook layer provide ENFORCEMENT. A contributor following CONTRIBUTING.md without cohort cycle precedent (cross-pair audit, ratify-clean cascade, preemptive-fold-on-OBS, memorialize-then-violate empirical accrual) would have the rules but not the practice that makes them load-bearing. The document teaches the rules; the cohort cycle teaches the discipline.
 - **NOT a complete enforcement spec.** Some items are convention-by-vigilance not gate-enforced (multi-persona audit dispatch, decision-log entries per phase, phase-boundary branch naming, smoke-run gate, per-phase test coverage floor). See §"INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)" below for explicit enumeration + Cycle 4+ deferred substrate work.
-- **NOT a CI/CD pipeline definition.** The CI workflow at `.github/workflows/test.yml` is the technical pipeline gate (typecheck + format:check + lint + check-generic-paths + check-import-extensions + test); CONTRIBUTING.md is the human-readable discipline contract. Both are required; neither substitutes for the other.
+- **NOT a CI/CD pipeline definition.** The CI workflow at `.github/workflows/test.yml` is the technical pipeline gate (typecheck + format:check + lint + check-generic-paths + check-import-extensions + check-spdx-headers + test); CONTRIBUTING.md is the human-readable discipline contract. Both are required; neither substitutes for the other.
 - **NOT a static document.** Conventions evolve per cohort empirical (memorialize-then-violate accrual + preemptive-fold-on-OBS at observation surfaces). Updates land via cohort batch-memo cascades to the memory directory (`~/.claude/projects/-Users-nbruzzi/memory/`) + occasional CONTRIBUTING.md edits when the convention layer itself shifts. The cohort-cycle-precedent rhythm IS the document's continuous integration.
 
 ## INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)
@@ -140,25 +140,25 @@ Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread +
 
 - **TypeScript strict mode + no `any` + no non-null-assertion + exhaustive type checks** — ESLint config errors on violation; typecheck via `tsc --noEmit` at CI + pre-push.
 - **Prettier formatting** — pre-commit hook on dotfiles (`.husky/pre-commit`) + `bun run format` at CI.
-- **Apache-2.0 SPDX header on new source files** — ESLint rule (per CONTRIBUTING line 36 + `eslint.config.js` SPDX rule); rejected at lint stage.
+- **Apache-2.0 SPDX header on source files** — `scripts/check-spdx-headers.sh` CI gate greps `SPDX-License-Identifier` within the first 5 lines of every tracked `.ts`/`.sh`/`.js`/`.mjs`/`.cjs` source file; CI fails on absence. (There is NO ESLint SPDX rule — `eslint.config.js` lints `.ts` only and carries no header rule — so the CI gate is the cross-file-type enforcement.)
 - **Forbidden patterns** (`eval` / dynamic-code / shell-string-concat) — ESLint custom rules (per CONTRIBUTING line 55); rejected at lint stage.
 - **Generic-paths P1/P2/P3** — `scripts/check-generic-paths.sh` runs at CI; CI fails on violation (per CONTRIBUTING line 63-67).
 - **Import extension discipline** — `scripts/check-import-extensions.sh` (or equivalent) at CI.
-- **Pipeline gates** (typecheck + format + lint + check-generic-paths + check-import-extensions + test) — CI workflow `.github/workflows/test.yml`; PR cannot merge without green CI per CLAUDE.md After-Every-Push mandate.
+- **Pipeline gates** (typecheck + format + lint + check-generic-paths + check-import-extensions + check-spdx-headers + test) — CI workflow `.github/workflows/test.yml`; PR cannot merge without green CI per CLAUDE.md After-Every-Push mandate.
 - **Branch-enforcement** (>3 files OR plan-mode-entered → feature branch required) — `branch-enforcement` PreToolUse hook on dotfiles substrate (per CONTRIBUTING line 122); this repo inherits via cross-edge hook layer.
 - **Memory-integrity** (broken links / orphans / duplicates / byte-cap / fold issues) — `memory-integrity` Stop hook in dotfiles.
 - **Destructive-cmd discipline** — `destructive-cmd` PreToolUse hook in dotfiles (rejects `git reset --hard` / `git push --force` patterns without explicit cohort-discretion override).
 - **Audit-verdict schema validation at send-time** — `audit-verdict.ts` parser enforces `LENS_CLASSES` tuple-strict + counts-coherence + three_option_ask required + cross_edge_consumers_verified for substrate-class PRs (per `[[feedback-audit-cohort-missed-cross-edge-shim-consumer]]`).
+- **Dependency-rationale coverage** — `scripts/check-dep-rationale.sh` runs at CI (+ in `verify:fold`); CI fails when any `dependencies`/`devDependencies` entry in `package.json` lacks a backtick-wrapped entry in `dependencies-rationale.md` (per the "Dependency policy" section). Static invariant (not a package.json git-diff — no base-ref dependency); error code `CDR-001`.
 
 **Convention-by-vigilance today (NOT gate-enforced; cohort-precedent-enforced):**
 
-- **Multi-persona audit dispatch** (CONTRIBUTING line 14 "3 minimum personas, scope-driven scaling, hard cap 5-6") — cohort discipline; no gate validates persona count or persona diversity on PRs
+- **Multi-persona audit dispatch** (CONTRIBUTING line 14 "3 minimum personas, scope-driven scaling, hard cap 5-6") — cohort discipline; the LOCAL `audit quorum` verb (cycle 2026-05-28) checks lens-diversity + auditor-independence per PR, but it is operator/cohort-invoked at pre-merge (channel JSONL is local), NOT CI-auto-enforced
 - **Decision-log entries per phase** (CONTRIBUTING line 26 + `decisions/phase-<N>.md`) — cohort discipline; no gate validates decision-log presence on phase-boundary PRs
 - **Branch naming** (CONTRIBUTING §Branching: `<nato>/<feature>` cohort / `<feature-name>` solo) — intentionally advisory, NOT a gate gap. Branch _existence_ (no feature-work on `main` past the file/plan threshold) IS gate-enforced by the `branch-enforcement` hook; the _name_ is left to convention because the cohort + solo schemas diverge and a name-pattern gate would reject valid branches. The retired `phase-<N>-<name>` encoding is no longer a naming target.
 - **Smoke-run gate** (CONTRIBUTING line 18 "run new code in a real test environment to catch sandbox/reality drift") — cohort discipline; no gate validates smoke-run output
 - **Audit transcript durability** (CONTRIBUTING line 59 `audits/phase-<N>/<persona>-<round>.md`) — cohort discipline; no gate validates audit-transcript filing
 - **Per-phase test coverage floors** (CONTRIBUTING line 40 "Phase 0 floor: 100% line coverage on extracted/refactored code") — cohort discipline; no coverage gate at CI today
-- **Dependency policy rationale** (CONTRIBUTING line 46 `dependencies-rationale.md`) — cohort discipline; no gate validates new-dep presence in rationale file
 
 **Cohort-precedent IS the enforcement for convention-only items.**
 
@@ -170,7 +170,6 @@ The cohort discipline-thread (cycle 2026-05-27 empirical: 19 PR merges + 24+ mem
 - Smoke-run gate: cohort precedent applies pre-commit gate suite (typecheck/format/lint/tests) as proxy at audit-shadow time
 - Audit transcript durability: cohort channel JSONL + body-ref content-addressed storage provides cohort-shared durability (not the `audits/phase-<N>/` filesystem path specifically; cohort discipline-thread evolved to channel-based)
 - Per-phase test coverage floors: cohort precedent surfaces coverage gaps at audit-shadow via test-count delta in pre-push gate output
-- Dependency policy rationale: cohort precedent surfaces new-dep concerns at audit-shadow
 
 The cohort-precedent-enforcement-mechanism is empirically effective per cycle 2026-05-27 PRISTINE-or-RECOVERED cycle character. AI-written PRs (Claude sessions modifying conductor) ARE held to convention-by-vigilance via the cohort cycle precedent + cross-pair audit + 4-NATO ratify-clean cascade.
 
@@ -178,11 +177,11 @@ The cohort-precedent-enforcement-mechanism is empirically effective per cycle 20
 
 Future substrate-fix work that would close the R-3 gap structurally (gate-enforce the convention-by-vigilance items above):
 
-- **SPDX header CI check** — script that greps `SPDX-License-Identifier` in all new source files; CI fails on absence. Substrate-fix scope: ~30 LOC bash script + workflow step.
+- **SPDX header CI check** — IMPLEMENTED this cycle as `scripts/check-spdx-headers.sh` (greps `SPDX-License-Identifier` in the first 5 lines of all tracked `.ts`/`.sh`/`.js`/`.mjs`/`.cjs` source files; wired into `verify:fold` + CI + `verify-manifest.json`). Moved to ENFORCED-today above.
 - **Decision-log presence CI check** — for PRs that modify substrate primitives, validate `decisions/phase-<N>.md` has new entries. Substrate-fix scope: PR-template + CI workflow validating template-section presence.
 - **Per-phase test coverage floor CI check** — coverage report at CI; fail on regression below phase floor. Substrate-fix scope: `bun test --coverage` invocation + threshold check.
-- **Dependency rationale check** — for PRs that add new runtime dependencies (package.json diff), validate `dependencies-rationale.md` has new entries. Substrate-fix scope: PR-template + CI workflow.
-- **Multi-persona audit dispatch verification** — for substrate-class PRs, validate channel JSONL has N audit-verdict bodies with N distinct `target_peer` values before merge. Substrate-fix scope: channel CLI verb + CI workflow + branch-protection rule.
+- **Dependency rationale check** — SHIPPED (this cycle) as `scripts/check-dep-rationale.sh` (the `check-dep-rationale` gate, error code `CDR-001`). Implemented as a static invariant — every declared `dependencies`/`devDependencies` entry must have a backtick-wrapped entry in `dependencies-rationale.md` — rather than a package.json git-diff, so there is no base-ref dependency and the check runs identically locally and in CI.
+- **Multi-persona audit dispatch verification** — SHIPPED as the LOCAL `claude-conductor audit quorum --channel <id> --target-pr <repo>#<n>` verb (cohort cycle 2026-05-28, Pair-B). NOT a CI check: audit-verdicts live in the operator-local channel JSONL (`~/.claude/channels/`, never pushed to the remote), so GitHub CI cannot see them — same premise as the sibling `audit verify` local verb. Quorum is a conjunction: lens-diversity (≥ `--min-lenses` distinct LENS_CLASSES, default 3 per line 14) AND auditor-independence (≥ `--min-auditors` distinct auditor identities, default 2), with self-audits (auditor == target_peer) excluded. Invoked at pre-merge in the cohort audit-loop-closure discipline, not `test.yml`. (Doc-fix: the original "N distinct `target_peer` ... CI workflow + branch-protection rule" framing was wrong — target_peer is the verdict addressee, constant per PR, and CI cannot read local channel state.)
 - **Branch name vs phase enforcement** — RETIRED (not implemented; premise obsolete). The `phase-<N>-<name>` convention this would have gated no longer exists (cohort uses `<nato>/<feature>`, solo uses `<feature-name>`); the load-bearing value — feature-work-not-on-`main` — is already enforced by the `branch-enforcement` hook (existence, not name). A name-pattern gate would reject valid cohort/solo branches for ~zero marginal value. See §Branching for the documented convention.
 
 These deferred items inform the next-cycle scope-decision; cohort discipline-thread has empirically demonstrated all of them via cycle 2026-05-27 cohort precedent but not yet codified as gates.
