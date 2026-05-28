@@ -21,7 +21,7 @@ const SCRIPT_PATH = join(
 );
 
 const SPDX = "SPDX-License-Identifier: Apache-2.0";
-const TS_HEADER = `// ${SPDX}\n// Copyright 2026 nbruzzi\n`;
+const TS_HEADER = `// ${SPDX}\n`;
 
 let repo: string;
 
@@ -83,7 +83,7 @@ describe("scripts/check-spdx-headers.sh", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain("error[SPDX-001]");
     expect(stderr).toContain("src/foo.ts");
-    expect(stderr).toContain("missing SPDX-License-Identifier");
+    expect(stderr).toContain("missing or non-Apache-2.0 SPDX header");
   });
 
   it("flags a .sh script missing SPDX (gap ESLint cannot cover — it lints .ts only)", () => {
@@ -103,7 +103,7 @@ describe("scripts/check-spdx-headers.sh", () => {
     mkdirSync(join(repo, "scripts"), { recursive: true });
     writeFileSync(
       join(repo, "scripts", "ok.sh"),
-      `#!/usr/bin/env bash\n# ${SPDX}\n# Copyright 2026 nbruzzi\nset -e\n`,
+      `#!/usr/bin/env bash\n# ${SPDX}\nset -e\n`,
     );
     commit(repo);
     const { exitCode, stdout } = runScript(repo);
@@ -204,5 +204,117 @@ describe("scripts/check-spdx-headers.sh", () => {
     const { exitCode, stdout } = runScript(repo);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("clean");
+  });
+
+  it("flags a bare mention of the marker that is not a real header (RE-1)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "mention.ts"),
+      "// see the SPDX-License-Identifier convention for details\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("src/mention.ts");
+    expect(stderr).toContain("error[SPDX-001]");
+  });
+
+  it("flags a non-Apache-2.0 SPDX license value (RE-2)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "gpl.ts"),
+      "// SPDX-License-Identifier: GPL-3.0-or-later\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("src/gpl.ts");
+    expect(stderr).toContain("error[SPDX-001]");
+  });
+
+  it("accepts a compound SPDX expression beginning with Apache-2.0", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(
+      join(repo, "src", "compound.ts"),
+      "// SPDX-License-Identifier: Apache-2.0 OR MIT\nexport const x = 1;\n",
+    );
+    commit(repo);
+    const { exitCode, stdout } = runScript(repo);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("clean");
+  });
+
+  it("prints help and exits 0 for --help and -h (TA-1)", () => {
+    writeFileSync(join(repo, "ok.ts"), `${TS_HEADER}export const x = 1;\n`);
+    commit(repo);
+    for (const flag of ["--help", "-h"]) {
+      const { exitCode, stdout } = runScript(repo, [flag]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("--include-untracked");
+    }
+  });
+
+  it("flags an empty source file and a 1-line non-header file (TA-2)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "empty.ts"), "");
+    writeFileSync(join(repo, "src", "oneline.ts"), "export const x = 1;");
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("src/empty.ts");
+    expect(stderr).toContain("src/oneline.ts");
+  });
+
+  it("reports EVERY offending file and a plural count (TA-3)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(repo, "src", "b.ts"), "export const b = 2;\n");
+    writeFileSync(join(repo, "src", "c.ts"), "export const c = 3;\n");
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("src/a.ts");
+    expect(stderr).toContain("src/b.ts");
+    expect(stderr).toContain("src/c.ts");
+    expect(stderr).toContain("3 source file(s) missing SPDX header");
+  });
+
+  it("scans .mjs / .cjs / .tsx source files (TA-4)", () => {
+    writeFileSync(join(repo, "a.mjs"), "export const a = 1;\n");
+    writeFileSync(join(repo, "b.cjs"), "module.exports = {};\n");
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "C.tsx"), "export const C = 1;\n");
+    commit(repo);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("a.mjs");
+    expect(stderr).toContain("b.cjs");
+    expect(stderr).toContain("src/C.tsx");
+  });
+
+  it("emits GitHub Actions error annotations under GITHUB_ACTIONS=true (TA-5)", () => {
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "foo.ts"), "export const x = 1;\n");
+    commit(repo);
+    const result = Bun.spawnSync(["bash", SCRIPT_PATH], {
+      cwd: repo,
+      env: { ...Bun.env, GITHUB_ACTIONS: "true" },
+    });
+    const stderr = new TextDecoder().decode(result.stderr);
+    expect(result.exitCode).toBe(1);
+    expect(stderr).toContain("::error file=");
+    expect(stderr).toContain("title=SPDX-001");
+  });
+
+  it("exits 2 when run outside a git repository (TA-6)", () => {
+    const nonRepo = mkdtempSync(join(tmpdir(), "spdx-nonrepo-"));
+    try {
+      const { exitCode, stderr } = runScript(nonRepo);
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain("not in a git repo");
+    } finally {
+      if (existsSync(nonRepo))
+        rmSync(nonRepo, { recursive: true, force: true });
+    }
   });
 });
