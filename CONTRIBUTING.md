@@ -152,7 +152,7 @@ Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread +
 
 **Convention-by-vigilance today (NOT gate-enforced; cohort-precedent-enforced):**
 
-- **Multi-persona audit dispatch** (CONTRIBUTING line 14 "3 minimum personas, scope-driven scaling, hard cap 5-6") — cohort discipline; no gate validates persona count or persona diversity on PRs
+- **Multi-persona audit dispatch** (CONTRIBUTING line 14 "3 minimum personas, scope-driven scaling, hard cap 5-6") — cohort discipline; the LOCAL `audit quorum` verb (cycle 2026-05-28) checks lens-diversity + auditor-independence per PR, but it is operator/cohort-invoked at pre-merge (channel JSONL is local), NOT CI-auto-enforced
 - **Decision-log entries per phase** (CONTRIBUTING line 26 + `decisions/phase-<N>.md`) — cohort discipline; no gate validates decision-log presence on phase-boundary PRs
 - **Phase-boundary branch naming** (CONTRIBUTING line 122 `phase-0-<name>` / `phase-1-<name>`) — cohort discipline; no gate validates branch name against phase
 - **Smoke-run gate** (CONTRIBUTING line 18 "run new code in a real test environment to catch sandbox/reality drift") — cohort discipline; no gate validates smoke-run output
@@ -182,7 +182,7 @@ Future substrate-fix work that would close the R-3 gap structurally (gate-enforc
 - **Decision-log presence CI check** — for PRs that modify substrate primitives, validate `decisions/phase-<N>.md` has new entries. Substrate-fix scope: PR-template + CI workflow validating template-section presence.
 - **Per-phase test coverage floor CI check** — coverage report at CI; fail on regression below phase floor. Substrate-fix scope: `bun test --coverage` invocation + threshold check.
 - **Dependency rationale check** — for PRs that add new runtime dependencies (package.json diff), validate `dependencies-rationale.md` has new entries. Substrate-fix scope: PR-template + CI workflow.
-- **Multi-persona audit dispatch verification** — for substrate-class PRs, validate channel JSONL has N audit-verdict bodies with N distinct `target_peer` values before merge. Substrate-fix scope: channel CLI verb + CI workflow + branch-protection rule.
+- **Multi-persona audit dispatch verification** — SHIPPED as the LOCAL `claude-conductor audit quorum --channel <id> --target-pr <repo>#<n>` verb (cohort cycle 2026-05-28, Pair-B). NOT a CI check: audit-verdicts live in the operator-local channel JSONL (`~/.claude/channels/`, never pushed to the remote), so GitHub CI cannot see them — same premise as the sibling `audit verify` local verb. Quorum is a conjunction: lens-diversity (≥ `--min-lenses` distinct LENS_CLASSES, default 3 per line 14) AND auditor-independence (≥ `--min-auditors` distinct auditor identities, default 2), with self-audits (auditor == target_peer) excluded. Invoked at pre-merge in the cohort audit-loop-closure discipline, not `test.yml`. (Doc-fix: the original "N distinct `target_peer` ... CI workflow + branch-protection rule" framing was wrong — target_peer is the verdict addressee, constant per PR, and CI cannot read local channel state.)
 - **Branch name vs phase enforcement** — branch-enforcement hook could validate `phase-<N>-<name>` pattern + cross-reference to active phase. Substrate-fix scope: hook layer extension.
 
 These deferred items inform the next-cycle scope-decision; cohort discipline-thread has empirically demonstrated all of them via cycle 2026-05-27 cohort precedent but not yet codified as gates.
