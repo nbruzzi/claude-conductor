@@ -119,7 +119,7 @@ The `lint:workflows` script in `package.json` calls `actionlint` directly; the C
 
 ## Branching
 
-Cut a feature branch before touching code: `git checkout -b <feature-name>`. CLAUDE.md branching rule (>3 files OR plan-mode-entered) is enforced by the `branch-enforcement` PreToolUse hook on the dotfiles substrate; this repo inherits the discipline. Phase boundaries map to branches: `phase-0-<name>`, `phase-1-<name>`, etc.
+Cut a feature branch before touching code. Branch _existence_ is gate-enforced: the `branch-enforcement` PreToolUse hook on the dotfiles substrate blocks edits on a protected branch (`main`) once the CLAUDE.md threshold is crossed (>3 distinct files OR plan-mode-entered) and directs you to `git checkout -b <feature-name>`; this repo inherits the discipline cross-edge. Branch _naming_ is advisory, not gated — the cohort uses `<nato>/<feature>` (e.g. `bravo/spdx-header-ci-check`) and solo work uses `<feature-name>` (per CLAUDE.md). The earlier `phase-<N>-<name>` encoding is retired: it predates the NATO-cohort + solo workflow and no live process emits or checks it.
 
 ## What CONTRIBUTING.md is NOT (anti-positioning Cycle 3b)
 
@@ -155,7 +155,7 @@ Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread +
 
 - **Multi-persona audit dispatch** (CONTRIBUTING line 14 "3 minimum personas, scope-driven scaling, hard cap 5-6") — cohort discipline; the LOCAL `audit quorum` verb (cycle 2026-05-28) checks lens-diversity + auditor-independence per PR, but it is operator/cohort-invoked at pre-merge (channel JSONL is local), NOT CI-auto-enforced
 - **Decision-log entries per phase** (CONTRIBUTING line 26 + `decisions/phase-<N>.md`) — cohort discipline; no gate validates decision-log presence on phase-boundary PRs
-- **Phase-boundary branch naming** (CONTRIBUTING line 122 `phase-0-<name>` / `phase-1-<name>`) — cohort discipline; no gate validates branch name against phase
+- **Branch naming** (CONTRIBUTING §Branching: `<nato>/<feature>` cohort / `<feature-name>` solo) — intentionally advisory, NOT a gate gap. Branch _existence_ (no feature-work on `main` past the file/plan threshold) IS gate-enforced by the `branch-enforcement` hook; the _name_ is left to convention because the cohort + solo schemas diverge and a name-pattern gate would reject valid branches. The retired `phase-<N>-<name>` encoding is no longer a naming target.
 - **Smoke-run gate** (CONTRIBUTING line 18 "run new code in a real test environment to catch sandbox/reality drift") — cohort discipline; no gate validates smoke-run output
 - **Audit transcript durability** (CONTRIBUTING line 59 `audits/phase-<N>/<persona>-<round>.md`) — cohort discipline; no gate validates audit-transcript filing
 - **Per-phase test coverage floors** (CONTRIBUTING line 40 "Phase 0 floor: 100% line coverage on extracted/refactored code") — cohort discipline; no coverage gate at CI today
@@ -166,7 +166,7 @@ The cohort discipline-thread (cycle 2026-05-27 empirical: 19 PR merges + 24+ mem
 
 - Multi-persona audit: cohort precedent applies multi-NATO cross-pair-shadow + Pair-Internal audit on every substrate PR (4-NATO ratify-clean cascade is the discipline)
 - Decision-log entries: cohort precedent reviews commit messages + PR bodies for decision-log linkage at audit-shadow time
-- Phase-boundary branching: cohort precedent applies feature-branch + worktree-isolate-at-branch-create as cohort default (per `[[feedback-parallel-session-shared-tree-branch-race]]` rule 14)
+- Feature branching: cohort precedent applies feature-branch + worktree-isolate-at-branch-create as cohort default (per `[[feedback-parallel-session-shared-tree-branch-race]]` rule 14); branch _existence_ is additionally hook-gated (see ENFORCED-today)
 - Smoke-run gate: cohort precedent applies pre-commit gate suite (typecheck/format/lint/tests) as proxy at audit-shadow time
 - Audit transcript durability: cohort channel JSONL + body-ref content-addressed storage provides cohort-shared durability (not the `audits/phase-<N>/` filesystem path specifically; cohort discipline-thread evolved to channel-based)
 - Per-phase test coverage floors: cohort precedent surfaces coverage gaps at audit-shadow via test-count delta in pre-push gate output
@@ -182,7 +182,7 @@ Future substrate-fix work that would close the R-3 gap structurally (gate-enforc
 - **Per-phase test coverage floor CI check** — coverage report at CI; fail on regression below phase floor. Substrate-fix scope: `bun test --coverage` invocation + threshold check.
 - **Dependency rationale check** — SHIPPED (this cycle) as `scripts/check-dep-rationale.sh` (the `check-dep-rationale` gate, error code `CDR-001`). Implemented as a static invariant — every declared `dependencies`/`devDependencies` entry must have a backtick-wrapped entry in `dependencies-rationale.md` — rather than a package.json git-diff, so there is no base-ref dependency and the check runs identically locally and in CI.
 - **Multi-persona audit dispatch verification** — SHIPPED as the LOCAL `claude-conductor audit quorum --channel <id> --target-pr <repo>#<n>` verb (cohort cycle 2026-05-28, Pair-B). NOT a CI check: audit-verdicts live in the operator-local channel JSONL (`~/.claude/channels/`, never pushed to the remote), so GitHub CI cannot see them — same premise as the sibling `audit verify` local verb. Quorum is a conjunction: lens-diversity (≥ `--min-lenses` distinct LENS_CLASSES, default 3 per line 14) AND auditor-independence (≥ `--min-auditors` distinct auditor identities, default 2), with self-audits (auditor == target_peer) excluded. Invoked at pre-merge in the cohort audit-loop-closure discipline, not `test.yml`. (Doc-fix: the original "N distinct `target_peer` ... CI workflow + branch-protection rule" framing was wrong — target_peer is the verdict addressee, constant per PR, and CI cannot read local channel state.)
-- **Branch name vs phase enforcement** — branch-enforcement hook could validate `phase-<N>-<name>` pattern + cross-reference to active phase. Substrate-fix scope: hook layer extension.
+- **Branch name vs phase enforcement** — RETIRED (not implemented; premise obsolete). The `phase-<N>-<name>` convention this would have gated no longer exists (cohort uses `<nato>/<feature>`, solo uses `<feature-name>`); the load-bearing value — feature-work-not-on-`main` — is already enforced by the `branch-enforcement` hook (existence, not name). A name-pattern gate would reject valid cohort/solo branches for ~zero marginal value. See §Branching for the documented convention.
 
 These deferred items inform the next-cycle scope-decision; cohort discipline-thread has empirically demonstrated all of them via cycle 2026-05-27 cohort precedent but not yet codified as gates.
 
