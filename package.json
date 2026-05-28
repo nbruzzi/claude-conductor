@@ -22,6 +22,7 @@
     "check-import-extensions": "./scripts/check-import-extensions.sh",
     "check-dep-rationale": "./scripts/check-dep-rationale.sh",
     "check-spdx-headers": "./scripts/check-spdx-headers.sh",
+    "check-coverage-floor": "./scripts/check-coverage-floor.sh",
     "smoke:phase-1": "./scripts/smoke-phase-1.sh",
     "smoke:phase-2": "./scripts/smoke-phase-2.sh",
     "smoke:all": "./scripts/smoke-phase-1.sh && ./scripts/smoke-phase-2.sh",
