@@ -149,6 +149,7 @@ Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread +
 - **Memory-integrity** (broken links / orphans / duplicates / byte-cap / fold issues) — `memory-integrity` Stop hook in dotfiles.
 - **Destructive-cmd discipline** — `destructive-cmd` PreToolUse hook in dotfiles (rejects `git reset --hard` / `git push --force` patterns without explicit cohort-discretion override).
 - **Audit-verdict schema validation at send-time** — `audit-verdict.ts` parser enforces `LENS_CLASSES` tuple-strict + counts-coherence + three_option_ask required + cross_edge_consumers_verified for substrate-class PRs (per `[[feedback-audit-cohort-missed-cross-edge-shim-consumer]]`).
+- **Dependency-rationale coverage** — `scripts/check-dep-rationale.sh` runs at CI (+ in `verify:fold`); CI fails when any `dependencies`/`devDependencies` entry in `package.json` lacks a backtick-wrapped entry in `dependencies-rationale.md` (per the "Dependency policy" section). Static invariant (not a package.json git-diff — no base-ref dependency); error code `CDR-001`.
 
 **Convention-by-vigilance today (NOT gate-enforced; cohort-precedent-enforced):**
 
@@ -158,7 +159,6 @@ Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread +
 - **Smoke-run gate** (CONTRIBUTING line 18 "run new code in a real test environment to catch sandbox/reality drift") — cohort discipline; no gate validates smoke-run output
 - **Audit transcript durability** (CONTRIBUTING line 59 `audits/phase-<N>/<persona>-<round>.md`) — cohort discipline; no gate validates audit-transcript filing
 - **Per-phase test coverage floors** (CONTRIBUTING line 40 "Phase 0 floor: 100% line coverage on extracted/refactored code") — cohort discipline; no coverage gate at CI today
-- **Dependency policy rationale** (CONTRIBUTING line 46 `dependencies-rationale.md`) — cohort discipline; no gate validates new-dep presence in rationale file
 
 **Cohort-precedent IS the enforcement for convention-only items.**
 
@@ -170,7 +170,6 @@ The cohort discipline-thread (cycle 2026-05-27 empirical: 19 PR merges + 24+ mem
 - Smoke-run gate: cohort precedent applies pre-commit gate suite (typecheck/format/lint/tests) as proxy at audit-shadow time
 - Audit transcript durability: cohort channel JSONL + body-ref content-addressed storage provides cohort-shared durability (not the `audits/phase-<N>/` filesystem path specifically; cohort discipline-thread evolved to channel-based)
 - Per-phase test coverage floors: cohort precedent surfaces coverage gaps at audit-shadow via test-count delta in pre-push gate output
-- Dependency policy rationale: cohort precedent surfaces new-dep concerns at audit-shadow
 
 The cohort-precedent-enforcement-mechanism is empirically effective per cycle 2026-05-27 PRISTINE-or-RECOVERED cycle character. AI-written PRs (Claude sessions modifying conductor) ARE held to convention-by-vigilance via the cohort cycle precedent + cross-pair audit + 4-NATO ratify-clean cascade.
 
@@ -181,7 +180,7 @@ Future substrate-fix work that would close the R-3 gap structurally (gate-enforc
 - **SPDX header CI check** — IMPLEMENTED this cycle as `scripts/check-spdx-headers.sh` (greps `SPDX-License-Identifier` in the first 5 lines of all tracked `.ts`/`.sh`/`.js`/`.mjs`/`.cjs` source files; wired into `verify:fold` + CI + `verify-manifest.json`). Moved to ENFORCED-today above.
 - **Decision-log presence CI check** — for PRs that modify substrate primitives, validate `decisions/phase-<N>.md` has new entries. Substrate-fix scope: PR-template + CI workflow validating template-section presence.
 - **Per-phase test coverage floor CI check** — coverage report at CI; fail on regression below phase floor. Substrate-fix scope: `bun test --coverage` invocation + threshold check.
-- **Dependency rationale check** — for PRs that add new runtime dependencies (package.json diff), validate `dependencies-rationale.md` has new entries. Substrate-fix scope: PR-template + CI workflow.
+- **Dependency rationale check** — SHIPPED (this cycle) as `scripts/check-dep-rationale.sh` (the `check-dep-rationale` gate, error code `CDR-001`). Implemented as a static invariant — every declared `dependencies`/`devDependencies` entry must have a backtick-wrapped entry in `dependencies-rationale.md` — rather than a package.json git-diff, so there is no base-ref dependency and the check runs identically locally and in CI.
 - **Multi-persona audit dispatch verification** — for substrate-class PRs, validate channel JSONL has N audit-verdict bodies with N distinct `target_peer` values before merge. Substrate-fix scope: channel CLI verb + CI workflow + branch-protection rule.
 - **Branch name vs phase enforcement** — branch-enforcement hook could validate `phase-<N>-<name>` pattern + cross-reference to active phase. Substrate-fix scope: hook layer extension.
 

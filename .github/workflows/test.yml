@@ -47,6 +47,9 @@ jobs:
       - name: Check import extensions
         run: bun run check-import-extensions
 
+      - name: Check dep rationale
+        run: bun run check-dep-rationale
+
       - name: Check SPDX headers
         run: bun run check-spdx-headers
 
