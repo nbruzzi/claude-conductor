@@ -76,6 +76,13 @@ MERGE_BASE="$(git merge-base "$BASE_REF" HEAD 2>/dev/null)" || {
   exit 2
 }
 
+# Local-staleness caveat (cross-pair NIT, PR #161): CI is authoritative — its
+# checkout fetches a fresh origin/main (fetch-depth: 0), so the merge-base is
+# correct. A LOCAL run against a stale (un-fetched) origin/main resolves an OLDER
+# merge-base -> a wider diff range than the true PR scope. We deliberately do NOT
+# auto-fetch (offline-hostile; would slow every local run); instead the output
+# prints the resolved base SHA so a stale local ref is visible.
+
 # --- 3. changed files in PR scope (merge-base..HEAD) ---
 CHANGED="$(git diff --name-only "$MERGE_BASE" HEAD)"
 
@@ -120,5 +127,5 @@ if [ "$SUBSTRATE_CHANGED" -eq 1 ] && [ "$DECISION_CHANGED" -eq 0 ] && [ "$OPT_OU
   exit 1
 fi
 
-echo "check-decision-log: clean (substrate_changed=$SUBSTRATE_CHANGED decision_entry=$DECISION_CHANGED opt_out=$OPT_OUT; base=$BASE_REF)"
+echo "check-decision-log: clean (substrate_changed=$SUBSTRATE_CHANGED decision_entry=$DECISION_CHANGED opt_out=$OPT_OUT; base=$BASE_REF @ ${MERGE_BASE} — 'git fetch origin main' if this base looks stale locally)"
 exit 0
