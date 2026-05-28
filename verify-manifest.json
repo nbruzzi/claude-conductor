@@ -40,6 +40,11 @@
       "name": "test",
       "local_cmd": "bun test",
       "ci_step_name": "Test"
+    },
+    {
+      "name": "check-coverage-floor",
+      "local_cmd": "bun run check-coverage-floor",
+      "ci_step_name": "Check coverage floor"
     }
   ],
   "ci_only_steps": [
