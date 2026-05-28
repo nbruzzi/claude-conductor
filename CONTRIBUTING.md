@@ -16,7 +16,7 @@ Work proceeds in phases per the parent plan (`~/.claude/plans/disciplined-multi-
 3. **Post-phase audit** — same persona set re-runs against the implementation diff.
 4. **Verification round** — each persona verifies only their own findings against the integration. Bounded 1 round by default; up to 3 rounds when integration substantively changed the surface.
 5. **Smoke-run gate** — run new code in a real (no-op) test environment to catch sandbox/reality drift.
-6. **Pipeline gates** — typecheck + format + lint + tests all clean. Single-command equivalent: `bun run check` (alias for `bun run verify` — orchestrates typecheck + format:check + lint + check-generic-paths + check-import-extensions + `bun test`).
+6. **Pipeline gates** — typecheck + format + lint + tests all clean. Single-command equivalent: `bun run check` (alias for `bun run verify` — orchestrates typecheck + format:check + lint + check-generic-paths + check-import-extensions + check-spdx-headers + `bun test`).
 7. **Autonomous merge** — when all gates pass, the implementing Claude merges on the user's behalf without asking.
 
 Any gate failure stops the merge and surfaces the issue.
@@ -129,7 +129,7 @@ Sibling section to README `## What claude-conductor is NOT` (anti-positioning Cy
 - **NOT a general-purpose contribution standard.** The conventions encoded here (multi-persona audit, phase discipline, decision-log convention, audit transcript durability, generic-paths P1/P2/P3 enforcement, slash-command path convention, dotfiles version compatibility via feature-detection) are tuned to the nbruzzi-operator cohort workflow on Claude Code. Other multi-Claude or multi-AI workflows would need to redesign the convention layer; the discipline-as-code patterns can inform but should not be copy-pasted.
 - **NOT a substitute for the cohort discipline-thread.** This document is INSTRUCTION; cohort precedent + audit-loop + hook layer provide ENFORCEMENT. A contributor following CONTRIBUTING.md without cohort cycle precedent (cross-pair audit, ratify-clean cascade, preemptive-fold-on-OBS, memorialize-then-violate empirical accrual) would have the rules but not the practice that makes them load-bearing. The document teaches the rules; the cohort cycle teaches the discipline.
 - **NOT a complete enforcement spec.** Some items are convention-by-vigilance not gate-enforced (multi-persona audit dispatch, decision-log entries per phase, phase-boundary branch naming, smoke-run gate, per-phase test coverage floor). See §"INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)" below for explicit enumeration + Cycle 4+ deferred substrate work.
-- **NOT a CI/CD pipeline definition.** The CI workflow at `.github/workflows/test.yml` is the technical pipeline gate (typecheck + format:check + lint + check-generic-paths + check-import-extensions + test); CONTRIBUTING.md is the human-readable discipline contract. Both are required; neither substitutes for the other.
+- **NOT a CI/CD pipeline definition.** The CI workflow at `.github/workflows/test.yml` is the technical pipeline gate (typecheck + format:check + lint + check-generic-paths + check-import-extensions + check-spdx-headers + test); CONTRIBUTING.md is the human-readable discipline contract. Both are required; neither substitutes for the other.
 - **NOT a static document.** Conventions evolve per cohort empirical (memorialize-then-violate accrual + preemptive-fold-on-OBS at observation surfaces). Updates land via cohort batch-memo cascades to the memory directory (`~/.claude/projects/-Users-nbruzzi/memory/`) + occasional CONTRIBUTING.md edits when the convention layer itself shifts. The cohort-cycle-precedent rhythm IS the document's continuous integration.
 
 ## INSTRUCTION-vs-ENFORCEMENT boundary (tech-debt ack)
@@ -140,11 +140,11 @@ Per `[[feedback-instructions-vs-enforcement-thesis]]` cohort discipline thread +
 
 - **TypeScript strict mode + no `any` + no non-null-assertion + exhaustive type checks** — ESLint config errors on violation; typecheck via `tsc --noEmit` at CI + pre-push.
 - **Prettier formatting** — pre-commit hook on dotfiles (`.husky/pre-commit`) + `bun run format` at CI.
-- **Apache-2.0 SPDX header on new source files** — ESLint rule (per CONTRIBUTING line 36 + `eslint.config.js` SPDX rule); rejected at lint stage.
+- **Apache-2.0 SPDX header on source files** — `scripts/check-spdx-headers.sh` CI gate greps `SPDX-License-Identifier` within the first 5 lines of every tracked `.ts`/`.sh`/`.js`/`.mjs`/`.cjs` source file; CI fails on absence. (There is NO ESLint SPDX rule — `eslint.config.js` lints `.ts` only and carries no header rule — so the CI gate is the cross-file-type enforcement.)
 - **Forbidden patterns** (`eval` / dynamic-code / shell-string-concat) — ESLint custom rules (per CONTRIBUTING line 55); rejected at lint stage.
 - **Generic-paths P1/P2/P3** — `scripts/check-generic-paths.sh` runs at CI; CI fails on violation (per CONTRIBUTING line 63-67).
 - **Import extension discipline** — `scripts/check-import-extensions.sh` (or equivalent) at CI.
-- **Pipeline gates** (typecheck + format + lint + check-generic-paths + check-import-extensions + test) — CI workflow `.github/workflows/test.yml`; PR cannot merge without green CI per CLAUDE.md After-Every-Push mandate.
+- **Pipeline gates** (typecheck + format + lint + check-generic-paths + check-import-extensions + check-spdx-headers + test) — CI workflow `.github/workflows/test.yml`; PR cannot merge without green CI per CLAUDE.md After-Every-Push mandate.
 - **Branch-enforcement** (>3 files OR plan-mode-entered → feature branch required) — `branch-enforcement` PreToolUse hook on dotfiles substrate (per CONTRIBUTING line 122); this repo inherits via cross-edge hook layer.
 - **Memory-integrity** (broken links / orphans / duplicates / byte-cap / fold issues) — `memory-integrity` Stop hook in dotfiles.
 - **Destructive-cmd discipline** — `destructive-cmd` PreToolUse hook in dotfiles (rejects `git reset --hard` / `git push --force` patterns without explicit cohort-discretion override).
@@ -177,7 +177,7 @@ The cohort-precedent-enforcement-mechanism is empirically effective per cycle 20
 
 Future substrate-fix work that would close the R-3 gap structurally (gate-enforce the convention-by-vigilance items above):
 
-- **SPDX header CI check** — script that greps `SPDX-License-Identifier` in all new source files; CI fails on absence. Substrate-fix scope: ~30 LOC bash script + workflow step.
+- **SPDX header CI check** — IMPLEMENTED this cycle as `scripts/check-spdx-headers.sh` (greps `SPDX-License-Identifier` in the first 5 lines of all tracked `.ts`/`.sh`/`.js`/`.mjs`/`.cjs` source files; wired into `verify:fold` + CI + `verify-manifest.json`). Moved to ENFORCED-today above.
 - **Decision-log presence CI check** — for PRs that modify substrate primitives, validate `decisions/phase-<N>.md` has new entries. Substrate-fix scope: PR-template + CI workflow validating template-section presence.
 - **Per-phase test coverage floor CI check** — coverage report at CI; fail on regression below phase floor. Substrate-fix scope: `bun test --coverage` invocation + threshold check.
 - **Dependency rationale check** — SHIPPED (this cycle) as `scripts/check-dep-rationale.sh` (the `check-dep-rationale` gate, error code `CDR-001`). Implemented as a static invariant — every declared `dependencies`/`devDependencies` entry must have a backtick-wrapped entry in `dependencies-rationale.md` — rather than a package.json git-diff, so there is no base-ref dependency and the check runs identically locally and in CI.

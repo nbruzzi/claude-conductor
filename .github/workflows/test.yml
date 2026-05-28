@@ -50,5 +50,8 @@ jobs:
       - name: Check dep rationale
         run: bun run check-dep-rationale
 
+      - name: Check SPDX headers
+        run: bun run check-spdx-headers
+
       - name: Test
         run: bun test
