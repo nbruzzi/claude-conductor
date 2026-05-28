@@ -277,6 +277,8 @@ export type QuorumFlags = {
   targetPr: TargetPr | null;
   minLenses: number | null;
   minAuditors: number | null;
+  requireSigned: boolean;
+  prAuthor: string | null;
   output: "json" | "human";
 };
 
@@ -309,6 +311,8 @@ function parseQuorumFlags(argv: readonly string[]): QuorumFlags {
   let targetPr: TargetPr | null = null;
   let minLenses: number | null = null;
   let minAuditors: number | null = null;
+  let requireSigned = false;
+  let prAuthor: string | null = null;
   let output: "json" | "human" = "json";
   let i = 0;
   while (i < argv.length) {
@@ -333,6 +337,13 @@ function parseQuorumFlags(argv: readonly string[]): QuorumFlags {
       const { value, consumed } = consumeStringValue(argv, i, "--min-auditors");
       minAuditors = parseNonNegativeIntFlag(value, "--min-auditors");
       i += consumed;
+    } else if (arg === "--require-signed") {
+      requireSigned = true;
+      i += 1;
+    } else if (arg === "--pr-author" || arg.startsWith("--pr-author=")) {
+      const { value, consumed } = consumeStringValue(argv, i, "--pr-author");
+      prAuthor = value;
+      i += consumed;
     } else if (arg === "--output" || arg.startsWith("--output=")) {
       const { value, consumed } = consumeStringValue(argv, i, "--output");
       if (value !== "json" && value !== "human") {
@@ -344,7 +355,15 @@ function parseQuorumFlags(argv: readonly string[]): QuorumFlags {
       die(`unknown flag '${arg}' for audit quorum`);
     }
   }
-  return { channelId, targetPr, minLenses, minAuditors, output };
+  return {
+    channelId,
+    targetPr,
+    minLenses,
+    minAuditors,
+    requireSigned,
+    prAuthor,
+    output,
+  };
 }
 
 const HELP_TEXT = `claude-conductor audit — signature-chain CLI (Cycle 1 substrate-core)
@@ -352,7 +371,7 @@ const HELP_TEXT = `claude-conductor audit — signature-chain CLI (Cycle 1 subst
 Usage:
   claude-conductor audit bootstrap [--identity <nato>] [--force] [--cohort-dir <dir>]
   claude-conductor audit verify <channel-id> [--pubkey-dir <dir>] [--output json|human] [--strict]
-  claude-conductor audit quorum --channel <id> --target-pr <repo>#<n> [--min-lenses N] [--min-auditors M] [--output json|human]
+  claude-conductor audit quorum --channel <id> --target-pr <repo>#<n> [--min-lenses N] [--min-auditors M] [--require-signed] [--pr-author <id>] [--output json|human]
 
 Verbs:
   bootstrap   Generate Ed25519 keypair + write .pub/.sec/.history.json
@@ -388,11 +407,16 @@ Verbs:
               gate; channel JSONL is operator-local so this is NOT a CI
               step). Conjunction: lens-diversity >= --min-lenses AND
               auditor-independence >= --min-auditors, self-audits excluded.
-              --channel       Required; channel whose audit-verdicts to scan
-              --target-pr     Required; '<repo>#<number>' (owner prefix OK)
-              --min-lenses    Distinct LENS_CLASSES required (default 3)
-              --min-auditors  Distinct auditor identities required (default 2)
-              --output        'json' (default) or 'human'
+              --channel         Required; channel whose audit-verdicts to scan
+              --target-pr       Required; '<repo>#<number>' (owner prefix OK)
+              --min-lenses      Distinct LENS_CLASSES required (default 3)
+              --min-auditors    Distinct auditor identities required (default 2)
+              --require-signed  Count ONLY crypto-valid v0.3-signed verdicts
+                                (composes 'audit verify'); excludes raw/unsigned
+                                + signature/chain-broken. Default off.
+              --pr-author <id>  Also exclude verdicts authored by the PR author
+                                (closes the OBS-B1 independence hole)
+              --output          'json' (default) or 'human'
               Exit codes:
                 0 = quorum met (both thresholds satisfied)
                 1 = quorum NOT met (one or both thresholds short)
@@ -454,6 +478,19 @@ export async function runAuditCli(argv: readonly string[]): Promise<void> {
     const options: AuditQuorumOptions = {};
     if (flags.minLenses !== null) options.minLenses = flags.minLenses;
     if (flags.minAuditors !== null) options.minAuditors = flags.minAuditors;
+    if (flags.prAuthor !== null) options.prAuthor = flags.prAuthor;
+    if (flags.requireSigned) {
+      options.requireSigned = true;
+      // Compose audit/verify.ts: walk the signature chain over the SAME channel
+      // (verify re-reads it here, ms after `messages` above — append-only JSONL,
+      // so its at_msg_seq basis aligns with computeAuditQuorum's message index)
+      // and collect the indices of verdicts whose chain failed. Quorum then
+      // counts only wrapped verdicts NOT in this set.
+      const verifyResult = await verifyChannelAuditChain(flags.channelId);
+      options.brokenSignatureSeqs = new Set(
+        verifyResult.output.breaks.map((b) => b.at_msg_seq),
+      );
+    }
     const report = computeAuditQuorum({
       messages,
       bodies_by_ref,

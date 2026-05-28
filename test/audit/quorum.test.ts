@@ -419,6 +419,122 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     expect(r.verdicts_considered).toBe(0);
     expect(r.ok).toBe(false);
   });
+
+  it("--require-signed counts only signed (wrapped) verdicts; excludes raw/unsigned", async () => {
+    const kp = await generateKeypair();
+    const messages = [
+      await signedVerdictMsg(kp.privateKey, "Alpha", {
+        lens_set_applied: ["RE"],
+      }),
+      verdictMsg("Bravo", { lens_set_applied: ["Architecture"] }), // raw → excluded
+      await signedVerdictMsg(kp.privateKey, "Delta", {
+        lens_set_applied: ["TA"],
+      }),
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: { repo: "claude-conductor", number: 200 },
+      options: { requireSigned: true },
+    });
+    expect(r.require_signed).toBe(true);
+    expect(r.unsigned_excluded).toBe(1); // Bravo's raw body
+    expect(r.distinct_auditors).toEqual(["Alpha", "Delta"]);
+    expect(r.verdicts_considered).toBe(2);
+  });
+
+  it("--require-signed excludes wrapped verdicts whose chain failed (brokenSignatureSeqs)", async () => {
+    const kp = await generateKeypair();
+    const messages = [
+      await signedVerdictMsg(kp.privateKey, "Alpha", {
+        lens_set_applied: ["RE"],
+      }), // idx 0
+      await signedVerdictMsg(kp.privateKey, "Bravo", {
+        lens_set_applied: ["Architecture"],
+      }), // idx 1 — marked broken
+      await signedVerdictMsg(kp.privateKey, "Delta", {
+        lens_set_applied: ["TA"],
+      }), // idx 2
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: { repo: "claude-conductor", number: 200 },
+      // Index 1 (Bravo) is the failed-chain entry verify.ts would report.
+      options: { requireSigned: true, brokenSignatureSeqs: new Set([1]) },
+    });
+    expect(r.invalid_signature_excluded).toBe(1);
+    expect(r.distinct_auditors).toEqual(["Alpha", "Delta"]);
+    expect(r.verdicts_considered).toBe(2);
+  });
+
+  it("default (no requireSigned) counts both signed + raw — back-compat", async () => {
+    const kp = await generateKeypair();
+    const messages = [
+      await signedVerdictMsg(kp.privateKey, "Alpha", {
+        lens_set_applied: ["RE"],
+      }),
+      verdictMsg("Bravo", { lens_set_applied: ["Architecture"] }),
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: { repo: "claude-conductor", number: 200 },
+    });
+    expect(r.require_signed).toBe(false);
+    expect(r.unsigned_excluded).toBe(0);
+    expect(r.verdicts_considered).toBe(2);
+  });
+});
+
+describe("computeAuditQuorum — --pr-author independence (OBS-B1)", () => {
+  const targetPr = { repo: "claude-conductor", number: 200 };
+
+  it("excludes verdicts authored by the PR author (even when addressed elsewhere)", () => {
+    const messages = [
+      // PR author audits their own PR but addresses the verdict to a third
+      // party (Reviewer) — evades the auditor===target_peer self-exclusion;
+      // caught by --pr-author. This is the OBS-B1 hole.
+      verdictMsg("Author", {
+        lens_set_applied: ["RE"],
+        target_peer: "Reviewer",
+      }),
+      verdictMsg("Bravo", {
+        lens_set_applied: ["Architecture"],
+        target_peer: "Reviewer",
+      }),
+      verdictMsg("Delta", {
+        lens_set_applied: ["TA"],
+        target_peer: "Reviewer",
+      }),
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: targetPr,
+      options: { prAuthor: "Author" },
+    });
+    expect(r.pr_author).toBe("Author");
+    expect(r.pr_author_audits_excluded).toBe(1);
+    expect(r.distinct_auditors).toEqual(["Bravo", "Delta"]);
+    expect(r.verdicts_considered).toBe(2);
+  });
+
+  it("no --pr-author → no pr-author exclusion (default)", () => {
+    const r = computeAuditQuorum({
+      messages: [
+        verdictMsg("Author", {
+          lens_set_applied: ["RE"],
+          target_peer: "Reviewer",
+        }),
+      ],
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: targetPr,
+    });
+    expect(r.pr_author).toBeNull();
+    expect(r.pr_author_audits_excluded).toBe(0);
+    expect(r.verdicts_considered).toBe(1);
+  });
 });
 
 describe("renderQuorumHuman", () => {

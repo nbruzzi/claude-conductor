@@ -38,14 +38,17 @@
  * into the cohort audit-loop-closure discipline instead. See the doc-fix
  * landed in the same PR.
  *
- * **Composition, not reimplementation:** counts shape-PARSEABLE verdicts
- * across BOTH wire-shapes via the SSOT {@link parseAuditVerdictBodyAnyVersion}
- * helper (raw v0.1/v0.2 + v0.3 DSSE-wrapped). Without wrapped-dispatch, signed
- * verdicts would be silently skipped → false quorum-NOT-met once the cohort
- * signs. SHAPE-only — does NOT verify the signature (a signed-but-tampered
- * verdict still counts here). A future opt-in `--require-signed` axis will
- * compose `audit/verify.ts` to count only crypto-VALID chain entries
- * (default off preserves back-compat with pre-v0.3 unsigned verdicts).
+ * **Composition, not reimplementation:** by default counts shape-PARSEABLE
+ * verdicts across BOTH wire-shapes via the SSOT
+ * {@link parseAuditVerdictBodyAnyVersion} helper (raw v0.1/v0.2 + v0.3
+ * DSSE-wrapped) — without wrapped-dispatch, signed verdicts would be silently
+ * skipped → false quorum-NOT-met once the cohort signs. The default is
+ * SHAPE-only (does NOT verify the signature; a signed-but-tampered verdict
+ * still counts). The opt-in {@link AuditQuorumOptions.requireSigned} axis
+ * composes `audit/verify.ts` — the I/O caller supplies the failed-chain
+ * `at_msg_seq` set as {@link AuditQuorumOptions.brokenSignatureSeqs} — so only
+ * crypto-VALID v0.3 verdicts count; default off preserves back-compat with
+ * pre-v0.3 unsigned verdicts.
  *
  * **Known boundaries** (cross-pair audit OBS, cohort cycle 2026-05-28):
  *
@@ -53,9 +56,9 @@
  *     exclusion drops `auditor_identity === target_peer`. This holds under
  *     the cohort convention that a verdict addresses the audited PR's
  *     author, but would NOT catch a PR-author auditing their own PR while
- *     addressing the verdict to a third party. Airtight independence needs
- *     the PR author as explicit input (deferred `--pr-author`, v2); low
- *     realistic risk under the current convention (Bravo OBS-B1).
+ *     addressing the verdict to a third party. The opt-in
+ *     {@link AuditQuorumOptions.prAuthor} (`--pr-author`) closes that hole by
+ *     also excluding `auditor_identity === prAuthor` (Bravo OBS-B1).
  *   - Lens-diversity is the UNION of `lens_set_applied` across counted
  *     verdicts — NOT required to be distributed across auditors. One
  *     auditor declaring [A,B,C] plus a second declaring [A] passes (3
@@ -64,15 +67,20 @@
  *   - Gates DECLARED diversity, not SUBSTANTIVE: `lens_set_applied` is
  *     auditor-self-declared, so this is a metadata gate (an over-declaring
  *     auditor is not caught here). Substance is backstopped by cohort-
- *     precedent + the audit-loop; crypto-validity is the orthogonal
- *     deferred `--require-signed` axis (Bravo OBS-B3).
+ *     precedent + the audit-loop; crypto-validity is the orthogonal opt-in
+ *     {@link AuditQuorumOptions.requireSigned} axis (Bravo OBS-B3).
  *
  * Pure functions modulo the caller-supplied message set (no I/O here; the
  * CLI does `readMessages` + body-ref hydration and passes them in, mirroring
  * `reciprocation/graph.ts` + `audits/cli.ts`).
  */
 
-import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
+import {
+  parseAuditVerdictBody,
+  parseAuditVerdictBodyAnyVersion,
+  parseAuditVerdictV0_3Wrapped,
+  type AuditVerdictBody,
+} from "../channels/audit-verdict.ts";
 import type { AuditClass, LensClass } from "../channels/audit-types.ts";
 import type { ChannelMessage } from "../channels/index.ts";
 
@@ -89,6 +97,32 @@ export type TargetPr = { repo: string; number: number };
 export type AuditQuorumOptions = {
   minLenses?: number;
   minAuditors?: number;
+  /**
+   * Opt-in crypto-validity filter. When true, ONLY v0.3 DSSE-wrapped verdicts
+   * whose signature chain VERIFIES count toward quorum — raw/unsigned
+   * (v0.1/v0.2) verdicts and signature/chain-broken ones are excluded. Default
+   * off preserves back-compat (counts any shape-parseable verdict via the SSOT
+   * helper). The I/O caller (CLI) supplies {@link brokenSignatureSeqs} from
+   * `audit/verify.ts`; this function stays pure (no crypto here).
+   */
+  requireSigned?: boolean;
+  /**
+   * Full-array message indices (verify.ts `at_msg_seq`) whose v0.3 signature
+   * chain FAILED — supplied by the CLI from
+   * `verifyChannelAuditChain(...).output.breaks`. Consulted only when
+   * {@link requireSigned}. Index basis MUST match this call's `messages`
+   * ordering; the CLI reads the same channel for both verify and quorum within
+   * one command, so the full-array indices align. Absent ⇒ no wrapped verdict
+   * is treated as broken (requireSigned still excludes raw/unsigned).
+   */
+  brokenSignatureSeqs?: ReadonlySet<number>;
+  /**
+   * The audited PR's author identity. When set, verdicts whose
+   * `auditor_identity` equals it are excluded as non-independent — closes
+   * OBS-B1 (a PR-author auditing their own PR while addressing the verdict to a
+   * third party evades the `auditor === target_peer` self-exclusion).
+   */
+  prAuthor?: string;
 };
 
 /**
@@ -108,6 +142,16 @@ export type AuditQuorumReport = {
   verdicts_considered: number;
   /** Count of verdicts dropped because auditor_identity === target_peer. */
   self_audits_excluded: number;
+  /** Echo of the requireSigned option — true iff the crypto-validity filter was engaged. */
+  require_signed: boolean;
+  /** Under requireSigned: count of raw/unsigned (pre-v0.3) verdicts excluded. 0 otherwise. */
+  unsigned_excluded: number;
+  /** Under requireSigned: count of v0.3 verdicts whose signature chain failed to verify. 0 otherwise. */
+  invalid_signature_excluded: number;
+  /** The PR author used for independence exclusion, or null when not supplied. */
+  pr_author: string | null;
+  /** Count of verdicts dropped because auditor_identity === pr_author (OBS-B1). */
+  pr_author_audits_excluded: number;
   min_lenses: number;
   min_auditors: number;
   /** True iff BOTH thresholds met. */
@@ -159,22 +203,54 @@ function resolveMessageBody(
 export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
   const minLenses = args.options?.minLenses ?? DEFAULT_MIN_LENSES;
   const minAuditors = args.options?.minAuditors ?? DEFAULT_MIN_AUDITORS;
+  const requireSigned = args.options?.requireSigned ?? false;
+  const brokenSignatureSeqs = args.options?.brokenSignatureSeqs;
+  const prAuthor = args.options?.prAuthor?.trim();
+  const prAuthorActive = prAuthor !== undefined && prAuthor.length > 0;
 
   const auditors = new Set<string>();
   const lenses = new Set<LensClass>();
   const auditClasses = new Set<AuditClass>();
   let verdictsConsidered = 0;
   let selfAuditsExcluded = 0;
+  let unsignedExcluded = 0;
+  let invalidSignatureExcluded = 0;
+  let prAuthorAuditsExcluded = 0;
 
+  // msgSeq is the index into the FULL message array — it MUST share verify.ts's
+  // `at_msg_seq` basis (both iterate the same readMessages output) so
+  // brokenSignatureSeqs lookups line up under requireSigned.
+  let msgSeq = -1;
   for (const m of args.messages) {
+    msgSeq += 1;
     if (m.kind !== "audit-verdict") continue;
     if (m.identity === undefined || m.identity.length === 0) continue;
     const bodyRaw = resolveMessageBody(m, args.bodies_by_ref);
     if (bodyRaw === null) continue;
-    // Dispatch both wire-shapes (raw v0.1/v0.2 + v0.3 DSSE-wrapped) via the
-    // SSOT helper so signed verdicts are counted. SHAPE-only; --require-signed
-    // (future) adds the crypto-verification filter.
-    const body = parseAuditVerdictBodyAnyVersion(bodyRaw);
+
+    let body: AuditVerdictBody | null;
+    if (requireSigned) {
+      // Crypto-validity filter: count ONLY v0.3 DSSE-wrapped verdicts whose
+      // chain verifies. A raw (unsigned) verdict is excluded; a wrapped verdict
+      // whose signature/chain broke (per verify.ts breaks[] → brokenSignatureSeqs)
+      // is excluded. Keeps this function pure — the CLI runs the crypto walk.
+      const wrapped = parseAuditVerdictV0_3Wrapped(bodyRaw);
+      if (wrapped === null) {
+        // Not DSSE-wrapped. Count an unsigned-exclusion only for a real
+        // (raw-parseable) verdict, not arbitrary non-verdict garbage.
+        if (parseAuditVerdictBody(bodyRaw) !== null) unsignedExcluded += 1;
+        continue;
+      }
+      if (brokenSignatureSeqs?.has(msgSeq)) {
+        invalidSignatureExcluded += 1;
+        continue;
+      }
+      body = wrapped.body;
+    } else {
+      // Default: count any shape-parseable verdict (both wire-shapes) via the
+      // SSOT helper — signature validity is the orthogonal requireSigned axis.
+      body = parseAuditVerdictBodyAnyVersion(bodyRaw);
+    }
     if (body === null) continue;
     if (body.target_pr.number !== args.target_pr.number) continue;
     if (!repoMatches(body.target_pr.repo, args.target_pr.repo)) continue;
@@ -186,6 +262,13 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
     const identity = m.identity.trim();
     if (identity === body.target_peer) {
       selfAuditsExcluded += 1;
+      continue;
+    }
+    // Independence (OBS-B1): a verdict authored by the PR's own author is not
+    // an independent perspective even when addressed to a third party. Applied
+    // only when the caller supplies the PR author via --pr-author.
+    if (prAuthorActive && identity === prAuthor) {
+      prAuthorAuditsExcluded += 1;
       continue;
     }
 
@@ -218,6 +301,11 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
     distinct_audit_classes: distinctAuditClasses,
     verdicts_considered: verdictsConsidered,
     self_audits_excluded: selfAuditsExcluded,
+    require_signed: requireSigned,
+    unsigned_excluded: unsignedExcluded,
+    invalid_signature_excluded: invalidSignatureExcluded,
+    pr_author: prAuthorActive ? prAuthor : null,
+    pr_author_audits_excluded: prAuthorAuditsExcluded,
     min_lenses: minLenses,
     min_auditors: minAuditors,
     ok: shortfalls.length === 0,
@@ -244,8 +332,27 @@ export function renderQuorumHuman(report: AuditQuorumReport): string {
     `distinct_audit_classes: [${report.distinct_audit_classes.join(", ")}]`,
   );
   lines.push(`verdicts_considered: ${report.verdicts_considered}`);
+  if (report.require_signed) {
+    lines.push(`require_signed: true`);
+    if (report.unsigned_excluded > 0) {
+      lines.push(`unsigned_excluded: ${report.unsigned_excluded}`);
+    }
+    if (report.invalid_signature_excluded > 0) {
+      lines.push(
+        `invalid_signature_excluded: ${report.invalid_signature_excluded}`,
+      );
+    }
+  }
   if (report.self_audits_excluded > 0) {
     lines.push(`self_audits_excluded: ${report.self_audits_excluded}`);
+  }
+  if (report.pr_author !== null) {
+    lines.push(`pr_author: ${report.pr_author}`);
+    if (report.pr_author_audits_excluded > 0) {
+      lines.push(
+        `pr_author_audits_excluded: ${report.pr_author_audits_excluded}`,
+      );
+    }
   }
   for (const s of report.shortfalls) lines.push(`shortfall: ${s}`);
   return lines.join("\n") + "\n";
