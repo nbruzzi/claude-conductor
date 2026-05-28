@@ -39,6 +39,8 @@ import {
   type AuditVerdictBody,
 } from "../../src/channels/audit-verdict.ts";
 import { computePayloadHash } from "../../src/channels/audit-signature-chain.ts";
+import { computeAuditQuorum } from "../../src/audit/quorum.ts";
+import { readMessages, readBodyFile } from "../../src/channels/index.ts";
 
 function unwrap<T>(value: T | null | undefined, label = "value"): T {
   if (value === null || value === undefined) {
@@ -660,5 +662,91 @@ describe("verifyChannelAuditChain — Section 11: S2-B silent-success-masking ga
     expect(JSON.stringify(intactOnly.output)).not.toBe(
       JSON.stringify(intactPlusUnparseable.output),
     );
+  });
+});
+
+describe("verify → quorum --require-signed composition (at_msg_seq alignment)", () => {
+  // Locks the cross-file invariant the pure quorum.test.ts bypasses (it hand-
+  // supplies brokenSignatureSeqs): verify.ts's at_msg_seq (0-based FULL-array
+  // index) is the SAME basis computeAuditQuorum iterates, so the verdict verify
+  // reports broken is the one quorum excludes. A leading non-verdict message
+  // shifts the verdicts to non-zero indices → exercises OFFSET alignment.
+  // Folded in per Bravo cross-pair + Delta inside-pair on PR #169.
+  it("excludes the chain-broken v0.3 verdict verify reports; counts the valid one", async () => {
+    const bootstrap = await runBootstrap({
+      identity: "charlie",
+      force: false,
+      cohortDir: cohortDirAbs,
+    });
+    const priv = unwrap(await importPrivateKey(bootstrap.secretKeyPath));
+
+    // index 0: non-verdict → shifts verdicts to non-zero indices (offset test).
+    appendChannelMessage({
+      ts: "2026-05-26T18:00:00.000Z",
+      from: "s0",
+      kind: "note",
+      body: "context",
+    });
+    // index 1: valid bootstrap verdict (Bravo), prev=null = first v0.3 entry.
+    const env1 = await wrapAuditVerdictBody(
+      { ...CANONICAL_BODY, target_peer: "Alpha", lens_set_applied: ["RE"] },
+      priv,
+      "charlie",
+    );
+    appendChannelMessage({
+      ts: "2026-05-26T18:01:00.000Z",
+      from: "s-bravo",
+      kind: "audit-verdict",
+      identity: "Bravo",
+      body: env1,
+    });
+    // index 2: 2nd v0.3 verdict (Echo), prev=null → chain-discontinuity →
+    // verify reports a break at at_msg_seq=2.
+    const env2 = await wrapAuditVerdictBody(
+      {
+        ...CANONICAL_BODY,
+        target_peer: "Alpha",
+        lens_set_applied: ["Architecture"],
+      },
+      priv,
+      "charlie",
+    );
+    appendChannelMessage({
+      ts: "2026-05-26T18:02:00.000Z",
+      from: "s-echo",
+      kind: "audit-verdict",
+      identity: "Echo",
+      body: env2,
+    });
+
+    // Compose exactly as the CLI does: real verify → breaks → quorum.
+    const verifyResult = await verifyChannelAuditChain(channelId, {
+      pubkeyDir: cohortDirAbs,
+    });
+    expect(verifyResult.output.breaks.length).toBeGreaterThan(0);
+    const brokenSignatureSeqs = new Set(
+      verifyResult.output.breaks.map((b) => b.at_msg_seq),
+    );
+    // The break is at the OFFSET index (2), proving the full-array index basis.
+    expect(brokenSignatureSeqs.has(2)).toBe(true);
+
+    const messages = readMessages(channelId);
+    const bodies_by_ref = new Map<string, string>();
+    for (const m of messages) {
+      if (m.body !== undefined) continue;
+      if (m.body_ref === undefined) continue;
+      const raw = readBodyFile(channelId, m.body_ref);
+      if (raw !== null) bodies_by_ref.set(m.body_ref, raw);
+    }
+    const report = computeAuditQuorum({
+      messages,
+      bodies_by_ref,
+      target_pr: { repo: "conductor", number: 99 },
+      options: { requireSigned: true, brokenSignatureSeqs },
+    });
+    // Bravo (index 1) counts; Echo (index 2) excluded via verify's break index.
+    expect(report.verdicts_considered).toBe(1);
+    expect(report.distinct_auditors).toEqual(["Bravo"]);
+    expect(report.invalid_signature_excluded).toBe(1);
   });
 });
