@@ -123,4 +123,51 @@ describe("scripts/check-coverage-floor.sh", () => {
     expect(exitCode).toBe(2);
     expect(stderr).toContain("unknown argument");
   });
+
+  // OBS-B2: pin the parser to the VERBATIM layout bun's real `--coverage`
+  // reporter emits. The fixtures above synthesize the table shape, so if a
+  // future bun version changes the text reporter (column order, header,
+  // separators) those synthetic tests still pass while the real CI parse
+  // silently breaks. This runs bun's real coverage reporter on a throwaway
+  // fully-covered project and asserts the script parses that output — so
+  // reporter drift fails HERE, at test-time, not as a CI surprise.
+  it("OBS-B2: parses the verbatim layout bun's real --coverage reporter emits", () => {
+    const proj = mkdtempSync(join(tmpdir(), "ccf-real-"));
+    try {
+      writeFileSync(
+        join(proj, "sut.ts"),
+        "export const add = (a: number, b: number): number => a + b;\n",
+      );
+      writeFileSync(
+        join(proj, "sut.test.ts"),
+        [
+          'import { expect, it } from "bun:test";',
+          'import { add } from "./sut.ts";',
+          'it("adds", () => {',
+          "  expect(add(1, 2)).toBe(3);",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const real = Bun.spawnSync(["bun", "test", "--coverage"], { cwd: proj });
+      const realOut =
+        new TextDecoder().decode(real.stdout) +
+        new TextDecoder().decode(real.stderr);
+
+      // The aggregate row the script keys on (`^All files`, awk -F'|' field 3)
+      // must be present in bun's real output, in the pipe-delimited shape.
+      expect(realOut).toMatch(/^All files\b.*\|.*\|.*\|/m);
+
+      // And the script must actually parse that real output via --from-file.
+      // The throwaway project is fully covered, so it clears any sane floor.
+      const covPath = join(proj, "real-coverage.txt");
+      writeFileSync(covPath, realOut);
+      const { exitCode, stdout } = run(["--from-file", covPath]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("clean");
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
 });

@@ -36,10 +36,12 @@
 # Error-code convention: <DETECTOR-PREFIX>-<NNN>; see
 # docs/conventions/error-code-scheme.md.
 #
-# NOTE (tradeoff): this re-runs the test suite with coverage instrumentation
-# (a distinct gate; it does not reuse the "Test" step's run). It adds roughly
-# the suite runtime to CI, which stays within the workflow's 10-minute budget.
-# A future optimization could fold the floor check into the Test gate.
+# NOTE (CI fold): in CI the "Test" step runs `bun test --coverage` once and
+# tees the output; this gate then reads it via --from-file (see test.yml), so
+# the suite runs once per CI job, not twice. Invoked WITHOUT --from-file (the
+# default — e.g. local/non-CI runs), it re-runs the suite with coverage
+# instrumentation itself: self-contained and still correct, just not reusing
+# a prior run.
 #
 # Bash 3.2+ portable.
 
