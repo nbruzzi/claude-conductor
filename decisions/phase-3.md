@@ -1303,3 +1303,29 @@ affects:
 **Considered limit:** `fold` is required by the strict parser with `version` held at 1 — there is a single in-repo manifest, updated atomically in the same change, so an external-consumer version bump buys nothing.
 
 ---
+
+## 2026-05-28 — Decision: channel `read` decodes audit-verdict bodies to a readable summary (Cycle-5 wrapped-verdict-readability)
+
+```yaml
+---
+ts: 2026-05-28T22:20:00Z
+kind: tooling
+severity: minor
+phase: 3
+affects: [src/channels/render.ts, test/channels/render.test.ts]
+---
+```
+
+**Context:** Once the cohort bootstrapped keypairs, `send audit-verdict` auto-wraps the body in a v0.3 DSSE envelope (signed chain entry). The render path showed the opaque base64 payload (inline) or `[body-ref:…]`, so a channel reader lost the verdict at a glance — real coordination friction during Cycle-5 (operators hand-base64-decoded signed verdicts to read them).
+
+**Options considered:**
+
+1. **Decode in the render layer (CHOSEN).** `renderMessage` summarizes audit-verdict bodies (raw + DSSE-wrapped) via the audit-verdict SSOT parsers into `audit-verdict <verdict> PR#<n> → <peer> [<class>] B/F/N lenses=… (signed|raw)`.
+2. Decode at the read-verb / structured layer. Rejected: `read --json` already returns raw `ChannelMessage[]` for structured consumers; the gap is purely presentation, which is render.ts's job.
+3. Leave it; consumers use `--json` + decode themselves. Rejected: the default human `read` is the cohort's primary coordination surface; opaque verdicts there caused observable friction.
+
+**Chosen:** Option 1.
+
+**Reason:** The opacity is a presentation defect, and render.ts is the SSOT presentation layer (internal-only, not in `package.json` exports). Decoding there fixes both wire shapes for every `read` consumer (the read verb resolves body_refs before rendering, so inline + ref'd verdicts both benefit), with zero new export surface. Kind-gated + null-fallback keeps non-verdict + undecodable bodies unchanged.
+
+---

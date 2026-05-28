@@ -71,6 +71,10 @@
  */
 
 import type { ChannelKind, ChannelMessage } from "./index.ts";
+import {
+  parseAuditVerdictBody,
+  parseAuditVerdictV0_3Wrapped,
+} from "./audit-verdict.ts";
 
 export type RenderMessageOptions = {
   /**
@@ -118,7 +122,7 @@ export function renderMessage(
       `[render] message at ${msg.ts} from ${msg.from} has both body AND body_ref (schema violation; rendering inline body, body_ref ignored)`,
     );
     // Salvage: render the inline body since it's the cheaper-to-display path.
-    return `${tsPrefix}${speaker}: ${softWrapBody(msg.body ?? "")}`;
+    return `${tsPrefix}${speaker}: ${renderBody(msg.kind, msg.body ?? "")}`;
   }
 
   if (hasBodyRef) {
@@ -126,7 +130,7 @@ export function renderMessage(
   }
 
   // hasBody === true at this point.
-  return `${tsPrefix}${speaker}: ${softWrapBody(msg.body ?? "")}`;
+  return `${tsPrefix}${speaker}: ${renderBody(msg.kind, msg.body ?? "")}`;
 }
 
 /**
@@ -137,6 +141,46 @@ export function renderMessage(
 function softWrapBody(body: string): string {
   if (!body.includes("\n")) return body;
   return body.split("\n").join("\n  ");
+}
+
+/**
+ * Render a message body for display, decoding `audit-verdict` bodies into a
+ * readable one-line summary. Once a cohort keypair exists, `send
+ * audit-verdict` auto-wraps the body in a DSSE envelope (a v0.3 signed chain
+ * entry), so a plain render shows an opaque base64 payload and the channel
+ * reader loses the verdict at a glance. This decodes BOTH wire shapes (raw
+ * v0.1/v0.2 + v0.3 DSSE-wrapped) via the audit-verdict SSOT parsers. Non-
+ * verdict kinds + undecodable bodies fall through to plain soft-wrap.
+ */
+function renderBody(kind: ChannelKind, body: string): string {
+  if (kind === "audit-verdict") {
+    const summary = renderAuditVerdictSummary(body);
+    if (summary !== null) return summary;
+  }
+  return softWrapBody(body);
+}
+
+/**
+ * One-line readable summary of an audit-verdict body (raw OR DSSE-wrapped),
+ * or null if `body` does not parse as a verdict. Keys on the inner-body
+ * fields; appends `(signed)` for a v0.3 DSSE envelope, `(raw)` otherwise.
+ */
+function renderAuditVerdictSummary(body: string): string | null {
+  // Single-parse: parseAuditVerdictV0_3Wrapped does the wrapped-envelope work
+  // once; reuse its result for both the inner body and the `signed` flag, then
+  // fall back to the raw parser. Avoids the double-parse (composing
+  // parseAuditVerdictBodyAnyVersion + a second wrapped-parse) Bravo/Charlie
+  // flagged on #168.
+  const wrapped = parseAuditVerdictV0_3Wrapped(body);
+  const v = wrapped !== null ? wrapped.body : parseAuditVerdictBody(body);
+  if (v === null) return null;
+  const c = v.counts;
+  const signed = wrapped !== null;
+  return (
+    `audit-verdict ${v.verdict} PR#${v.target_pr.number} → ${v.target_peer} ` +
+    `[${v.audit_class}] B${c.blocker}/F${c.fold}/N${c.nit} ` +
+    `lenses=${v.lens_set_applied.join("+")} ${signed ? "(signed)" : "(raw)"}`
+  );
 }
 
 const warnedKeys = new Set<string>();
