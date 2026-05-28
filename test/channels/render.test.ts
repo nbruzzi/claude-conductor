@@ -15,6 +15,11 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 
 import type { ChannelMessage } from "../../src/channels/index.ts";
 import { INTERNAL, renderMessage } from "../../src/channels/render.ts";
+import {
+  wrapAuditVerdictBody,
+  type AuditVerdictBody,
+} from "../../src/channels/audit-verdict.ts";
+import { generateKeypair } from "../../src/channels/key-surface.ts";
 
 const TS = "2026-04-29T12:00:00.000Z";
 const FROM = "00000000-0000-4000-8000-000000000001";
@@ -309,5 +314,85 @@ describe("renderMessage — warn-once dedup", () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+});
+
+const SAMPLE_VERDICT: AuditVerdictBody = {
+  kind_version: 1,
+  target_pr: { repo: "claude-conductor", number: 165 },
+  target_peer: "Charlie",
+  lens_set_applied: ["Contract", "Architecture"],
+  audit_class: "cross-pair-shadow",
+  audit_axes: ["depth"],
+  verdict: "SHIP-CLEAN",
+  counts: { blocker: 0, fold: 0, nit: 0 },
+  three_option_ask: {
+    a_ratify: "ship",
+    b_fold_if_applicable: null,
+    c_reframe_if_applicable: null,
+  },
+  findings: [],
+};
+
+describe("renderMessage — audit-verdict readability", () => {
+  it("renders a readable summary for a RAW audit-verdict body (not raw JSON)", () => {
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "audit-verdict",
+      identity: "Alpha",
+      role: "pen",
+      body: JSON.stringify(SAMPLE_VERDICT),
+    };
+    const out = renderMessage(msg);
+    expect(out).toContain("audit-verdict SHIP-CLEAN PR#165 → Charlie");
+    expect(out).toContain("B0/F0/N0");
+    expect(out).toContain("lenses=Contract+Architecture");
+    expect(out).toContain("(raw)");
+    expect(out).not.toContain("kind_version");
+  });
+
+  it("decodes a DSSE-wrapped (signed) verdict into the same readable summary", async () => {
+    const kp = await generateKeypair();
+    const wrapped = await wrapAuditVerdictBody(
+      SAMPLE_VERDICT,
+      kp.privateKey,
+      "alpha",
+    );
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "audit-verdict",
+      identity: "Alpha",
+      role: "pen",
+      body: wrapped,
+    };
+    const out = renderMessage(msg);
+    expect(out).toContain("audit-verdict SHIP-CLEAN PR#165 → Charlie");
+    expect(out).toContain("(signed)");
+    expect(out).not.toContain("payloadType");
+  });
+
+  it("falls back to the plain body for an undecodable audit-verdict body", () => {
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "audit-verdict",
+      identity: "Alpha",
+      body: "not a verdict at all",
+    };
+    expect(renderMessage(msg)).toBe(`[${TS}] Alpha: not a verdict at all`);
+  });
+
+  it("does NOT summary-decode a verdict body sent under a non-audit-verdict kind", () => {
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "status",
+      identity: "Alpha",
+      body: JSON.stringify(SAMPLE_VERDICT),
+    };
+    // kind gates the decode → rendered as the plain body (raw JSON visible).
+    expect(renderMessage(msg)).toContain("kind_version");
   });
 });
