@@ -16,7 +16,19 @@
 
 export type VerifyManifest = {
   version: 1;
-  gates: readonly { name: string; local_cmd: string; ci_step_name: string }[];
+  gates: readonly {
+    name: string;
+    local_cmd: string;
+    ci_step_name: string;
+    /**
+     * Whether this gate runs in the local `verify:fold` fast chain.
+     * `false` for `test` (run separately by `verify` after the fold) and
+     * CI-only gates such as `check-coverage-floor`. The SSOT for fold
+     * membership — `verify:fold` consumes it via `selectFoldGates` so the
+     * package.json chain can't drift from the manifest.
+     */
+    fold: boolean;
+  }[];
   ci_only_steps: readonly {
     name: string;
     ci_step_name: string;
@@ -65,6 +77,7 @@ export function parseVerifyManifest(raw: string): VerifyManifest | null {
       go["ci_step_name"].length === 0
     )
       return null;
+    if (typeof go["fold"] !== "boolean") return null;
   }
   const ciOnly = obj["ci_only_steps"];
   if (!Array.isArray(ciOnly)) return null;
@@ -92,6 +105,21 @@ export function parseVerifyManifest(raw: string): VerifyManifest | null {
       return null;
   }
   return parsed as VerifyManifest;
+}
+
+/**
+ * Select the gates that make up the local `verify:fold` fast chain
+ * (gates with `fold: true`), preserving manifest declaration order.
+ *
+ * `verify:fold` consumes this selector (via the verify CLI `--fold` mode)
+ * instead of an inline package.json `&&` chain, so the fold gate set can't
+ * silently drift from the manifest SSOT — the de-brittle analogue of the
+ * manifest↔CI drift detector for an enumeration that CAN be eliminated.
+ */
+export function selectFoldGates(
+  manifest: VerifyManifest,
+): readonly VerifyManifest["gates"][number][] {
+  return manifest.gates.filter((g) => g.fold);
 }
 
 /**

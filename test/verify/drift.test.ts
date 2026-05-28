@@ -24,11 +24,12 @@ import {
   detectDrift,
   extractCiStepNames,
   parseVerifyManifest,
+  selectFoldGates,
   type VerifyManifest,
 } from "../../src/verify/drift.ts";
 
 function makeManifest(opts: {
-  gates?: readonly { name: string; ci_step_name: string }[];
+  gates?: readonly { name: string; ci_step_name: string; fold?: boolean }[];
   ci_only?: readonly { name: string; ci_step_name: string }[];
 }): VerifyManifest {
   return {
@@ -37,6 +38,7 @@ function makeManifest(opts: {
       name: g.name,
       local_cmd: `bun run ${g.name}`,
       ci_step_name: g.ci_step_name,
+      fold: g.fold ?? true,
     })),
     ci_only_steps: (opts.ci_only ?? []).map((s) => ({
       name: s.name,
@@ -140,13 +142,16 @@ describe("parseVerifyManifest", () => {
   it("accepts a well-formed manifest", () => {
     const raw = JSON.stringify({
       version: 1,
-      gates: [{ name: "x", local_cmd: "bun run x", ci_step_name: "X" }],
+      gates: [
+        { name: "x", local_cmd: "bun run x", ci_step_name: "X", fold: true },
+      ],
       ci_only_steps: [],
       local_only_steps: [],
     });
     const parsed = parseVerifyManifest(raw);
     if (parsed === null) throw new Error("expected non-null");
     expect(parsed.gates).toHaveLength(1);
+    expect(parsed.gates[0]?.fold).toBe(true);
   });
 
   it("rejects version other than 1", () => {
@@ -171,7 +176,29 @@ describe("parseVerifyManifest", () => {
   it("rejects malformed gate entry", () => {
     const raw = JSON.stringify({
       version: 1,
-      gates: [{ name: "x", local_cmd: "", ci_step_name: "X" }],
+      gates: [{ name: "x", local_cmd: "", ci_step_name: "X", fold: true }],
+      ci_only_steps: [],
+      local_only_steps: [],
+    });
+    expect(parseVerifyManifest(raw)).toBeNull();
+  });
+
+  it("rejects a gate missing the fold field", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      gates: [{ name: "x", local_cmd: "bun run x", ci_step_name: "X" }],
+      ci_only_steps: [],
+      local_only_steps: [],
+    });
+    expect(parseVerifyManifest(raw)).toBeNull();
+  });
+
+  it("rejects a non-boolean fold field", () => {
+    const raw = JSON.stringify({
+      version: 1,
+      gates: [
+        { name: "x", local_cmd: "bun run x", ci_step_name: "X", fold: "yes" },
+      ],
       ci_only_steps: [],
       local_only_steps: [],
     });
@@ -180,6 +207,61 @@ describe("parseVerifyManifest", () => {
 
   it("rejects non-JSON input", () => {
     expect(parseVerifyManifest("not json")).toBeNull();
+  });
+});
+
+describe("selectFoldGates", () => {
+  it("returns only fold:true gates, preserving manifest order", () => {
+    const manifest = makeManifest({
+      gates: [
+        { name: "typecheck", ci_step_name: "Typecheck", fold: true },
+        { name: "test", ci_step_name: "Test", fold: false },
+        { name: "lint", ci_step_name: "Lint", fold: true },
+        {
+          name: "check-coverage-floor",
+          ci_step_name: "Check coverage floor",
+          fold: false,
+        },
+      ],
+    });
+    expect(selectFoldGates(manifest).map((g) => g.name)).toEqual([
+      "typecheck",
+      "lint",
+    ]);
+  });
+
+  it("returns empty when no gate is in the fold", () => {
+    const manifest = makeManifest({
+      gates: [{ name: "test", ci_step_name: "Test", fold: false }],
+    });
+    expect(selectFoldGates(manifest)).toEqual([]);
+  });
+
+  it("real repo manifest: fold set matches the local verify:fold chain", () => {
+    const repoRoot = resolvePath(import.meta.dir, "../..");
+    const manifestRaw = readFileSync(
+      resolvePath(repoRoot, "verify-manifest.json"),
+      "utf8",
+    );
+    const manifest = parseVerifyManifest(manifestRaw);
+    if (manifest === null) throw new Error("real manifest failed to parse");
+    const foldNames = selectFoldGates(manifest).map((g) => g.name);
+    // The 8 local-fold gates. `test` (run separately by `verify`) and
+    // `check-coverage-floor` (CI-only) are deliberately excluded. Adding a
+    // 9th fold gate must consciously update this pin — that is the
+    // anti-drift property.
+    expect(foldNames).toEqual([
+      "typecheck",
+      "format",
+      "lint",
+      "check-generic-paths",
+      "check-import-extensions",
+      "check-dep-rationale",
+      "check-spdx-headers",
+      "check-decision-log",
+    ]);
+    expect(foldNames).not.toContain("test");
+    expect(foldNames).not.toContain("check-coverage-floor");
   });
 });
 

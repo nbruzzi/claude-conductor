@@ -4,52 +4,62 @@
     {
       "name": "typecheck",
       "local_cmd": "bun run typecheck",
-      "ci_step_name": "Typecheck"
+      "ci_step_name": "Typecheck",
+      "fold": true
     },
     {
       "name": "format",
       "local_cmd": "bun run format:check",
-      "ci_step_name": "Format"
+      "ci_step_name": "Format",
+      "fold": true
     },
     {
       "name": "lint",
       "local_cmd": "bun run lint",
-      "ci_step_name": "Lint"
+      "ci_step_name": "Lint",
+      "fold": true
     },
     {
       "name": "check-generic-paths",
       "local_cmd": "bun run check-generic-paths",
-      "ci_step_name": "Check generic paths"
+      "ci_step_name": "Check generic paths",
+      "fold": true
     },
     {
       "name": "check-import-extensions",
       "local_cmd": "bun run check-import-extensions",
-      "ci_step_name": "Check import extensions"
+      "ci_step_name": "Check import extensions",
+      "fold": true
     },
     {
       "name": "check-dep-rationale",
       "local_cmd": "bun run check-dep-rationale",
-      "ci_step_name": "Check dep rationale"
+      "ci_step_name": "Check dep rationale",
+      "fold": true
     },
     {
       "name": "check-spdx-headers",
       "local_cmd": "bun run check-spdx-headers",
-      "ci_step_name": "Check SPDX headers"
+      "ci_step_name": "Check SPDX headers",
+      "fold": true
     },
     {
       "name": "check-decision-log",
       "local_cmd": "bun run check-decision-log",
-      "ci_step_name": "Check decision log"
+      "ci_step_name": "Check decision log",
+      "fold": true
     },
     {
       "name": "test",
       "local_cmd": "bun test",
-      "ci_step_name": "Test"
+      "ci_step_name": "Test",
+      "fold": false
     },
     {
       "name": "check-coverage-floor",
       "local_cmd": "bun run check-coverage-floor",
-      "ci_step_name": "Check coverage floor"
+      "ci_step_name": "Check coverage floor",
+      "fold": false
     }
   ],
   "ci_only_steps": [
