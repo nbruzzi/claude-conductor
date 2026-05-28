@@ -45,6 +45,26 @@
  * only crypto-valid chain entries (deferred — back-compat with pre-v0.3
  * unsigned verdicts + YAGNI for v1).
  *
+ * **Known boundaries** (cross-pair audit OBS, cohort cycle 2026-05-28):
+ *
+ *   - Independence is PROXIED via the verdict addressee: self-audit
+ *     exclusion drops `auditor_identity === target_peer`. This holds under
+ *     the cohort convention that a verdict addresses the audited PR's
+ *     author, but would NOT catch a PR-author auditing their own PR while
+ *     addressing the verdict to a third party. Airtight independence needs
+ *     the PR author as explicit input (deferred `--pr-author`, v2); low
+ *     realistic risk under the current convention (Bravo OBS-B1).
+ *   - Lens-diversity is the UNION of `lens_set_applied` across counted
+ *     verdicts — NOT required to be distributed across auditors. One
+ *     auditor declaring [A,B,C] plus a second declaring [A] passes (3
+ *     lenses + 2 auditors). Deliberate: lens-diversity is PRIMARY,
+ *     auditor count is the independence FLOOR (Bravo OBS-B2).
+ *   - Gates DECLARED diversity, not SUBSTANTIVE: `lens_set_applied` is
+ *     auditor-self-declared, so this is a metadata gate (an over-declaring
+ *     auditor is not caught here). Substance is backstopped by cohort-
+ *     precedent + the audit-loop; crypto-validity is the orthogonal
+ *     deferred `--require-signed` axis (Bravo OBS-B3).
+ *
  * Pure functions modulo the caller-supplied message set (no I/O here; the
  * CLI does `readMessages` + body-ref hydration and passes them in, mirroring
  * `reciprocation/graph.ts` + `audits/cli.ts`).
@@ -156,13 +176,16 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
 
     // Self-audit: the auditor is the verdict's own addressee (the PR's
     // audit-ask author). Not an independent perspective — exclude.
-    if (m.identity === body.target_peer) {
+    // `target_peer` is parser-trimmed; trim identity too so a whitespace-
+    // laden identity can't evade exclusion (Delta NIT hardening).
+    const identity = m.identity.trim();
+    if (identity === body.target_peer) {
       selfAuditsExcluded += 1;
       continue;
     }
 
     verdictsConsidered += 1;
-    auditors.add(m.identity);
+    auditors.add(identity);
     for (const lens of body.lens_set_applied) lenses.add(lens);
     auditClasses.add(body.audit_class);
   }
