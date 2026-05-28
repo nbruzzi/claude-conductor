@@ -47,5 +47,8 @@ jobs:
       - name: Check import extensions
         run: bun run check-import-extensions
 
+      - name: Check SPDX headers
+        run: bun run check-spdx-headers
+
       - name: Test
         run: bun test

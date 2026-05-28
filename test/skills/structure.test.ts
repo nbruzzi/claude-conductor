@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 nbruzzi
+
 /**
  * Plugin skill-content structural test slice (L:503).
  *
