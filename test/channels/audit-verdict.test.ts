@@ -30,6 +30,7 @@ import { describe, expect, it } from "bun:test";
 
 import {
   parseAuditVerdictBody,
+  parseAuditVerdictBodyAnyVersion,
   parseAuditVerdictV0_3Wrapped,
   wrapAuditVerdictBody,
   type AuditVerdictBody,
@@ -1196,5 +1197,49 @@ describe("Section 15: lineage field extension (PR-A2)", () => {
     expect(env.payloadType).toBe(AUDIT_VERDICT_PAYLOAD_TYPE);
     // encodePayload is part of the wrap path; reference it to keep imports tidy
     expect(encodePayload).toBeDefined();
+  });
+});
+
+describe("parseAuditVerdictBodyAnyVersion — wire-shape SSOT dispatch", () => {
+  it("returns the inner body for a v0.3 DSSE-wrapped (signed) body", async () => {
+    const kp = await generateTestKeypair();
+    const wrapped = await wrapAuditVerdictBody(
+      CANONICAL_AUDIT_VERDICT_BODY,
+      kp.privateKey,
+      "charlie",
+    );
+    const body = parseAuditVerdictBodyAnyVersion(wrapped);
+    expect(body).not.toBeNull();
+    expect(body?.verdict).toBe("SHIP-WITH-FOLDS");
+    expect(body?.target_peer).toBe("Alpha");
+    expect(body?.lens_set_applied).toEqual(["RE", "Architecture"]);
+  });
+
+  it("returns the body for a raw v0.1/v0.2 body (fallback path)", () => {
+    const body = parseAuditVerdictBodyAnyVersion(
+      JSON.stringify(SHIP_CLEAN_BODY),
+    );
+    expect(body).not.toBeNull();
+    expect(body?.verdict).toBe("SHIP-CLEAN");
+    expect(body?.findings).toEqual([]);
+  });
+
+  it("returns null on non-JSON, empty-object, and mis-versioned bodies", () => {
+    expect(parseAuditVerdictBodyAnyVersion("not json at all")).toBeNull();
+    expect(parseAuditVerdictBodyAnyVersion("{}")).toBeNull();
+    expect(
+      parseAuditVerdictBodyAnyVersion(JSON.stringify({ kind_version: 2 })),
+    ).toBeNull();
+  });
+
+  it("returns null for a DSSE envelope of a non-audit-verdict payloadType", () => {
+    // Wrong payloadType → parseAuditVerdictV0_3Wrapped returns null → fallback
+    // raw-parse also null (an envelope JSON is not a raw verdict body).
+    const foreign = JSON.stringify({
+      payloadType: "application/vnd.not-audit-verdict+json",
+      payload: encodePayload(canonicalJson(SHIP_CLEAN_BODY)),
+      signatures: [{ keyid: "x", sig: "AA==" }],
+    });
+    expect(parseAuditVerdictBodyAnyVersion(foreign)).toBeNull();
   });
 });

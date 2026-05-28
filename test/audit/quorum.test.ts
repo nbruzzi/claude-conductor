@@ -30,7 +30,11 @@ import {
   DEFAULT_MIN_LENSES,
   DEFAULT_MIN_AUDITORS,
 } from "../../src/audit/quorum.ts";
-import type { AuditVerdictBody } from "../../src/channels/audit-verdict.ts";
+import {
+  wrapAuditVerdictBody,
+  type AuditVerdictBody,
+} from "../../src/channels/audit-verdict.ts";
+import { generateKeypair } from "../../src/channels/key-surface.ts";
 import type { ChannelMessage } from "../../src/channels/index.ts";
 
 const EMPTY_BODIES: ReadonlyMap<string, string> = new Map();
@@ -308,6 +312,110 @@ describe("computeAuditQuorum — degenerate input", () => {
       bodies_by_ref: EMPTY_BODIES,
       target_pr: { repo: "claude-conductor", number: 200 },
     });
+    expect(r.verdicts_considered).toBe(0);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
+  // Build a signed (DSSE-wrapped) audit-verdict message. The SUT stays sync
+  // + pure; only the fixture is async (Web Crypto sign). Mirrors the wrap
+  // pattern in test/channels/audit-verdict.test.ts.
+  async function signedVerdictMsg(
+    secretKey: CryptoKey,
+    identity: string,
+    over: Partial<AuditVerdictBody> = {},
+  ): Promise<ChannelMessage> {
+    const base: AuditVerdictBody = {
+      kind_version: 1,
+      target_pr: { repo: "claude-conductor", number: 200 },
+      target_peer: "Author",
+      lens_set_applied: ["RE"],
+      audit_class: "cross-pair-shadow",
+      audit_axes: ["surface"],
+      verdict: "SHIP-CLEAN",
+      counts: { blocker: 0, fold: 0, nit: 0 },
+      three_option_ask: {
+        a_ratify: "cleared",
+        b_fold_if_applicable: null,
+        c_reframe_if_applicable: null,
+      },
+      findings: [],
+    };
+    const wrappedBody = await wrapAuditVerdictBody(
+      { ...base, ...over },
+      secretKey,
+      identity,
+    );
+    return {
+      ts: "2026-05-28T13:00:00.000Z",
+      from: `session-${identity}`,
+      kind: "audit-verdict",
+      identity,
+      body: wrappedBody,
+    };
+  }
+
+  it("counts signed (wrapped) verdicts identically to raw bodies", async () => {
+    const kp = await generateKeypair();
+    const messages = [
+      await signedVerdictMsg(kp.privateKey, "Alpha", {
+        lens_set_applied: ["RE"],
+      }),
+      await signedVerdictMsg(kp.privateKey, "Bravo", {
+        lens_set_applied: ["Architecture"],
+      }),
+      await signedVerdictMsg(kp.privateKey, "Delta", {
+        lens_set_applied: ["TA"],
+      }),
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: { repo: "claude-conductor", number: 200 },
+    });
+    // Pre-fix, parseAuditVerdictBody returns null on a DSSE envelope, so all
+    // three would be skipped (verdicts_considered 0, ok false). The dual-
+    // parse fix counts them — this asserts the foundational fix.
+    expect(r.verdicts_considered).toBe(3);
+    expect(r.distinct_auditors).toEqual(["Alpha", "Bravo", "Delta"]);
+    expect(r.distinct_lenses).toEqual(["Architecture", "RE", "TA"]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("counts a mix of signed (wrapped) and raw verdicts together", async () => {
+    const kp = await generateKeypair();
+    const messages = [
+      await signedVerdictMsg(kp.privateKey, "Alpha", {
+        lens_set_applied: ["RE"],
+      }),
+      verdictMsg("Bravo", { lens_set_applied: ["Architecture"] }),
+      verdictMsg("Delta", { lens_set_applied: ["TA"] }),
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: { repo: "claude-conductor", number: 200 },
+    });
+    expect(r.verdicts_considered).toBe(3);
+    expect(r.ok).toBe(true);
+  });
+
+  it("still excludes a signed self-audit (auditor_identity === target_peer)", async () => {
+    const kp = await generateKeypair();
+    const messages = [
+      await signedVerdictMsg(kp.privateKey, "Author", {
+        lens_set_applied: ["RE", "Architecture", "TA"],
+        target_peer: "Author",
+      }),
+    ];
+    const r = computeAuditQuorum({
+      messages,
+      bodies_by_ref: EMPTY_BODIES,
+      target_pr: { repo: "claude-conductor", number: 200 },
+    });
+    // Self-audit exclusion must read the INNER (unwrapped) body's target_peer.
+    expect(r.self_audits_excluded).toBe(1);
     expect(r.verdicts_considered).toBe(0);
     expect(r.ok).toBe(false);
   });

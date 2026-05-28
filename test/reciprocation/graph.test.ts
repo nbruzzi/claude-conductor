@@ -21,6 +21,11 @@ import { describe, expect, it } from "bun:test";
 
 import { buildReciprocationGraph } from "../../src/reciprocation/graph.ts";
 import type { ChannelMessage } from "../../src/channels/index.ts";
+import {
+  wrapAuditVerdictBody,
+  type AuditVerdictBody,
+} from "../../src/channels/audit-verdict.ts";
+import { generateKeypair } from "../../src/channels/key-surface.ts";
 
 function makeVerdictBody(opts: {
   target_peer: string;
@@ -441,5 +446,36 @@ describe("cross_edge_coverage_by_peer", () => {
       Bravo: { with_consumers: 2, total_substrate_class: 2 },
     });
     expect(g.edges).toHaveLength(5);
+  });
+});
+
+describe("buildReciprocationGraph — v0.3 DSSE-wrapped (signed) verdicts", () => {
+  it("counts a signed (wrapped) verdict as an edge (regression: was 0 when wrapped-blind)", async () => {
+    const kp = await generateKeypair();
+    const rawBody = makeVerdictBody({ target_peer: "Bravo", pr_number: 100 });
+    const wrappedBody = await wrapAuditVerdictBody(
+      JSON.parse(rawBody) as AuditVerdictBody,
+      kp.privateKey,
+      "Alpha",
+    );
+    const msg: ChannelMessage = {
+      ts: "2026-05-20T01:00:00.000Z",
+      from: "alpha-sid",
+      kind: "audit-verdict",
+      identity: "Alpha",
+      body: wrappedBody,
+    };
+    const g = buildReciprocationGraph({
+      messages: [msg],
+      bodies_by_ref: new Map(),
+      channel_id: "ch",
+      window: FULL_WINDOW,
+    });
+    // Pre-fix: graph.ts used parseAuditVerdictBody (raw-only) → a wrapped body
+    // → null → 0 edges (the exact local full-suite failure post-bootstrap).
+    // Now graph dispatches via parseAuditVerdictBodyAnyVersion → edge counted.
+    expect(g.edges).toHaveLength(1);
+    expect(g.edges[0]?.auditor_identity).toBe("Alpha");
+    expect(g.edges[0]?.target_peer).toBe("Bravo");
   });
 });

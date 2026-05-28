@@ -623,6 +623,38 @@ export function parseAuditVerdictV0_3Wrapped(
 }
 
 /**
+ * Parse an `audit-verdict` body REGARDLESS of wire shape, returning the inner
+ * {@link AuditVerdictBody} (or null). SSOT entry point for consumers that need
+ * the verdict FIELDS but not its DSSE envelope: composes
+ * {@link parseAuditVerdictV0_3Wrapped} (v0.3 signed/wrapped) →
+ * {@link parseAuditVerdictBody} (raw v0.1/v0.2) per the schema-dispatch
+ * pattern documented above.
+ *
+ * **Why this exists (substrate-fix-that-self-mirrors).** Before this helper,
+ * every body-only consumer hand-inlined the wrapped→raw compose, and several
+ * forgot it (quorum, reciprocation/graph, bandwidth/inference, audits/queue) →
+ * they silently dropped v0.3 DSSE-wrapped verdicts once the cohort bootstrapped
+ * keys and `send` began auto-wrapping (audit-verdict-auto-wrap.ts Mode A).
+ * Routing every body-only consumer through ONE helper removes the per-consumer
+ * re-regression footgun: a new consumer calls this and is wrapped-aware by
+ * construction.
+ *
+ * **SHAPE-only — does NOT verify the signature.** A v0.3 body that parses here
+ * may still have an invalid signature chain (a signed-but-tampered verdict's
+ * inner body still returns non-null). Consumers gating on crypto validity
+ * (`audit verify`; the future `audit quorum --require-signed`) must run
+ * {@link parseAuditVerdictV0_3Wrapped} + verifyEnvelope additionally — this
+ * helper is the body-fields path only.
+ */
+export function parseAuditVerdictBodyAnyVersion(
+  body: string,
+): AuditVerdictBody | null {
+  const wrapped = parseAuditVerdictV0_3Wrapped(body);
+  if (wrapped !== null) return wrapped.body;
+  return parseAuditVerdictBody(body);
+}
+
+/**
  * Wrap an audit-verdict body in a v0.3 DSSE envelope (sign-side
  * counterpart of {@link parseAuditVerdictV0_3Wrapped}). Returns the
  * serialized envelope JSON suitable for storage in the JSONL line `body`
