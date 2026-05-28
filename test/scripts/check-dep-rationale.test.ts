@@ -145,4 +145,17 @@ describe("scripts/check-dep-rationale.sh", () => {
     expect(stderr).toContain("unknown argument");
     expect(stderr).toContain("--help");
   });
+
+  it("flags an unrationalized dep that is a prefix-superstring of a rationalized one", () => {
+    // `foo` is rationalized; `foobar` is NOT. Backtick-precise matching must
+    // flag `foobar` independently — its token `foobar` differs from the token
+    // `foo`, so it cannot ride on the `foo` entry. Locks the precision against
+    // a future "optimize the matcher" regression to bare-substring matching.
+    writePkg(repo, { foo: "^1.0.0", foobar: "^1.0.0" }, {});
+    writeRationale(repo, ["foo"]);
+    const { exitCode, stderr } = runScript(repo);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("foobar");
+    expect(stderr).not.toContain("dependency 'foo' declared");
+  });
 });
