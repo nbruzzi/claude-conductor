@@ -31,6 +31,7 @@ import {
   classifyLiveness,
   listAllHeartbeats,
   listArtifactIds,
+  readSessionPausedAt,
   type HeartbeatListing,
   type Liveness,
 } from "./index.ts";
@@ -131,19 +132,24 @@ function failedSignals(
 
 /**
  * GC-eligibility predicate (Pair-B §3). Eligible iff in the oldest liveness
- * bucket AND past the safety-floor.
+ * bucket AND past the safety-floor AND not deliberately paused.
  *
- * Reserved future AND-NOT blockers — each can only SUBTRACT eligibility, never
- * add, so a later signal can never make reconcile-boot MORE aggressive:
- *   - pid-alive (§10 Q2): a same-host `kill(pid, 0)` probe — a paused-but-alive
- *     process is never GC'd. Deferred enhancement; not implemented this slice.
+ * Each AND-term can only SUBTRACT eligibility, never add, so a later signal can
+ * never make reconcile-boot MORE aggressive:
  *   - pause-marker (Cycle-6 item-4, Alpha cross-pair): a deliberately
- *     `pause-session`'d session must never be gc_eligible. Marker shape pending
- *     Alpha confirm (proposed: OwnerRecord `pausedAt?`); the read-integration
- *     is a post-Cycle-2 follow-up (item-4 holds until Cycle-2 lands).
+ *     `pause-session`'d session is never gc_eligible. `paused` is a SESSION-level
+ *     lookup (readSessionPausedAt) computed in enumeratePresence — it protects
+ *     ALL of a paused session's candidates across every artifact, not just its
+ *     canonical anchor heartbeat (Option X, Delta-concurred).
+ *   - pid-alive (§10 Q2, reserved): a same-host `kill(pid, 0)` probe — a
+ *     paused-but-alive process is never GC'd. Deferred; not this slice.
  */
-function isGcEligible(classification: Liveness, ageMs: number): boolean {
-  return classification === "stale" && ageMs > GC_WINDOW_MS;
+function isGcEligible(
+  classification: Liveness,
+  ageMs: number,
+  paused: boolean,
+): boolean {
+  return classification === "stale" && ageMs > GC_WINDOW_MS && !paused;
 }
 
 /** Enumerate + classify every presence heartbeat across all artifacts. */
@@ -152,8 +158,42 @@ function enumeratePresence(
   currentHost: string,
 ): ReconcileBootCandidate[] {
   const out: ReconcileBootCandidate[] = [];
-  for (const artifactId of listArtifactIds()) {
-    const entries = listAllHeartbeats({ artifactId, now });
+
+  // Session-level pause lookup, memoized (Cycle-6 item-4, Option X). `pausedAt`
+  // is written on the session's canonical-claude-home ANCHOR heartbeat
+  // (markSessionPaused), NOT per-artifact — so one anchor read protects every
+  // one of a paused session's candidates across all artifacts. Memoize per
+  // sessionId: a session typically holds heartbeats on several artifacts and
+  // the anchor read is identical for each. readSessionPausedAt is defensive
+  // (never throws — readOwnerRecord swallows parse/IO errors → null), so the
+  // lookup needs no guard of its own.
+  const pausedMemo = new Map<string, boolean>();
+  const isSessionPaused = (sessionId: string): boolean => {
+    const cached = pausedMemo.get(sessionId);
+    if (cached !== undefined) return cached;
+    const paused = readSessionPausedAt(sessionId) != null;
+    pausedMemo.set(sessionId, paused);
+    return paused;
+  };
+
+  // N1 (Bravo #173 nit, folded here since item-4 touches this read path): a
+  // malformed artifact dir or unreadable heartbeat listing must not abort the
+  // whole enumeration. Isolate the blast radius — an unreadable presence root
+  // yields an empty reconcile (safe: nothing enumerated → nothing GC'd), and a
+  // single bad artifact is skipped while every other artifact still reconciles.
+  let artifactIds: readonly string[];
+  try {
+    artifactIds = listArtifactIds();
+  } catch {
+    return out;
+  }
+  for (const artifactId of artifactIds) {
+    let entries: HeartbeatListing[];
+    try {
+      entries = listAllHeartbeats({ artifactId, now });
+    } catch {
+      continue;
+    }
     for (const h of entries) {
       const classification = classifyLiveness(h);
       out.push({
@@ -163,7 +203,11 @@ function enumeratePresence(
         classification,
         // split-brain is a cross-entry property; computed in a second pass.
         split_brain: false,
-        gc_eligible: isGcEligible(classification, h.ageMs),
+        gc_eligible: isGcEligible(
+          classification,
+          h.ageMs,
+          isSessionPaused(h.sessionId),
+        ),
         failed_signals: failedSignals(h, currentHost),
         age_ms: h.ageMs,
       });

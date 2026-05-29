@@ -143,6 +143,15 @@ export type OwnerRecord = {
   // resolver's heartbeat-body sentinel read path is reachable regardless
   // of CWD.
   dotfilesRoot?: string;
+  // Cycle 6 item-4 (pause/end-session, agetor steal-list A-P1-7) — `pausedAt`
+  // marks a session DELIBERATELY paused (epoch ms; presence == paused).
+  // Optional + additive (mirrors `dotfilesRoot?`): old readers tolerate its
+  // absence. Written by `markSessionPaused`, cleared by `clearSessionPaused`
+  // (resume). reconcile-boot's gc_eligible AND-term reads it so a paused
+  // session is NEVER GC'd until an explicit resume (F-b Model A, cohort-
+  // unanimous). Preserved across `touchHeartbeat` + setter writes via
+  // `mergeOwnerRecord`'s read-merge-write.
+  pausedAt?: number;
 };
 
 export type PeerInfo = {
@@ -417,6 +426,42 @@ export function heartbeatPath(artifactId: string, sessionId: string): string {
  * Write (or refresh) a heartbeat for (artifact, session). Creates meta.json
  * on first write. Atomic via write-temp + rename.
  */
+/**
+ * Build a merged `OwnerRecord` (read-merge-write). Re-derives the COMMON-WRITE
+ * fields (`pid`/`host`/`touchedAt`) from the current call; preserves
+ * `createdAt` + EVERY other existing optional field (`dotfilesRoot`,
+ * `pausedAt`, any future optional) by spreading `existing`. `overrides`
+ * set fields via `overrides`; `clear` DELETEs optional fields so they are
+ * ABSENT on the written record (exactOptionalPropertyTypes forbids setting an
+ * optional field to `undefined`, so absence — not `undefined` — is how
+ * `clearSessionPaused` resumes + `clearSentinelDotfilesRoot` un-pins).
+ *
+ * Cycle 6 item-4 F1 (Bravo): the prior per-field preserve-branch (dotfilesRoot
+ * only, REV-0.2 ARCH-2 / RE-9.0) silently CLOBBERED any other optional field
+ * and re-armed the trap for each new one. This shared merge CLOSES that class:
+ * a new optional `OwnerRecord` field survives every write path that uses this
+ * helper, with no per-field branch and no regression test required per field.
+ */
+function mergeOwnerRecord(
+  existing: OwnerRecord | null,
+  sessionId: string,
+  now: number,
+  overrides: Partial<OwnerRecord> = {},
+  clear: ReadonlyArray<"dotfilesRoot" | "pausedAt"> = [],
+): OwnerRecord {
+  const record: OwnerRecord = {
+    ...(existing ?? {}),
+    sessionId,
+    pid: process.pid,
+    host: hostname(),
+    createdAt: existing?.createdAt ?? now,
+    touchedAt: now,
+    ...overrides,
+  };
+  for (const key of clear) delete record[key];
+  return record;
+}
+
 export function touchHeartbeat(args: {
   artifactId: string;
   sessionId: string;
@@ -436,31 +481,12 @@ export function touchHeartbeat(args: {
   }
 
   const existing = readOwnerRecord(heartbeatPath(artifactId, sessionId));
-  const createdAt = existing?.createdAt ?? now;
-  // REV 0.2 ARCH-2 / RE-101 — read-merge-write semantics. Existing
-  // touchHeartbeat callers don't set `dotfilesRoot`; the merge preserves
-  // any value the provisioner wrote earlier in the session so subsequent
-  // dispatcher fires don't clobber the sentinel. Per Bravo B8 + the
-  // bounded re-audit RE 9.0 verdict, the only field the merge actively
-  // preserves is `dotfilesRoot` (the rare-write field); common-write
-  // fields (touchedAt/pid/host) come from the current call's context.
-  const record: OwnerRecord =
-    existing?.dotfilesRoot !== undefined
-      ? {
-          sessionId,
-          pid: process.pid,
-          host: hostname(),
-          createdAt,
-          touchedAt: now,
-          dotfilesRoot: existing.dotfilesRoot,
-        }
-      : {
-          sessionId,
-          pid: process.pid,
-          host: hostname(),
-          createdAt,
-          touchedAt: now,
-        };
+  // Read-merge-write (REV 0.2 ARCH-2 / RE-101, GENERALIZED by Cycle-6 item-4
+  // F1 via `mergeOwnerRecord`): re-derive common-write fields from this call;
+  // preserve createdAt + every existing optional field (dotfilesRoot, pausedAt,
+  // future). The prior dotfilesRoot-only preserve-branch re-armed a clobber
+  // trap per new field; the shared merge closes that class.
+  const record = mergeOwnerRecord(existing, sessionId, now);
   writeAtomic(
     heartbeatPath(artifactId, sessionId),
     `${JSON.stringify(record)}\n`,
@@ -652,10 +678,30 @@ function readOwnerRecord(path: string): OwnerRecord | null {
     // Older heartbeats written before Slice 2 don't have this field; the
     // typeof-string guard accepts both shapes. Empty-string is treated as
     // absent (defensive — write paths never produce empty strings).
-    const dotfilesRoot = obj["dotfilesRoot"];
-    return typeof dotfilesRoot === "string" && dotfilesRoot.length > 0
-      ? { sessionId, pid, host, createdAt, touchedAt, dotfilesRoot }
-      : { sessionId, pid, host, createdAt, touchedAt };
+    const dotfilesRootRaw = obj["dotfilesRoot"];
+    const dotfilesRoot =
+      typeof dotfilesRootRaw === "string" && dotfilesRootRaw.length > 0
+        ? { dotfilesRoot: dotfilesRootRaw }
+        : {};
+    // Cycle 6 item-4 — carry the optional `pausedAt` marker through. This is the
+    // DESERIALIZATION twin of the mergeOwnerRecord write-preserve: a parse
+    // boundary that DROPPED pausedAt would silently kill the pause feature
+    // (markSessionPaused writes it to disk, but readSessionPausedAt would never
+    // read it back). Unlike the write-merge (GENERALIZED in mergeOwnerRecord per
+    // F1), this read path stays per-field-EXPLICIT on purpose — it VALIDATES
+    // each optional field's type; a generic carry-all would forfeit that.
+    const pausedAtRaw = obj["pausedAt"];
+    const pausedAt =
+      typeof pausedAtRaw === "number" ? { pausedAt: pausedAtRaw } : {};
+    return {
+      sessionId,
+      pid,
+      host,
+      createdAt,
+      touchedAt,
+      ...dotfilesRoot,
+      ...pausedAt,
+    };
   } catch {
     return null;
   }
@@ -1128,15 +1174,12 @@ export function setSentinelDotfilesRoot(args: {
   const path = heartbeatPath(artifactId, sessionId);
   const existing = readOwnerRecord(path);
   const now = getWallClockNow();
-  const createdAt = existing?.createdAt ?? now;
-  const record: OwnerRecord = {
-    sessionId,
-    pid: process.pid,
-    host: hostname(),
-    createdAt,
-    touchedAt: now,
+  // Cycle-6 item-4 F1: shared read-merge-write — setting dotfilesRoot now
+  // PRESERVES pausedAt (+ any future optional) instead of rebuilding the
+  // record (the prior explicit rebuild silently clobbered other fields).
+  const record = mergeOwnerRecord(existing, sessionId, now, {
     dotfilesRoot: canonical,
-  };
+  });
 
   // Ensure meta.json exists for this artifact — first-write path mirrors
   // touchHeartbeat. Without this, a fresh-install session whose first
@@ -1234,14 +1277,81 @@ export function clearSentinelDotfilesRoot(sessionId: string): void {
   if (existing.dotfilesRoot === undefined) return;
 
   const now = getWallClockNow();
-  const record: OwnerRecord = {
-    sessionId: existing.sessionId,
-    pid: process.pid,
-    host: hostname(),
-    createdAt: existing.createdAt,
-    touchedAt: now,
-  };
+  // Cycle-6 item-4 F1: shared read-merge-write — clearing dotfilesRoot now
+  // PRESERVES pausedAt (+ any future optional) instead of rebuilding the
+  // record (the prior explicit rebuild silently dropped them). The
+  // `dotfilesRoot: undefined` override is dropped by JSON.stringify = cleared.
+  const record = mergeOwnerRecord(existing, existing.sessionId, now, {}, [
+    "dotfilesRoot",
+  ]);
   writeAtomic(path, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * Cycle 6 item-4 (pause-session, agetor steal-list A-P1-7) — mark a session
+ * DELIBERATELY paused by setting `pausedAt` on its canonical-claude-home anchor
+ * heartbeat (the same per-session anchor `setSentinelDotfilesRoot` uses).
+ * reconcile-boot's gc_eligible AND-term reads this via `readSessionPausedAt`
+ * (Option X — a SESSION-LEVEL check) so that NONE of the session's candidates,
+ * across ALL artifacts, are GC-eligible while paused (not just the anchor
+ * heartbeat). Idempotent; no-op if the session has no anchor heartbeat (not
+ * registered — nothing to pause). Never throws.
+ *
+ * (Telemetry deferred: emitting a `session-paused` PresenceFailureKind would be
+ * a cross-edge union change — out of this slice's scope; follow-up.)
+ */
+export function markSessionPaused(sessionId: string): void {
+  if (!isValidSessionId(sessionId)) return;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  const existing = readOwnerRecord(path);
+  if (existing === null) return;
+
+  const now = getWallClockNow();
+  const record = mergeOwnerRecord(existing, sessionId, now, { pausedAt: now });
+  writeAtomic(path, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * Cycle 6 item-4 (resume-session) — clear a session's `pausedAt` on its
+ * canonical anchor heartbeat. This is the DELIBERATE resume that F-b Model A
+ * requires: a normal `touchHeartbeat` PRESERVES pausedAt (a paused-but-alive
+ * session keeps firing the dispatcher), so resume must be explicit. Idempotent;
+ * no-op if the heartbeat is absent or the session is not paused. Never throws.
+ */
+export function clearSessionPaused(sessionId: string): void {
+  if (!isValidSessionId(sessionId)) return;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  const existing = readOwnerRecord(path);
+  if (existing === null) return;
+  if (existing.pausedAt === undefined) return; // already not paused — no-op
+
+  const now = getWallClockNow();
+  const record = mergeOwnerRecord(existing, sessionId, now, {}, ["pausedAt"]);
+  writeAtomic(path, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * Cycle 6 item-4 — read a session's pause marker from its canonical anchor
+ * heartbeat. Returns the `pausedAt` epoch ms, or `null` if the session is not
+ * paused / has no anchor heartbeat. reconcile-boot's gc_eligible AND-term uses
+ * this for a SESSION-LEVEL pause check (Option X): a paused session's
+ * candidates across ALL artifacts are protected, not just its anchor heartbeat.
+ */
+export function readSessionPausedAt(sessionId: string): number | null {
+  if (!isValidSessionId(sessionId)) return null;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return null;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  if (!existsSync(path)) return null;
+  const record = readOwnerRecord(path);
+  return record?.pausedAt ?? null;
 }
 
 /**
