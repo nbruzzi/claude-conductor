@@ -1566,3 +1566,37 @@ affects:
 **Supersedes / superseded_by:** Additive — closes the (b) lineage-input_handoffs residual deferred in the 2026-05-29 increment-1 entry above. Cross-shadowed by Pair A (Alpha) at the PR boundary.
 
 ---
+
+## 2026-05-29 — Decision: Cycle 6 item-3 increment-2b — handoff-archive/handoff-prune CLI verbs
+
+```yaml
+---
+ts: 2026-05-29T22:20:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/cli.ts,
+    src/channels/handoff-archive.ts,
+    test/channels/cli-handoff-archive.test.ts,
+    test/channels/handoff-archive.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle 6 item-3 increment-2b — the user-facing follow-on to increment-2a (#177). Exposes the hardened core via channels CLI verbs + closes the increment-2a Pair-A shadow's N1/N2 notes. Pair A (Bravo pen + Alpha shadow); Alpha + Charlie both SHIP-CLEAN'd #177.
+
+**Options considered + chosen:**
+
+1. **CLI verbs — report-mode default + --apply mutation gate.** `handoff-archive [--apply] [--retention-days <n>] [--keep-recent <n>]` prints the sweep as JSON (report-only) by default; `--apply` MOVES each archivable candidate into `.archive/` and REFUSES when `ok:false` (F2/F3 — never mutate against a degraded protection view). `handoff-prune [--retention-days <n>] [--max-entries <n>]` prints the purged list. NEVER-auto-delete holds: no auto-invocation; report-default; move-not-delete; prune is archive-scoped.
+2. **N1 (Alpha #177 shadow) — readdir-of-handoffsDir is SUBSUMED by F1; NOT new code.** Primary-source-verified (empirical, 3 cases): the sweep calls `latestTargetName()` (readlink `handoffsDir/LATEST.md`) BEFORE `readdir(handoffsDir)`, so a degraded handoffsDir (file/EACCES/ENOTDIR) throws in latestTargetName FIRST → F1 fail-safe `ok:false`, before readdir. The readdir non-ENOENT path is UNREACHABLE (modulo a TOCTOU dir-vanish → [] → safe). Disposition: a CLARIFYING COMMENT (document the F1-subsumption), NOT dead defensive code (Alpha conceded + endorsed). Two genuinely-reachable-but-DATA-SAFE residuals Alpha scoped are documented with clarifying comments, not behavior-changed: (a) per-candidate statSync-skip (TOCTOU/perms → silent drop from total_handoffs; lineage survives via readFileSync); (b) prune-readdir-fault (non-ENOENT `.archive` → [] → under-pruning, not data loss).
+3. **N2 (Alpha #177 shadow) — read-throw test added.** scanLineage's read-THROW branch (readFileSync throws → malformedProtected) is now covered by a deterministic cross-platform test (a DIR named `HANDOFF_x.md` → readFileSync EISDIR, consistent macOS+Linux).
+
+**Scope:** `cli.ts` (2 verbs + usage entries + a `numFlag` positional-tail parser) + `handoff-archive.ts` (3 clarifying comments, no behavior change) + 4 CLI subprocess tests (Bun.spawnSync) + 1 N2 read-throw unit. Completes Cycle 6 item-3 (increment-1 #174 + increment-2a #177 + this).
+
+**Reason:** The CLI verbs make the hardened core operator-invocable; `--apply`-refuses-on-`ok:false` is the one mutation-safety bit. N1's readdir-component is unreachable (F1-gated), so documenting the subsumption is more honest than dead code; the two reachable residuals are data-safe and now documented-not-silent.
+
+**Supersedes / superseded_by:** Additive — completes item-3 (the handoff teardown feature: report + archive + prune, all user-invocable). Cross-shadowed by Pair A (Alpha) at the PR boundary.
+
+---

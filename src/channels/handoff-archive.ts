@@ -216,6 +216,12 @@ export function sweepArchivableHandoffs(
   try {
     names = readdirSync(dir).filter((n) => HANDOFF_FILE_RE.test(n));
   } catch {
+    // N1 (Pair-A shadow, readdir-of-handoffsDir): this catch's non-ENOENT path is
+    // UNREACHABLE in practice — latestTargetName() (readlink handoffsDir/LATEST.md,
+    // above) runs first on the SAME dir, so a degraded handoffsDir (file/EACCES/
+    // ENOTDIR) throws THERE -> F1 fail-safe ok:false before this readdir. The only
+    // reachable case here is ENOENT (legit empty / non-existent dir) -> names=[],
+    // ok stays true. (A TOCTOU dir-vanish between the two calls -> [] -> safe anyway.)
     names = [];
   }
 
@@ -225,7 +231,12 @@ export function sweepArchivableHandoffs(
       const mtimeMs = statSync(join(dir, name)).mtimeMs;
       all.push({ name, mtimeMs, ageMs: opts.now - mtimeMs });
     } catch {
-      /* unreadable entry — skip (mirrors pruneArchive's per-entry tolerance) */
+      // Per-candidate skip (Pair-A shadow N1 residual): statSync throws AFTER
+      // readdir succeeded (TOCTOU file-vanish / per-file perms) -> drop from `all`.
+      // DATA-SAFE: a dropped candidate is not archivable, and scanLineage still
+      // reads its lineage via a separate readFileSync (its protection-vote survives,
+      // or -> malformedProtected). Residual: a silent drop from total_handoffs.
+      // Mirrors pruneArchive's per-entry tolerance; reachable but data-safe.
     }
   }
 
@@ -320,6 +331,10 @@ export function pruneHandoffArchive(opts: {
   // F4 (Pair-A shadow): .archive may exist but be unreadable / not-a-dir
   // (readdirSync throws ENOTDIR/EACCES). Tolerate it — nothing to prune — rather
   // than aborting; mirrors the sweep's enumeration tolerance + #175's N1.
+  // N1 residual #2 (Alpha shadow): unlike the sweep, this readdir has NO
+  // latestTargetName-guard before it, so a non-ENOENT .archive fault IS reachable
+  // -> []. DATA-SAFE: nothing pruned = no deletion; the residual is UNDER-pruning
+  // (unbounded archive growth on a persistently-faulted .archive), not data loss.
   let archivedNames: string[];
   try {
     archivedNames = readdirSync(archive);
