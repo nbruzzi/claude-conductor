@@ -81,8 +81,13 @@ export {
 /** 30-minute live window — mirrors channel heartbeat TTL. */
 export const LIVE_WINDOW_MS = 30 * 60 * 1000;
 
-/** Opportunistic GC threshold — drop heartbeats older than 2× TTL. */
-const GC_WINDOW_MS = 2 * LIVE_WINDOW_MS;
+/**
+ * Opportunistic GC threshold — drop heartbeats older than 2× TTL (60min).
+ * Exported (Cycle 2 boot-reconciliation): `reconcile-boot` reuses it as the
+ * GC-eligibility safety-floor, so the threshold is single-sourced here rather
+ * than recomputed (`2 * LIVE_WINDOW_MS`) at the call site.
+ */
+export const GC_WINDOW_MS = 2 * LIVE_WINDOW_MS;
 
 /** "Likely dead" threshold for operator listings. */
 export const LIKELY_DEAD_MS = 10 * 60 * 1000;
@@ -149,6 +154,27 @@ export type PeerInfo = {
 export type HeartbeatListing = PeerInfo & {
   likelyDead: boolean;
 };
+
+/**
+ * Three-bucket liveness classification of a heartbeat by mtime-age.
+ *
+ * NOTE the axis: `"stale"` is the OLDEST bucket here (age > LIVE_WINDOW_MS) —
+ * the opposite end from a GC-lifecycle "stale". Cycle-2 `reconcile-boot` keeps
+ * the two axes separate (this `classification` vs a derived `gc_eligible`) so
+ * the same word never means both "aged-out liveness bucket" and "ready to GC".
+ *
+ * Lifted from the dotfiles `/presence` CLI (de-dup, Cycle 2) so reconcile-boot
+ * and any hook/dashboard can classify over the registry's own data model
+ * without a backwards dotfiles import. The dotfiles `active-sessions/cli.ts`
+ * now imports this via the shim instead of redefining it.
+ */
+export type Liveness = "live" | "likely-dead" | "stale";
+
+export function classifyLiveness(h: HeartbeatListing): Liveness {
+  if (h.ageMs > LIVE_WINDOW_MS) return "stale";
+  if (h.ageMs > LIKELY_DEAD_MS || h.likelyDead) return "likely-dead";
+  return "live";
+}
 
 export type ArtifactMeta = {
   artifactPath: string;
