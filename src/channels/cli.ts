@@ -477,14 +477,19 @@ function printJson(v: unknown): void {
 /**
  * Read a numeric `--flag <n>` from the positional tail (the handoff-archive /
  * handoff-prune verbs). Unknown flags pass through parseFlags into `rest`;
- * returns `def` when the flag is absent or its value is not a finite integer.
+ * returns `def` when the flag is absent, non-numeric, OR NEGATIVE.
+ *
+ * F1 (Alpha #178 shadow): the `n >= 0` guard is DELETE-path safety — a negative
+ * --retention-days / --max-entries would invert pruneHandoffArchive's age + cap
+ * comparisons (now - mtime > negative -> always true) into mass-deletion of the
+ * whole archive. A nonsensical negative falls back to the safe default.
  */
 function numFlag(rest: readonly string[], name: string, def: number): number {
   const i = rest.indexOf(name);
   if (i === -1) return def;
   const raw = rest[i + 1];
   const n = raw === undefined ? NaN : Number.parseInt(raw, 10);
-  return Number.isFinite(n) ? n : def;
+  return Number.isFinite(n) && n >= 0 ? n : def;
 }
 
 function liveness(

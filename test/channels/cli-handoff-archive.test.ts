@@ -142,4 +142,17 @@ describe("channels CLI: handoff-prune verb (increment-2b)", () => {
     expect(out.purged).toContain("HANDOFF_old.md");
     expect(existsSync(recentArch)).toBe(true);
   });
+
+  it("F1 (Alpha #178 shadow): a NEGATIVE --retention-days does NOT mass-delete (numFlag guards the DELETE-path)", () => {
+    mkdirSync(join(tmpDir, ".archive"), { recursive: true });
+    const recentArch = join(tmpDir, ".archive", "HANDOFF_recent.md");
+    writeFileSync(recentArch, "archived"); // recent (now) — never prunable at any sane retention
+    const r = run(["handoff-prune", "--retention-days", "-5"]);
+    expect(r.exitCode).toBe(0);
+    const out = JSON.parse(r.stdout) as { purged: string[] };
+    // A negative retention must clamp to the safe default, NOT invert the age
+    // comparison (now - mtime > negative -> always true) into mass-deletion.
+    expect(out.purged).not.toContain("HANDOFF_recent.md");
+    expect(existsSync(recentArch)).toBe(true);
+  });
 });
