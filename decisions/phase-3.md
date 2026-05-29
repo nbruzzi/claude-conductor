@@ -1600,3 +1600,40 @@ affects:
 **Supersedes / superseded_by:** Additive — completes item-3 (the handoff teardown feature: report + archive + prune, all user-invocable). Cross-shadowed by Pair A (Alpha) at the PR boundary.
 
 ---
+
+## 2026-05-29 — Decision: Cycle 2 boot-reconciliation increment-2 (2a — malformed-surface + paused-visibility + listClaims extraction)
+
+```yaml
+---
+ts: 2026-05-29T22:20:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/index.ts,
+    src/active-sessions/reconcile-boot.ts,
+    src/channels/identity.ts,
+    test/active-sessions/reconcile-boot.test.ts,
+    test/channels/identity.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle-2 increment-2, PR 2a (the non-mutation half). Realizes the increment-1 (#173) §10 Q4 deferrals — malformed-entry surfacing + the report-only enumeration groundwork — and the Bravo/Charlie #175 paused-dead report-visibility split. Builds on increment-1 (reconcile-boot presence-core, report-only) + item-4 (#175: `pausedAt`/`mergeOwnerRecord`/`readSessionPausedAt`). The `--apply` GC mutation is deliberately split into PR 2b (§5 below).
+
+**Options considered + chosen:**
+
+1. **Malformed detection — CHOSEN: a shared `scanHeartbeats` walk, not a standalone read-twin.** `scanHeartbeats({artifactId,now})` partitions ONE heartbeat-dir walk into `{valid, malformed}`; `listAllHeartbeats` becomes its `.valid` projection. Rejected a standalone `listMalformedHeartbeats` that re-walks: it would duplicate the readdir/stat/parse logic and could DRIFT from `listAllHeartbeats`'s drop-criteria. The shared walk makes the malformed set definitionally "what the valid walk dropped" — no drift possible. Valid-set behavior unchanged (verified: worktree-gc sid-prefix anchors + listLivePeers unaffected). `stat()`-throw (file vanished mid-walk) is skipped from BOTH sets (benign race); only `readOwnerRecord`→null (unparseable-owner) and `defensiveAgeMs`→null (future-mtime) become malformed.
+2. **`ok` load-bearing — CHOSEN: `ok = errors.length === 0` → exit 3 on any malformed-entry.** A report that silently skipped unreadable data was dishonest about its blind spots (#174 F2/F3). Convergent with Bravo's #177 handoff-archive `protected_malformed` semantics: a report must signal what it couldn't evaluate.
+3. **`paused` field — CHOSEN: an explicit `paused: boolean` candidate field (Q2), SESSION-level.** `readSessionPausedAt(session_id) != null`, memoized once and reused for both the `gc_eligible` AND-term and the visible field — `true` across ALL of a paused session's candidates. Makes a stale + `gc_eligible=false` paused entry operator-VISIBLE (manual-self-heal) vs a silent indistinguishable skip. NOT a `failed_signals` member: pause is a protection, not a failed liveness signal.
+4. **`listClaims` extraction — CHOSEN: extract the full-scan twin of `findExistingClaim` (same pattern as `scanHeartbeats`/`listAllHeartbeats`).** `listClaims(channelId)` returns every valid identity claim; `findExistingClaim` becomes its session-filtered projection. Single source of sentinel-scan acceptance (valid NATO entry → readable → `validateIdentityClaim` → role narrowing), no drift. Additive export (shim re-export holds); `findExistingClaim` behavior unchanged (rejoin tests pass). Enables the §2 identity report-only enumeration (2a-commit-3, in flight).
+5. **PR-split (Q4) — CHOSEN: 2a (non-mutation surfacing) + 2b (`--apply` mutation alone, max safety-shadow).** Delta's `--apply` GC is a NEW mutation, so isolating it in its own PR for a tighter safety-shadow has a strong rationale (Alpha-confirmed: stands unchanged, distinct from Bravo's item-3 where the mutation already shipped in #174). The §1 mutation design was shadow-ratified by both pairs PRE-build, with two gating fixes converged (honest `removeHeartbeat({reason,actorPid})` telemetry; cas-race out of `errors` into a separate `cas_races[]`); exit-precedence unanimous (malformed→3 > gc-failed→1 > gc_eligible→2 > 0).
+
+**Scope (incremental, this PR = 2a):** `scanHeartbeats` + malformed-surface + `ok`-load-bearing + `paused` field + `listClaims` extraction landed (commits db43ec8 + 146db95). The §2 identity + worktree report-only enumeration (cross-ref presence-liveness for claim/worktree classification; `gc_eligible=false`; orphan-sentinel→stale; candidate shape stays uniform — `artifact_id = channelId`/`worktree_path`, no new columns) is 2a-commit-3, in flight (design surfaced for cohort pre-build flag — the discipline that de-risked §1). PR 2b = the `--apply` CAS-recheck GC mutation. NEVER-auto-kill holds throughout: 2a adds no mutation path; identity/worktree are report-only (GC primitives `unlinkIdentitySentinelOrLogOrphan`/`removeWorktree` deferred).
+
+**Reason:** A coverage-honest report (surface what it couldn't read → exit 3) is the cardinal value of the malformed work; single-source scan-walks (`scanHeartbeats`, `listClaims`) close drift-classes at their root rather than per-symptom. Splitting the NEW mutation into 2b buys a tighter safety-shadow on the one path that can delete state.
+
+**Supersedes / superseded_by:** Additive — realizes increment-1 (#173) §10 Q4 deferrals (malformed-surface + identity/worktree enumeration groundwork) + #175 paused-dead visibility. Cross-pair-shadowed by Charlie (inside-pair) + Pair A (cross-shadow) at the 2a PR boundary.
+
+---
