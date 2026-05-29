@@ -1536,3 +1536,33 @@ affects:
 **Supersedes / superseded_by:** Realizes the `pause-marker` AND-NOT blocker reserved (deferred) in the 2026-05-29 Cycle-2 entry (#3 above), with the scope correction from per-candidate to session-level (Option X). Cross-pair-shadowed by Delta at the PR boundary.
 
 ---
+
+## 2026-05-29 — Decision: Cycle 6 item-3 increment-2a — handoff-archive (b) lineage protection + F2–F5 hardening
+
+```yaml
+---
+ts: 2026-05-29T21:30:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects:
+  [src/channels/handoff-archive.ts, test/channels/handoff-archive.test.ts]
+---
+```
+
+**Context:** Cycle 6 item-3 increment-2 — fast-follow to increment-1 (#174, the importable handoff archive/prune core). Closes increment-1's deferred (b) lineage-input protection + the F2–F5 residuals surfaced in the increment-1 Pair-A shadow. Pair A (Bravo pen + Alpha shadow); Alpha SHIP/CONCUR'd the slice plan + 2 sharpenings + 1 minor. SPLIT into 2a (core hardening — this PR) + 2b (channels CLI verbs — follow-on), mirroring Pair-B's increment-2 2a/2b split (Alpha-endorsed: isolate the user-facing surface for a focused shadow).
+
+**Options considered + chosen:**
+
+1. **(b) malformed-frontmatter direction (Alpha Sharpening 1) — CHOSEN: protect-the-unreadable + document-the-residual.** A handoff whose frontmatter is PRESENT-but-unparseable (opener `---` + parse-null) or unreadable (read threw) is protected as ITSELF (`malformedProtected`) — never archive a handoff whose lineage we cannot read. A legacy NO-frontmatter handoff (no opener) is NOT protected (stays a normal candidate) — over-protecting every plain old handoff would break archival. The opener check discriminates them (empirically grounded: `parseHandoffFrontmatter` returns null for BOTH no-frontmatter and malformed-present, so the null return alone cannot). (ii) DOCUMENTED RESIDUAL: a malformed/unreadable handoff X drops out of the referenced-set, so any handoff X referenced loses X's protection-vote — bounded + recoverable (archive is move-not-delete) + report-visible; same accepted-residual class as increment-1's (b)-defer.
+2. **ok-honesty (F2/F3, Alpha convergent F2) — CHOSEN: ok:false ONLY on a degraded view, never on a healthy protection.** The sweep's `ok` is false only when a protection input could not be determined (the F1 transient-LATEST case → fail-safe empty); a CLI `--apply` MUST refuse when `ok:false` (enforced in 2b). The (b) malformed/unreadable protections are HEALTHY outcomes (surfaced in `protected_malformed`), so they never flip `ok` — convergent with Alpha's F2 on Pair-B's reconcile-boot (a healthy cas-race must not land in errors[] / flip ok).
+3. **F4 + F5 hardening.** F4: `pruneHandoffArchive` tolerates an unreadable/non-dir `.archive` (readdir try/catch → [], mirrors #175 N1 blast-radius isolation). F5: `archiveHandoff` collision-stamp is uniquified (counter loop) so a same-ms re-archive of a name never overwrites a prior archived copy; the stamp clock is injectable (`opts.now`) for deterministic tests, mirroring `sweepArchivableHandoffs`'s `now`.
+4. **Transparency report fields.** The sweep reports `protected_referenced` + `protected_malformed` so an operator sees WHAT (b) protected (and the (ii) residual's set) before any `--apply`.
+
+**Scope (incremental — 2a/2b split):** 2a (this PR) = `handoff-archive.ts` core hardening ((b) + Sharpening 1 + F4 + F5 + F2/F3 + report fields) + 19 TDD units. 2b (follow-on) = channels CLI verbs `handoff-archive [--apply]` + `handoff-prune` in `src/channels/cli.ts` (report-mode default; `--apply` refuses on `ok:false`). NEVER-auto-delete holds: report-mode default + move-not-delete + prune-is-archive-only; no auto-invocation mutates.
+
+**Reason:** The (b) protection closes the increment-1 residual (an old lineage-referenced handoff could be archived). Sharpening 1's protect-the-unreadable honors never-ship-known-gaps (document the (ii) bound). The 2a/2b split ships the complete, low-risk core immediately + isolates the user-facing CLI for a focused Pair-A shadow.
+
+**Supersedes / superseded_by:** Additive — closes the (b) lineage-input_handoffs residual deferred in the 2026-05-29 increment-1 entry above. Cross-shadowed by Pair A (Alpha) at the PR boundary.
+
+---
