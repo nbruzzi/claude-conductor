@@ -1284,3 +1284,19 @@ export function unregisterActiveSession(sessionId: string): number {
 
   return cleared;
 }
+
+// Cycle 2 boot-reconciliation — re-export the reconcile-boot surface from the
+// canonical module path so the dotfiles shim (`claude-conductor/active-sessions`)
+// and any hook/dashboard reach it WITHOUT a gated subpath import
+// (feedback-bun-exports-map-gates-everything). The index.ts <-> reconcile-boot.ts
+// import cycle is safe: reconcile-boot.ts reads this module's bindings only
+// inside function bodies (call-time), never at module-evaluation time.
+export { runReconcileBoot } from "./reconcile-boot.ts";
+export type {
+  ReconcileBootArtifactClass,
+  ReconcileBootCandidate,
+  ReconcileBootError,
+  ReconcileBootOptions,
+  ReconcileBootOutput,
+  ReconcileBootSignal,
+} from "./reconcile-boot.ts";
