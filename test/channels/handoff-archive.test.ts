@@ -216,3 +216,24 @@ describe("pruneHandoffArchive — delete old archived (mirror pruneArchive)", ()
     expect(existsSync(join(tmpDir, ".archive", "HANDOFF_a.md"))).toBe(true);
   });
 });
+
+describe("sweepArchivableHandoffs — F1 transient-LATEST fail-safe (Pair-A RE shadow)", () => {
+  it("a TRANSIENT LATEST-resolution failure fails SAFE: ok:false + nothing archivable (never defeats LATEST-protection)", () => {
+    // Point handoffsDir at a FILE: readlinkSync(<file>/LATEST.md) -> ENOTDIR (a
+    // non-legitimate errno) -> latestTargetName rethrows -> sweep fails safe.
+    // Pre-fix the bare catch swallowed ENOTDIR -> null -> the sweep proceeded
+    // (every candidate `!== null` -> LATEST-protection DEFEATED, ok:true). Post-
+    // fix: ok:false + archivable:[] so the active handoff can never surface.
+    const filePath = join(tmpDir, "not-a-dir");
+    writeFileSync(filePath, "x");
+    process.env["CLAUDE_CONDUCTOR_HANDOFFS_DIR"] = filePath; // afterEach restores
+    const out = sweepArchivableHandoffs({
+      now: NOW,
+      retentionDays: 14,
+      keepRecent: 0,
+    });
+    expect(out.ok).toBe(false);
+    expect(out.archivable).toEqual([]);
+    expect(out.protected_latest).toBeNull();
+  });
+});

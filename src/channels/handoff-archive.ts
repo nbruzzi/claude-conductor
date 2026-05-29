@@ -54,14 +54,24 @@ export function handoffArchiveDir(): string {
 
 /**
  * Basename of the handoff that `LATEST.md` points at, or `null` when LATEST is
- * absent, broken, or not a symlink. The returned name is protected from
+ * legitimately absent (ENOENT) or not a symlink (EINVAL). Protected from
  * archival by {@link sweepArchivableHandoffs}.
+ *
+ * F1 (Pair-A RE shadow): the catch is NARROWED to the two legitimate "no LATEST
+ * target" errnos. A TRANSIENT failure (EMFILE/ENFILE descriptor-exhaustion,
+ * EACCES, ENOTDIR, ...) is RE-THROWN, never conflated with null — returning
+ * null on a transient would make `c.name !== latest` true for EVERY candidate,
+ * DEFEATING the (a)-LATEST protection and breaching this file's cardinal
+ * contract ("never archive the active handoff"). The caller fails SAFE on the
+ * rethrow. Deny-list over allow-list (feedback-deny-list-over-allow-list-for-skip-gates).
  */
 export function latestTargetName(): string | null {
   try {
     return basename(readlinkSync(join(handoffsDir(), "LATEST.md")));
-  } catch {
-    return null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EINVAL") return null; // legitimately no LATEST target
+    throw err; // transient — caller fails SAFE; never silently defeat LATEST-protection
   }
 }
 
@@ -101,7 +111,22 @@ export function sweepArchivableHandoffs(
   opts: SweepHandoffsOptions,
 ): SweepHandoffsOutput {
   const dir = handoffsDir();
-  const latest = latestTargetName();
+  // F1 (Pair-A RE shadow): a TRANSIENT LATEST-resolution failure must NOT be
+  // treated as "no LATEST" (that defeats the (a)-protection). Fail SAFE — report
+  // nothing archivable + ok:false (honest degraded report) so the active handoff
+  // can never surface as archivable under a transient.
+  let latest: string | null;
+  try {
+    latest = latestTargetName();
+  } catch {
+    return {
+      ok: false,
+      total_handoffs: 0,
+      protected_latest: null,
+      keep_recent: opts.keepRecent,
+      archivable: [],
+    };
+  }
   const retentionMs = opts.retentionDays * 24 * 60 * 60 * 1000;
 
   let names: string[];
