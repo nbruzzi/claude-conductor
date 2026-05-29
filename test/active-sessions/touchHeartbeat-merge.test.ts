@@ -21,7 +21,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   artifactIdFromPath,
+  markSessionPaused,
   readSentinelDotfilesRoot,
+  readSessionPausedAt,
   setSentinelDotfilesRoot,
   touchHeartbeat,
 } from "../../src/active-sessions/index.ts";
@@ -112,5 +114,34 @@ describe("touchHeartbeat — REV 0.2 ARCH-2 read-merge-write", () => {
     // Pin: field appears.
     setSentinelDotfilesRoot({ sessionId: SID, dotfilesRoot: DOTFILES_ROOT });
     expect(readSentinelDotfilesRoot(SID)).toBe(DOTFILES_ROOT);
+  });
+
+  it("preserves pausedAt across a subsequent touchHeartbeat call (Cycle 6 item-4, F-b Model A)", () => {
+    // The dotfilesRoot preserve generalized: mergeOwnerRecord must carry EVERY
+    // optional field across an auto-touch, not just dotfilesRoot. pausedAt is
+    // the second such field — and Model A REQUIRES it survive a dispatcher fire
+    // (a paused-but-alive session keeps auto-touching; resume must be a
+    // DELIBERATE clearSessionPaused, never an incidental touchHeartbeat).
+    const artifactPath = canonicalClaudeHomePath();
+    const artifactId = artifactIdFromPath(artifactPath);
+    touchHeartbeat({
+      artifactId,
+      sessionId: SID,
+      artifactPath,
+      now: Date.now(),
+    });
+    markSessionPaused(SID);
+    const paused = readSessionPausedAt(SID);
+    expect(paused).not.toBeNull();
+
+    // A regular dispatcher fire — must NOT clear the pause.
+    touchHeartbeat({
+      artifactId,
+      sessionId: SID,
+      artifactPath,
+      now: Date.now(),
+    });
+
+    expect(readSessionPausedAt(SID)).toBe(paused);
   });
 });

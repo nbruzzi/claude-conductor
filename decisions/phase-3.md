@@ -1499,3 +1499,39 @@ affects:
 **Supersedes / superseded_by:** Additive — implements the handoff teardown gap (slice-plan `cycle-6-item-3-teardown-parity-slice-plan-2026-05-29.md`). Cross-pair-shadowed by Pair A at the PR boundary.
 
 ---
+## 2026-05-29 — Decision: Cycle 6 item-4 — session pause/resume markers + reconcile-boot pause-protection
+
+```yaml
+---
+ts: 2026-05-29T20:35:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/index.ts,
+    src/active-sessions/reconcile-boot.ts,
+    test/active-sessions/session-pause.test.ts,
+    test/active-sessions/reconcile-boot-pause.test.ts,
+    test/active-sessions/touchHeartbeat-merge.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle 6 item-4 (agetor steal-list A-P1-7, cancel-vs-delete named verbs) adds session pause/resume to the active-sessions substrate, realizing the `pause-marker` AND-NOT blocker the Cycle-2 entry above (#3) reserved as deferred. Conductor-side logic only this PR; the dotfiles `/presence` pause/resume/end verbs sequence after Charlie's #162 merge. Pair A (Alpha pen + Bravo shadow); Delta (Cycle-2 surface-owner) cross-shadows.
+
+**Options considered + chosen:**
+
+1. **Resume semantics (F-b) — CHOSEN Model A (preserve + explicit resume).** `touchHeartbeat` PRESERVES `pausedAt`; resume is a deliberate `clearSessionPaused`. Rejected Model B (any touch clears pause): a paused-but-alive session keeps firing the dispatcher (PreToolUse auto-touches), so clear-on-touch would auto-un-pause and defeat the pause. Cohort-unanimous (Alpha lean + Delta surface-owner + Bravo confirm).
+2. **touchHeartbeat preserve (F-a) — CHOSEN Option 2 (generalize the merge), not Option 1 (mirror the dotfilesRoot branch).** A shared `mergeOwnerRecord` re-derives the common-write fields (pid/host/touchedAt) + preserves createdAt + EVERY other optional field, backing touchHeartbeat + setSentinelDotfilesRoot + clearSentinelDotfilesRoot + the pause setters. Primary-sourced RE-9.0 (Cycle-2 entry / REV-0.2 ARCH-2): the prior per-field hardcode was MINIMAL-SCOPE (dotfilesRoot was the only optional field then), not a correctness constraint against generalizing. Option 2 CLOSES the clobber-class (Bravo's F1): a new optional field survives every write path with no per-field branch. The `clear[]` param DELETEs keys — exactOptionalPropertyTypes forbids assigning a field = undefined, so a cleared field is absent, not undefined.
+3. **Deserialization carry — CHOSEN: readOwnerRecord explicitly carries + validates pausedAt.** The read path is the TWIN of the write-merge: a parse boundary that DROPS pausedAt makes the feature silently dead (markSessionPaused writes it, readSessionPausedAt never reads it back) while typecheck stays green. The read path stays per-field-EXPLICIT (unlike the generalized write-merge): it VALIDATES each optional field's type; a generic carry-all would forfeit that. Guarded by a disk ROUND-TRIP test (feedback-incremental-roundtrip-test-for-stateful-adapters).
+4. **Pause-marker scope (Option X) — CHOSEN: SESSION-level lookup, not per-candidate owner read.** `pausedAt` is per-heartbeat but pause is SESSION-global; a session holds heartbeats on N artifacts. reconcile-boot's `isGcEligible` AND-term resolves pause via `readSessionPausedAt(candidate.session_id)` (a memoized canonical-anchor lookup), protecting ALL of a paused session's candidates. Rejected the Cycle-2-reserved per-candidate `owner.pausedAt == null`: it protects only the anchor candidate, leaving the session's other-artifact candidates gc_eligible (under-protects — a paused session partially reaped). Delta (who doc-reserved the per-candidate shorthand) concurred.
+5. **N1 (Bravo #173) folded here:** enumeratePresence wraps listArtifactIds (outer → empty-on-throw) + per-artifact listAllHeartbeats (inner → skip-on-throw) in try/catch. A broken artifact is skipped, not fatal; a bad presence root yields an empty reconcile (nothing enumerated → nothing GC'd — monotonically safe). Delta's increment-2 SKIPS N1 (deconflicted).
+
+**Scope (incremental):** this PR = conductor logic (OwnerRecord.pausedAt + mergeOwnerRecord + readOwnerRecord-carry + markSessionPaused/clearSessionPaused/readSessionPausedAt + the gc_eligible AND-term + N1). The dotfiles `/presence` pause-session/resume-session/end-session verbs land after #162. end-session (full teardown: closeStalePeerIdentity + unregisterActiveSession + kind=out) composes existing exports — buildable independently. NEVER-auto-kill holds: pause only SUBTRACTS gc-eligibility.
+
+**Reason:** A paused session is suspended-coordination, not a dead process — its hooks still fire, so preserve-and-explicit-resume (Model A) is the honest model. Generalizing the merge closes a recurring per-field clobber-trap at its class. The read-twin carry is mandatory (a write-only preserve is silently dead). Session-level pause lookup is forced by pause being session-state while markers are per-heartbeat.
+
+**Supersedes / superseded_by:** Realizes the `pause-marker` AND-NOT blocker reserved (deferred) in the 2026-05-29 Cycle-2 entry (#3 above), with the scope correction from per-candidate to session-level (Option X). Cross-pair-shadowed by Delta at the PR boundary.
+
+---
