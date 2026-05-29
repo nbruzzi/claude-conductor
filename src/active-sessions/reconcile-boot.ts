@@ -27,6 +27,7 @@
 import { hostname } from "node:os";
 import {
   GC_WINDOW_MS,
+  LIVE_WINDOW_MS,
   classifyLiveness,
   listAllHeartbeats,
   listArtifactIds,
@@ -94,6 +95,12 @@ export type ReconcileBootOutput = {
 
 export type ReconcileBootOptions = {
   now: number;
+  /**
+   * Reserved for the next increment's `--apply` GC. UNREAD this increment:
+   * runReconcileBoot is report-only and always returns `applied: false`, so
+   * passing `apply: true` is a silent no-op until the GC path lands (N2). The
+   * field is forward-declared so the CLI verb's flag surface is stable now.
+   */
   apply?: boolean;
   scope?: ReconcileBootArtifactClass | "all";
 };
@@ -111,7 +118,13 @@ function failedSignals(
   currentHost: string,
 ): ReconcileBootSignal[] {
   const failed: ReconcileBootSignal[] = [];
-  if (h.ageMs > GC_WINDOW_MS) failed.push("mtime-age");
+  // "mtime-age" fails once the heartbeat is past the LIVE window (30min) — NOT
+  // the GC floor (60min). The signal means "mtime within LIVE_WINDOW_MS" (the
+  // live-requiring definition), so every stale entry (classifyLiveness "stale"
+  // = age > LIVE_WINDOW_MS) reports it failed, even while floor-protected from
+  // GC. Keying this off GC_WINDOW_MS under-reported the 30-60min stale band
+  // (failed_signals=[] on a stale entry) — F1, caught by 3-way cross-audit.
+  if (h.ageMs > LIVE_WINDOW_MS) failed.push("mtime-age");
   if (h.owner.host !== currentHost) failed.push("host-match");
   return failed;
 }
@@ -202,6 +215,12 @@ export function runReconcileBoot(
     candidates.push(...enumeratePresence(now, currentHost));
   }
   // identity + worktree enumeration: report-only, next increment (§10 Q4).
+  // TODO(increment-2, N1): listArtifactIds / listAllHeartbeats can throw on a
+  // filesystem-level error (malformed *entries* are already skipped safely).
+  // Acceptable for this report-only CLI caller (an uncaught throw → CLI exit),
+  // but the session-start HOOK integration MUST wrap enumeration in try/catch —
+  // a hook throwing at session-start is worse than a CLI exit. Fold into the
+  // error-surfacing (exit-3) work alongside --apply.
 
   markSplitBrain(candidates);
 

@@ -157,6 +157,11 @@ describe("runReconcileBoot — presence-class logic", () => {
     expect(out.gc_eligible_count).toBe(0); // floor protects it
     expect(out.candidates[0]?.classification).toBe("stale");
     expect(out.candidates[0]?.gc_eligible).toBe(false);
+    // F1 (3-way cross-audit): past the live window (30min) so "mtime-age" IS a
+    // failed signal, even though floor-protected from GC — the never-auto-kill
+    // transparency field must explain WHY the entry is stale. This assertion
+    // was the gap that hid the original > GC_WINDOW_MS threshold bug.
+    expect(out.candidates[0]?.failed_signals).toContain("mtime-age");
   });
 
   it("split-brain: >1 non-stale claim on one artifact flags both; stale residue does not count", () => {
