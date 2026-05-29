@@ -1469,3 +1469,33 @@ affects:
 **Supersedes / superseded_by:** First Cycle-2 entry; refines the boot-reconciliation design doc (`cycle-2-boot-reconciliation-design-2026-05-27.md`) §3/§4 (the stale-collision + exit-2 wording). Cross-pair-shadowed by Pair A at the PR boundary.
 
 ---
+
+## 2026-05-29 — Decision: Cycle 6 item-3 — handoff archive/prune (teardown parity)
+
+```yaml
+---
+ts: 2026-05-29T19:40:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects:
+  [src/channels/handoff-archive.ts, test/channels/handoff-archive.test.ts]
+---
+```
+
+**Context:** Cycle 6 item-3 (agetor steal-list A-P1-7 sibling; teardown parity). Handoffs (`~/.claude/handoffs/HANDOFF_*.md`) accumulate with no archive/supersede — the gap Pair-A confirmed missing (no `archiveHandoff`/`pruneHandoff` anywhere; `handoff-resolver.ts` is resolution, `handoff-body-parser.ts` is parsing). New module mirrors the channels archive/prune contract for handoff files. Pair A (Bravo); Alpha SHIP-concur'd the slice-plan (scope + 3 leans + (b)-defer).
+
+**Options considered + chosen:**
+
+1. **Placement — NEW `src/channels/handoff-archive.ts`, NOT extend `handoff-resolver.ts`.** Keeps the resolver single-responsibility + mirrors the channels archive/prune module shape. (Slice-plan #1; Alpha concur.)
+2. **Reference-awareness — (a) LATEST-target + (c) recency (keepRecent + retentionDays); (b) lineage-input_handoffs DEFERRED to increment-2.** (b) is largely subsumed by a conservatively-generous (c) (supersedes-chain heads are recent), and the bounded residual (an OLD lineage-referenced handoff beyond the window) is recoverable (move-not-delete) + report-visible before any `--apply`. (Alpha concur with two conditions: conservative window + documented residual — both honored in code + this entry.)
+3. **Safety — NEVER-auto-delete (mirrors Cycle-2 reconcile-boot).** sweepArchivableHandoffs is report-only; archiveHandoff MOVES (recoverable, collision-stamped, never overwrites); pruneHandoffArchive is the ONLY delete path (archive-only; retention + maxEntries). No auto-invocation mutates.
+4. **#2 body-GC + #6 cache-invalidation — DROPPED.** #2 (channel body sidecars) is already covered for closed channels (bodies travel-with-dir on archiveChannel + purged by pruneArchive); the orphaned-body safety-net is a near-no-op (messages.jsonl append-only ⇒ none orphaned) — backlog-noted for if/when log-rotation lands. #6 cache-invalidation is not a teardown-parity gap.
+
+**Scope (incremental):** increment-1 = the importable handoff-archive core (sweep/archive/prune logic + types) + 13 TDD units (boundary semantics, LATEST + recency protection isolated, collision-stamp, prune retention + cap). Increment-2 (fast-follow, mirrors Pair-B #173-core / #162-verb): the channels CLI verb (`handoff-archive` / `handoff-prune`) + the (b) explicit-lineage hardening + a try/catch on the enumeration read path.
+
+**Reason:** A teardown primitive for accumulating coordination artifacts (handoffs) must mirror the proven channels archive/prune safety model (report-default + move-not-delete + archive-only-prune) and protect the active (LATEST) + recent state. Deferring (b) keeps increment-1 bounded while (c)-recency + recoverable-archive bound the residual.
+
+**Supersedes / superseded_by:** Additive — implements the handoff teardown gap (slice-plan `cycle-6-item-3-teardown-parity-slice-plan-2026-05-29.md`). Cross-pair-shadowed by Pair A at the PR boundary.
+
+---
