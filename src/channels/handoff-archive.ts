@@ -33,6 +33,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -42,6 +43,7 @@ import { basename, join } from "node:path";
 
 import { getWallClockNow } from "../shared/clock.ts";
 import { handoffsDir } from "../shared/paths.ts";
+import { parseHandoffFrontmatter } from "./handoff-body-parser.ts";
 
 /** Handoff file shape written by the `/handoff` skill: `HANDOFF_<id>.md`. */
 const HANDOFF_FILE_RE = /^HANDOFF_.+\.md$/;
@@ -91,14 +93,93 @@ export type SweepHandoffsOptions = {
 };
 
 export type SweepHandoffsOutput = {
+  /**
+   * F2/F3 ok-contract: `true` when every protection input was computed on a
+   * RELIABLE view. `false` ONLY when a protection input could not be determined
+   * and the sweep therefore fails SAFE (archivable `[]`) — currently the F1
+   * transient-LATEST case ({@link latestTargetName} rethrow). A CLI `--apply`
+   * MUST refuse to mutate when `ok` is false. The (b) malformed/unreadable
+   * handoffs do NOT flip `ok` — protecting them is a HEALTHY outcome (surfaced in
+   * {@link SweepHandoffsOutput.protected_malformed}), not a degraded view.
+   */
   ok: boolean;
   total_handoffs: number;
   /** The LATEST target name (protected), or null. */
   protected_latest: string | null;
   keep_recent: number;
+  /** (b) names protected because a live handoff's lineage references them. */
+  protected_referenced: string[];
+  /**
+   * (b) Sharpening 1(i): names protected because their own frontmatter is
+   * present-but-unparseable or unreadable (can't read their lineage; the (ii)
+   * documented residual lives in {@link LineageScan}).
+   */
+  protected_malformed: string[];
   /** Old + non-LATEST + beyond-keepRecent + beyond-retention. NEVER mutated. */
   archivable: HandoffArchiveCandidate[];
 };
+
+/**
+ * Result of {@link scanLineage}: the two (b) protection sets derived from one
+ * read+parse pass over the handoffs.
+ */
+type LineageScan = {
+  /**
+   * (b) handoffs named as a `lineage.input_handoffs` entry by ANY live handoff —
+   * protected from archival (never archive an ancestor a live handoff still
+   * derives from), even when old. Basename-normalized (entries are filenames
+   * like `HANDOFF_<id>.md`).
+   */
+  referenced: Set<string>;
+  /**
+   * Sharpening 1(i) (Pair-A shadow): handoffs whose frontmatter is PRESENT but
+   * unparseable (opener `---` + parse-null) OR unreadable (read threw) — protected
+   * as THEMSELVES ("can't protect what you can't read"; never archive a handoff
+   * whose lineage we cannot determine). A legacy NO-frontmatter handoff (no opener)
+   * is NOT here — its absence is legitimate; it stays a normal candidate (else we
+   * would over-protect every old plain handoff and break archival).
+   *
+   * Sharpening 1(ii) DOCUMENTED RESIDUAL: a malformed/unreadable handoff X also
+   * drops out of {@link referenced}, so any handoff X referenced loses X's
+   * protection-vote and — if not referenced elsewhere + old — can still be
+   * archived. Bounded + recoverable (archive is move-not-delete) + report-visible;
+   * same accepted-residual class as increment-1's (b)-defer. Not fixable without
+   * reading X.
+   */
+  malformedProtected: Set<string>;
+};
+
+/** True when `source` opens with a YAML frontmatter delimiter (block present). */
+function hasFrontmatterOpener(source: string): boolean {
+  return source.startsWith("---\n") || source.startsWith("---\r\n");
+}
+
+/**
+ * Single read+parse pass over the handoffs deriving the (b) lineage-protection
+ * sets — see {@link LineageScan} for the (i) protect-rule + (ii) residual.
+ */
+function scanLineage(dir: string, names: readonly string[]): LineageScan {
+  const referenced = new Set<string>();
+  const malformedProtected = new Set<string>();
+  for (const name of names) {
+    let source: string;
+    try {
+      source = readFileSync(join(dir, name), "utf-8");
+    } catch {
+      malformedProtected.add(name); // unreadable -> protect itself (Sharpening 1(i))
+      continue;
+    }
+    const fm = parseHandoffFrontmatter(source);
+    if (fm === null) {
+      // PRESENT-but-malformed (opener) -> protect; legacy no-opener -> normal.
+      if (hasFrontmatterOpener(source)) malformedProtected.add(name);
+      continue;
+    }
+    const inputs = fm.lineage?.input_handoffs;
+    if (inputs) for (const h of inputs) referenced.add(basename(h));
+  }
+  return { referenced, malformedProtected };
+}
 
 /**
  * Report-only sweep: enumerate handoffs and return the archivable candidates.
@@ -124,6 +205,8 @@ export function sweepArchivableHandoffs(
       total_handoffs: 0,
       protected_latest: null,
       keep_recent: opts.keepRecent,
+      protected_referenced: [],
+      protected_malformed: [],
       archivable: [],
     };
   }
@@ -154,10 +237,17 @@ export function sweepArchivableHandoffs(
       .map((c) => c.name),
   );
 
+  // (b) lineage-input protection (increment-2): never archive a handoff a live
+  // handoff still names as a lineage input, nor one whose own frontmatter we
+  // can't read (Sharpening 1(i)). See scanLineage / LineageScan.
+  const { referenced, malformedProtected } = scanLineage(dir, names);
+
   const archivable = all.filter(
     (c) =>
       c.name !== latest && // (a) LATEST target protected
       !recentProtected.has(c.name) && // (c) keepRecent protected
+      !referenced.has(c.name) && // (b) lineage-referenced protected
+      !malformedProtected.has(c.name) && // (b) Sharpening 1(i): unreadable protected
       c.ageMs > retentionMs, // (c) older than the recency window
   );
 
@@ -166,6 +256,8 @@ export function sweepArchivableHandoffs(
     total_handoffs: all.length,
     protected_latest: latest,
     keep_recent: opts.keepRecent,
+    protected_referenced: [...referenced].sort(),
+    protected_malformed: [...malformedProtected].sort(),
     archivable,
   };
 }
@@ -173,8 +265,14 @@ export function sweepArchivableHandoffs(
 /**
  * Move a handoff file into `.archive/` (recoverable; NEVER deletes). Mirrors
  * {@link archiveChannel}: boundary-guard + `renameSync` + collision-stamp.
+ * `opts.now` overrides the collision-stamp clock (defaults to
+ * {@link getWallClockNow}); injected for deterministic tests, mirroring
+ * {@link sweepArchivableHandoffs}'s `now`.
  */
-export function archiveHandoff(name: string): void {
+export function archiveHandoff(
+  name: string,
+  opts: { now?: number } = {},
+): void {
   if (!HANDOFF_FILE_RE.test(name)) {
     throw new Error(
       `[handoff-archive] archiveHandoff: invalid handoff name "${name}" — must match HANDOFF_<id>.md`,
@@ -184,12 +282,22 @@ export function archiveHandoff(name: string): void {
   const archive = handoffArchiveDir();
   mkdirSync(archive, { recursive: true });
   const dest = join(archive, name);
-  if (existsSync(dest)) {
-    // Don't overwrite a prior archived copy — stamp the new one.
-    renameSync(src, join(archive, `${name}__${getWallClockNow()}`));
+  if (!existsSync(dest)) {
+    renameSync(src, dest);
     return;
   }
-  renameSync(src, dest);
+  // Don't overwrite a prior archived copy — stamp the new one. F5 (Pair-A shadow):
+  // the timestamp alone collides if the SAME name is re-archived within one ms
+  // (e.g. two same-minute handoffs from different sessions swept together). Append
+  // a counter until the stamped name is free, so an archived copy is NEVER lost.
+  const stamp = opts.now ?? getWallClockNow();
+  let candidate = join(archive, `${name}__${stamp}`);
+  let i = 1;
+  while (existsSync(candidate)) {
+    candidate = join(archive, `${name}__${stamp}__${i}`);
+    i++;
+  }
+  renameSync(src, candidate);
 }
 
 /**
@@ -209,7 +317,16 @@ export function pruneHandoffArchive(opts: {
 
   type Entry = { name: string; path: string; mtimeMs: number };
   const entries: Entry[] = [];
-  for (const name of readdirSync(archive)) {
+  // F4 (Pair-A shadow): .archive may exist but be unreadable / not-a-dir
+  // (readdirSync throws ENOTDIR/EACCES). Tolerate it — nothing to prune — rather
+  // than aborting; mirrors the sweep's enumeration tolerance + #175's N1.
+  let archivedNames: string[];
+  try {
+    archivedNames = readdirSync(archive);
+  } catch {
+    return [];
+  }
+  for (const name of archivedNames) {
     const path = join(archive, name);
     try {
       entries.push({ name, path, mtimeMs: statSync(path).mtimeMs });
