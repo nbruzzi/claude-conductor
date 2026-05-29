@@ -24,6 +24,7 @@
  * GC-lifecycle predicate. See {@link Liveness}.
  */
 
+import { statSync } from "node:fs";
 import { hostname } from "node:os";
 import {
   GC_WINDOW_MS,
@@ -38,6 +39,8 @@ import {
 } from "./index.ts";
 import { listChannels } from "../channels/index.ts";
 import { listClaims } from "../channels/identity.ts";
+import { listWorktrees } from "../worktrees/index.ts";
+import { readRepoConfig } from "../worktrees/repo-config.ts";
 
 /** Which substrate class a candidate belongs to. Presence is fully enumerated;
  *  identity + worktree are report-only (enumerated as candidates, never
@@ -345,6 +348,92 @@ function enumerateIdentity(
 }
 
 /**
+ * Find the FIRST presence session whose full id starts with `prefix` (the
+ * 8-char sid-prefix a worktree path encodes). Worktree paths carry only the
+ * prefix — the full UUID is not recoverable from the path — so the cross-ref is
+ * a prefix-match, not an exact lookup (the repo-worktree-gc sid-prefix model).
+ * First match wins (prefix collisions across live sessions are vanishingly
+ * unlikely for an 8-hex-char prefix).
+ */
+function findSessionByPrefix(
+  sessionLiveness: Map<string, SessionLiveness>,
+  prefix: string,
+): { sessionId: string; live: SessionLiveness } | undefined {
+  for (const [sessionId, live] of sessionLiveness) {
+    if (sessionId.startsWith(prefix)) return { sessionId, live };
+  }
+  return undefined;
+}
+
+/** A worktree dir's own mtime-age — INFORMATIONAL (how long an orphan worktree
+ *  has lingered), NOT a session-liveness age. 0 if the dir vanished mid-walk. */
+function worktreeAgeMs(now: number, worktreePath: string): number {
+  try {
+    return Math.max(0, now - statSync(worktreePath).mtimeMs);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Enumerate per-session worktrees across the auto-provisioned repos as
+ * REPORT-ONLY candidates. A worktree has no heartbeat of its own; its path
+ * encodes only the 8-char sid-PREFIX, so liveness is cross-ref'd by prefix-match
+ * against the presence sessions ({@link findSessionByPrefix}). A worktree with
+ * no live presence session for its prefix is an ORPHAN (stale +
+ * ["no-presence-heartbeat"]) — the disk-consuming residue this surfaces.
+ * `gc_eligible` is ALWAYS false — worktree GC (removeWorktree) is deferred.
+ * Fail-soft: readRepoConfig + listWorktrees both return empty/absent on error.
+ */
+function enumerateWorktree(
+  now: number,
+  sessionLiveness: Map<string, SessionLiveness>,
+  isSessionPaused: (sessionId: string) => boolean,
+): ReconcileBootCandidate[] {
+  const out: ReconcileBootCandidate[] = [];
+  const config = readRepoConfig();
+  if (config.kind !== "ok") return out; // absent / malformed → no candidates
+  for (const repo of config.repos) {
+    if (repo.auto !== true) continue; // only auto-provisioned repos hold worktrees
+    for (const wt of listWorktrees(repo.canonical)) {
+      const match = findSessionByPrefix(sessionLiveness, wt.sessionId);
+      if (match !== undefined) {
+        // WITH presence: inherit the matched session's freshest liveness. We now
+        // hold the FULL session id, so paused resolves normally.
+        out.push({
+          artifact_class: "worktree",
+          artifact_id: wt.path,
+          session_id: match.sessionId,
+          classification: match.live.classification,
+          split_brain: false,
+          gc_eligible: false,
+          paused: isSessionPaused(match.sessionId),
+          failed_signals: match.live.failed_signals,
+          age_ms: match.live.age_ms,
+        });
+      } else {
+        // ORPHAN: no live session for this prefix. The path yields ONLY the
+        // 8-char prefix (the full sid is unrecoverable), so session_id is the
+        // prefix and paused cannot be resolved (readSessionPausedAt needs the
+        // full sid) → false. age_ms is the worktree dir's own age (informational).
+        out.push({
+          artifact_class: "worktree",
+          artifact_id: wt.path,
+          session_id: wt.sessionId,
+          classification: "stale",
+          split_brain: false,
+          gc_eligible: false,
+          paused: false,
+          failed_signals: ["no-presence-heartbeat"],
+          age_ms: worktreeAgeMs(now, wt.path),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Mark split-brain: more than one NON-stale (live or likely-dead) claim on the
  * same artifact_id means two sessions believe they hold it. Stale entries don't
  * count — they're the residue split-brain leaves, not the contention itself.
@@ -423,7 +512,11 @@ export function runReconcileBoot(
       ...enumerateIdentity(now, sessionLiveness, isSessionPaused),
     );
   }
-  // worktree report-only enumeration: 2a-commit-3b (next).
+  if (scope === "all" || scope === "worktree") {
+    candidates.push(
+      ...enumerateWorktree(now, sessionLiveness, isSessionPaused),
+    );
+  }
   // N1 reminder: the session-start HOOK integration MUST wrap runReconcileBoot
   // in try/catch — listArtifactIds/scanHeartbeats/listChannels can throw at the
   // fs level (malformed *entries* are surfaced as errors[]; an fs-level throw of

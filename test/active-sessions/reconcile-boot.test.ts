@@ -43,17 +43,25 @@ import {
 let tmpDir: string;
 let prev: string | undefined;
 let prevChannels: string | undefined;
+let prevConfig: string | undefined;
 const NOW = 1_800_000_000_000; // fixed reference; tests pass this as `now`.
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "reconcile-boot-"));
   prev = process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
   prevChannels = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  prevConfig = process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"];
   process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = tmpDir;
-  // Isolate the channels dir: runReconcileBoot's default scope now enumerates
-  // identity, which reads the channels dir. Point it at an empty (non-existent)
-  // path so these presence-focused tests see no real identity claims leak in.
+  // Isolate the channels dir AND the worktree-provisioner config: runReconcile-
+  // Boot's default scope now enumerates identity (reads the channels dir) and
+  // worktrees (reads the repo config, default ~/.claude/worktree-provisioner.json).
+  // Point both at non-existent paths so these presence-focused tests see no real
+  // identity claims / worktrees leak in (deterministic across machines + CI).
   process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = join(tmpDir, "no-channels");
+  process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"] = join(
+    tmpDir,
+    "no-config.json",
+  );
 });
 
 afterEach(() => {
@@ -63,6 +71,9 @@ afterEach(() => {
   if (prevChannels === undefined)
     delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
   else process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannels;
+  if (prevConfig === undefined)
+    delete process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"];
+  else process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"] = prevConfig;
   try {
     rmSync(tmpDir, { recursive: true, force: true });
   } catch {
