@@ -1364,3 +1364,37 @@ affects:
 **Supersedes / superseded_by:** Fast-follow to the #168 entry above (`read`-verb decode); extends the same SSOT summary to the hook digest surface.
 
 ---
+
+## 2026-05-29 — Decision: label DSSE-wrapped verdicts `(wrapped)` not `(signed)` — render shape-parses, never verifies (Cycle-5 #171)
+
+```yaml
+---
+ts: 2026-05-29T12:18:57Z
+kind: architectural
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/render.ts,
+    src/hooks/checks/peer-message-deliverer.ts,
+    test/channels/render.test.ts,
+    test/hooks/checks/peer-message-deliverer.test.ts,
+  ]
+---
+```
+
+**Context:** The #168/#170 work (above) taught `renderAuditVerdictSummary` to decode DSSE-wrapped verdicts and append a parenthetical distinguishing a wrapped envelope from a raw body. That label read `(signed)` for the wrapped case. But `renderAuditVerdictSummary` is a pure string→string display helper: it imports only types + the audit-verdict parsers, has zero crypto/keyring access, and decides "wrapped" solely by `parseAuditVerdictV0_3Wrapped(body) !== null` — it shape-parses the DSSE envelope, it does NOT verify the signature. On the passive surfaces that call it (the `read` CLI verb and the `peer-message-deliverer` UserPromptSubmit digest), `(signed)` is therefore a FALSE-TRUST signal: it asserts a cryptographic property the renderer never checked. Shape ≠ verification — only the verify-gated paths walk the crypto.
+
+**Options considered:**
+
+1. **Relabel `(signed)` → `(wrapped)` — claim envelope SHAPE only (CHOSEN).** The label reports exactly what was observed (a v0.3 DSSE wrapper shape-parsed) and makes no trust claim. Reserve any verified-signature claim for the verify-gated paths that do the real crypto walk (`audit verify`; `quorum --require-signed`, which excludes `brokenSignatureSeqs`).
+2. Make render verify the signature so `(signed)` becomes true. Rejected: pulls crypto + keyring access into a pure display helper on the hot per-message digest path; verification belongs at explicit verify gates, not inline on every render.
+3. Drop the parenthetical entirely. Rejected: the wrapped-vs-raw distinction is genuinely useful at-a-glance (signals the body arrived inside a signed chain entry, even if unverified). Only the trust-implying WORD was wrong, not the distinction itself.
+
+**Chosen:** Option 1.
+
+**Reason:** A display label must not assert a property the producing code never checked. Shape-parsing a DSSE wrapper proves the envelope is well-formed, not that its signature is valid — those are separate operations, and only the verify-gated paths do the latter. `(wrapped)` is the honest report of what render observed; it preserves the useful wrapped/raw distinction while moving the trust claim to where it is actually earned. The `render.ts` JSDoc now documents this shape-vs-verification invariant inline (and intentionally retains the literal `(signed)` in prose, to name the thing the renderer must NOT emit), so a future editor does not re-introduce the false-trust label. Independently cross-pair-audited (Charlie, primary-source): render imports only types + parsers, structurally cannot verify — LGTM, no blockers.
+
+**Supersedes / superseded_by:** Corrects the `(signed)` label introduced alongside the #168/#170 decode entries above; same SSOT summary helper (`renderAuditVerdictSummary`), trust-semantics fix.
+
+---

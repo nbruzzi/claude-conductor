@@ -667,7 +667,7 @@ describe("peer-message-deliverer hook", () => {
       expect(result.stdout).toMatch(/\[peer-body-[0-9a-f]{8}\]/);
     });
 
-    it("decodes an inline DSSE-wrapped (signed) verdict into the same summary", async () => {
+    it("decodes an inline DSSE-wrapped verdict into the same summary (labeled wrapped, not signed)", async () => {
       await setupChannel();
       seedSelfCursor();
       const kp = await generateKeypair();
@@ -689,7 +689,8 @@ describe("peer-message-deliverer hook", () => {
       expect(result.stdout).toContain(
         "audit-verdict SHIP-CLEAN PR#165 → Charlie",
       );
-      expect(result.stdout).toContain("(signed)");
+      expect(result.stdout).toContain("(wrapped)");
+      expect(result.stdout).not.toContain("(signed)");
       // DSSE envelope internals must NOT leak (base64 payload / payloadType).
       expect(result.stdout).not.toContain("payloadType");
     });

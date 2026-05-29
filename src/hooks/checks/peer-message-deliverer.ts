@@ -116,7 +116,7 @@ function readChannelMessages(channelId: string): readonly ChannelMessage[] {
  *  null when the message is not a decodable verdict.
  *
  *  Mirrors the #168 `read`-verb fix on the hook-digest surface: without this,
- *  a DSSE-wrapped (signed) verdict shows as an opaque base64 blob inline, and
+ *  a DSSE-wrapped verdict shows as an opaque base64 blob inline, and
  *  a body_ref-sidecarred verdict shows only as a `body_ref:` pointer — both
  *  lose the verdict at a glance in the UserPromptSubmit digest.
  *
