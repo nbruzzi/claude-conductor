@@ -38,6 +38,10 @@ import {
   pruneHandoffArchive,
   sweepArchivableHandoffs,
 } from "../../src/channels/handoff-archive.ts";
+import {
+  createLineageEnvelope,
+  type LineageEnvelope,
+} from "../../src/channels/api.ts";
 
 let tmpDir: string;
 let prev: string | undefined;
@@ -106,6 +110,27 @@ describe("archiveHandoff — move (recoverable), never delete", () => {
       f.startsWith(`${n}__`),
     );
     expect(stamped.length).toBe(1);
+  });
+
+  it("F5: collision-stamp stays UNIQUE even when the stamped name ALSO exists (same-ms double collision)", () => {
+    const n = writeHandoff("dup2", 10 * DAY);
+    mkdirSync(join(tmpDir, ".archive"), { recursive: true });
+    // dest exists (forces the stamp path) AND the stamp for now=12345 already
+    // exists (forces the F5 uniquifier loop — a same-ms re-archive of the name).
+    writeFileSync(join(tmpDir, ".archive", n), "pre-existing-dest");
+    writeFileSync(
+      join(tmpDir, ".archive", `${n}__12345`),
+      "pre-existing-stamp",
+    );
+    archiveHandoff(n, { now: 12345 });
+    // Neither pre-existing archived copy is overwritten; the new one lands under a
+    // further-disambiguated name.
+    expect(existsSync(join(tmpDir, ".archive", n))).toBe(true);
+    expect(existsSync(join(tmpDir, ".archive", `${n}__12345`))).toBe(true);
+    const further = readdirSync(join(tmpDir, ".archive")).filter((f) =>
+      f.startsWith(`${n}__12345__`),
+    );
+    expect(further.length).toBe(1);
   });
 
   it("rejects a non-handoff name (boundary guard)", () => {
@@ -215,6 +240,17 @@ describe("pruneHandoffArchive — delete old archived (mirror pruneArchive)", ()
     expect(purged).toEqual(["HANDOFF_b.md", "HANDOFF_c.md"]);
     expect(existsSync(join(tmpDir, ".archive", "HANDOFF_a.md"))).toBe(true);
   });
+
+  it("F4: a non-directory .archive yields [] (no throw) — prune blast-radius isolation", () => {
+    // .archive exists but is a FILE -> readdirSync throws ENOTDIR. Prune must
+    // tolerate it (return []), mirroring the sweep's enumeration tolerance + #175 N1.
+    writeFileSync(join(tmpDir, ".archive"), "not a dir");
+    let result: string[] | undefined;
+    expect(() => {
+      result = pruneHandoffArchive({ retentionDays: 30, maxEntries: 50 });
+    }).not.toThrow();
+    expect(result).toEqual([]);
+  });
 });
 
 describe("sweepArchivableHandoffs — F1 transient-LATEST fail-safe (Pair-A RE shadow)", () => {
@@ -235,5 +271,116 @@ describe("sweepArchivableHandoffs — F1 transient-LATEST fail-safe (Pair-A RE s
     expect(out.ok).toBe(false);
     expect(out.archivable).toEqual([]);
     expect(out.protected_latest).toBeNull();
+  });
+});
+
+const FIXTURE_SID = "11111111-1111-4111-8111-111111111111";
+
+/** Replicated from the lineage roundtrip integration test — emits parser-valid lineage YAML. */
+function emitLineageYaml(env: LineageEnvelope): string {
+  const lines: string[] = [
+    "lineage:",
+    `  kind_version: ${env.kind_version}`,
+    `  producer_session_id: ${env.producer_session_id}`,
+  ];
+  if (env.produced_at !== undefined && env.produced_at !== null) {
+    lines.push(`  produced_at: ${env.produced_at}`);
+  }
+  if (env.input_body_refs.length === 0) {
+    lines.push(`  input_body_refs: []`);
+  } else {
+    lines.push(`  input_body_refs:`);
+    for (const ref of env.input_body_refs) lines.push(`    - ${ref}`);
+  }
+  if (Array.isArray(env.input_handoffs) && env.input_handoffs.length > 0) {
+    lines.push(`  input_handoffs:`);
+    for (const h of env.input_handoffs) lines.push(`    - ${h}`);
+  }
+  return lines.join("\n");
+}
+
+/** Write a HANDOFF_<id>.md carrying lineage.input_handoffs frontmatter + controlled age. */
+function writeHandoffWithLineage(
+  id: string,
+  ageMs: number,
+  inputHandoffs: readonly string[],
+): string {
+  const env = createLineageEnvelope({
+    producer_session_id: FIXTURE_SID,
+    produced_at: new Date(NOW).toISOString(),
+    input_body_refs: [],
+    input_handoffs: [...inputHandoffs],
+  });
+  const name = `HANDOFF_${id}.md`;
+  const path = join(tmpDir, name);
+  const content = `---
+session_id: ${FIXTURE_SID}
+started_at: 2026-05-27T10:00:00Z
+ended_at: 2026-05-27T11:00:00Z
+entries_touched: []
+${emitLineageYaml(env)}
+---
+
+# Handoff ${id}
+`;
+  writeFileSync(path, content);
+  const mtime = new Date(NOW - ageMs);
+  utimesSync(path, mtime, mtime);
+  return name;
+}
+
+describe("sweepArchivableHandoffs — (b) lineage-input protection (increment-2)", () => {
+  it("a handoff referenced by another's lineage.input_handoffs is PROTECTED, even when old + beyond recency", () => {
+    // A: old, beyond retention, non-LATEST, beyond keepRecent — archivable WITHOUT (b).
+    const a = writeHandoff("lineage-input-old", 60 * DAY);
+    // B: recent, references A via lineage.input_handoffs.
+    writeHandoffWithLineage("referrer", 1 * DAY, [a]);
+    const out = sweepArchivableHandoffs({
+      now: NOW,
+      retentionDays: 14,
+      keepRecent: 0,
+    });
+    // (b): A is protected because a live handoff's lineage references it.
+    expect(out.archivable.map((c) => c.name)).not.toContain(a);
+  });
+
+  it("Sharpening 1(i): a PRESENT-but-malformed frontmatter is PROTECTED, while a legacy NO-frontmatter handoff stays archivable", () => {
+    // malformed: opener (---) present + unparseable body -> protect (can't read its
+    // lineage, so don't archive it — "can't protect what you can't read").
+    const malformed = "HANDOFF_malformed-old.md";
+    const mPath = join(tmpDir, malformed);
+    writeFileSync(mPath, "---\ngarbage: true\nfoo: bar\n---\n\n# malformed\n");
+    const oldMtime = new Date(NOW - 60 * DAY);
+    utimesSync(mPath, oldMtime, oldMtime);
+    // legacy: NO opener -> normal archivable candidate (absence is legitimate, NOT
+    // malformed — over-protecting these would break archival for every old handoff).
+    const legacy = writeHandoff("legacy-none-old", 60 * DAY);
+    const out = sweepArchivableHandoffs({
+      now: NOW,
+      retentionDays: 14,
+      keepRecent: 0,
+    });
+    const names = out.archivable.map((c) => c.name);
+    expect(names).not.toContain(malformed); // malformed-present protected
+    expect(names).toContain(legacy); // legacy-absent still archivable
+  });
+
+  it("F2/F3 transparency: reports protected_referenced + protected_malformed so the operator sees WHAT (b) protected", () => {
+    const a = writeHandoff("ref-target", 60 * DAY);
+    writeHandoffWithLineage("referrer2", 1 * DAY, [a]);
+    const malformed = "HANDOFF_malformed2.md";
+    writeFileSync(join(tmpDir, malformed), "---\nbad: yaml\n---\n\n# m\n");
+    const mt = new Date(NOW - 60 * DAY);
+    utimesSync(join(tmpDir, malformed), mt, mt);
+    const out = sweepArchivableHandoffs({
+      now: NOW,
+      retentionDays: 14,
+      keepRecent: 0,
+    });
+    expect(out.protected_referenced).toContain(a);
+    expect(out.protected_malformed).toContain(malformed);
+    // ok stays TRUE: (b) protections are HEALTHY outcomes, not a degraded view
+    // (Alpha convergent F2 — a healthy protection must never flip ok:false).
+    expect(out.ok).toBe(true);
   });
 });
