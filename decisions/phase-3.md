@@ -1434,3 +1434,38 @@ affects:
 **Supersedes / superseded_by:** Additive — no prior decision superseded. Applies the `audit-ask.ts` "structured shape earns a new kind" convention to a new instance.
 
 ---
+
+## 2026-05-29 — Decision: Cycle 2 boot-reconciliation — placement, liveness axes, safety model
+
+```yaml
+---
+ts: 2026-05-29T18:45:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/reconcile-boot.ts,
+    src/active-sessions/index.ts,
+    test/active-sessions/reconcile-boot.test.ts,
+    test/active-sessions/liveness.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle 2 (agetor steal-list A-P0-1; backlog 1040) adds `reconcile-boot` — a cross-class operator interface that surfaces stale coordination state (presence + identity + worktree) and, under `--apply`, GCs the eligible entries. Pair B (Charlie + Delta). Several architectural calls were cohort-ratified before/during build; logged here per the substrate-class decision-log gate.
+
+**Options considered + chosen:**
+
+1. **Placement (A all-dotfiles / B plugin-core + thin verb / C hybrid) — CHOSEN B.** `runReconcileBoot` core + types live plugin-side (`src/active-sessions/reconcile-boot.ts`, re-exported from `index.ts`); the dotfiles `/presence` CLI adds a thin `reconcile-boot` verb. Decider: the session-start hook integration is report-mode — a conductor hook must `import runReconcileBoot`, so the core MUST be plugin-importable; (A) would strand it in the dotfiles CLI, unreachable by a hook/dashboard. Plugin-removal-test agrees (reconcile-boot is reusable coordination substrate, not CLI glue). Channels primitives are plugin-exported (`claude-conductor/channels/api`), so plugin-side cross-class orchestration needs no backwards dotfiles import. Cohort-unanimous (Delta proposed C; Charlie + Alpha + Bravo independently arrived at B on hook-importability).
+2. **Liveness classification vocabulary — CHOSEN: adopt `classifyLiveness` (live / likely-dead / stale, stale = OLDEST), NOT the design doc's stale = intermediate.** `classifyLiveness` was lifted shim→plugin (de-dup) and reused verbatim. The design's `live → stale → GC'd` state-machine collided on the word "stale". Resolved by keeping TWO separate axes — `classification` (age bucket) vs `gc_eligible` (derived predicate) + a separate `split_brain` flag — so "stale" never means two things.
+3. **gc_eligible predicate — CHOSEN: `classification === "stale" && age > GC_WINDOW_MS`.** `GC_WINDOW_MS` (= 2 × LIVE_WINDOW_MS = 60min) was already defined but unexported; exported + reused as the single-sourced safety-floor (clock-skew defense) rather than recomputed at the call site. Future AND-NOT blockers reserved (each can only SUBTRACT eligibility): `pid-alive` (Q2, same-host `kill(pid,0)`) + `pause-marker` (Cycle-6 item-4; OwnerRecord `pausedAt?`, Alpha-confirmed) — both deferred, not implemented this slice.
+4. **exit-2 semantics — CHOSEN: gc_eligible-drives-exit-2** (refines design §4's "any-stale → exit-2" wording). exit 0 clean / 2 = operator can `--apply` something (gc_eligible > 0) / 3 malformed (next increment). A stale-but-young (floor-protected) entry surfaces in `candidates[]` for awareness but exits 0 — nothing actionable.
+
+**Scope (incremental):** this increment = presence-class enumeration + classification + gc_eligible + report-mode + the §2 output contract. `--apply` GC execution (CAS-rechecked) + identity/worktree report-only enumeration + malformed-entry surfacing (exit 3) land in the next increment — the composed `listAllHeartbeats` primitive silently skips malformed entries, so detecting them needs the next-increment raw enumeration. **NEVER auto-kill** holds throughout: report-default + no auto-`--apply` path + the 60min floor.
+
+**Reason:** A passive operator-report surface must never auto-destroy peer state, and a classification axis must not double as a GC decision. Separating `classification` from `gc_eligible`, single-sourcing the floor, and reserving (not implementing) future blockers keeps the model honest and monotonically safe. Placement B is forced by hook-importability.
+
+**Supersedes / superseded_by:** First Cycle-2 entry; refines the boot-reconciliation design doc (`cycle-2-boot-reconciliation-design-2026-05-27.md`) §3/§4 (the stale-collision + exit-2 wording). Cross-pair-shadowed by Pair A at the PR boundary.
+
+---
