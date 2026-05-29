@@ -1398,3 +1398,39 @@ affects:
 **Supersedes / superseded_by:** Corrects the `(signed)` label introduced alongside the #168/#170 decode entries above; same SSOT summary helper (`renderAuditVerdictSummary`), trust-semantics fix.
 
 ---
+
+## 2026-05-29 — Decision: `poll` is a NEW channel kind, not an extension of free-form `question` (Cycle 6 item-2 #172)
+
+```yaml
+---
+ts: 2026-05-29T18:15:00Z
+kind: api-shape
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/poll.ts,
+    src/channels/index.ts,
+    src/channels/api.ts,
+    src/channels/cli.ts,
+    test/channels/poll.test.ts,
+    test/channels/channel-kinds-ssot.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle 6 item-2 (agetor steal-list A-P1-4) asked for "structured-card answers on `kind=question` (`options: [...]` field)" — peer-to-peer structured questions for cohort votes / approvals / decisions. Read literally, that means bolting an `options` array onto the existing `question` kind. But `question` is intentionally unstructured free-form, and `audit-ask.ts` already documents the governing convention (§ "Why a new kind vs extending question"): a structured body shape earns a NEW kind — the same reasoning that gave `digest`, `live-update`, and `audit-ask` their own kinds rather than overloading `question`. Upstream-coverage check (Bravo-style): no `question.ts` exists; `question` has no schema or validation today.
+
+**Options considered:**
+
+1. **New `poll` kind carrying the structured body (CHOSEN).** `PollBody = { kind_version, question, options (>=2, unique non-empty id+label), multi_select?, free_text? }`; `parsePollBody` mirrors the per-kind parser SSOT; `question` stays free-form. Consistent with the established structured-shape-earns-a-kind convention; slots alongside the other structured kinds (validated body + send-time gate + SSOT-iterated help/tests).
+2. Extend `question` with an optional `options` field (the roadmap's literal phrasing). Rejected: makes `question` a hybrid (sometimes free-form, sometimes structured), violating the documented convention and muddying the deliberate free-form/structured split.
+3. Drop the structured-answer feature. Rejected: A-P1-4 is a ratified steal-list item, and the cohort runs structured decisions/votes constantly (this very channel).
+
+**Chosen:** Option 1.
+
+**Reason:** A documented codebase convention (structured shape → new kind) outranks the roadmap's pre-convention wording. `poll` keeps `question` free-form and is purely additive (`CHANNEL_KINDS` 16→17; `VALID_KINDS = CHANNEL_KINDS`, so send auto-accepts). Pair-A partner (Bravo) independently endorsed the new-kind call. Answer convention v1 = responders reference an option `id` in a reply; a dedicated `poll-answer` kind + tally is a documented follow-up (v1 scoped to the structured "card"). `cross_edge_consumers_verified`: conductor-only — the dotfiles `cli.ts` auto-delegates via `runChannelsCli`, and no dotfiles consumer imports `parsePollBody` in v1.
+
+**Supersedes / superseded_by:** Additive — no prior decision superseded. Applies the `audit-ask.ts` "structured shape earns a new kind" convention to a new instance.
+
+---
