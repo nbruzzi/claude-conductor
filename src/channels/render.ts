@@ -163,7 +163,12 @@ function renderBody(kind: ChannelKind, body: string): string {
 /**
  * One-line readable summary of an audit-verdict body (raw OR DSSE-wrapped),
  * or null if `body` does not parse as a verdict. Keys on the inner-body
- * fields; appends `(signed)` for a v0.3 DSSE envelope, `(raw)` otherwise.
+ * fields; appends `(wrapped)` for a v0.3 DSSE envelope, `(raw)` otherwise.
+ *
+ * The label reflects envelope SHAPE only — this is a pure display helper with
+ * no crypto access, so it deliberately does NOT claim `(signed)`: shape-parsing
+ * a DSSE wrapper does not verify its signature. Reserve a verified-signature
+ * claim for the verify-gated paths (`audit verify`, `quorum --require-signed`).
  *
  * **Exported** (sibling to `renderKindPrefix`) so the SAME summary format is
  * the single source of truth across both verdict-display surfaces: the `read`
@@ -174,19 +179,19 @@ function renderBody(kind: ChannelKind, body: string): string {
  */
 export function renderAuditVerdictSummary(body: string): string | null {
   // Single-parse: parseAuditVerdictV0_3Wrapped does the wrapped-envelope work
-  // once; reuse its result for both the inner body and the `signed` flag, then
-  // fall back to the raw parser. Avoids the double-parse (composing
+  // once; reuse its result for both the inner body and the `isWrapped` flag,
+  // then fall back to the raw parser. Avoids the double-parse (composing
   // parseAuditVerdictBodyAnyVersion + a second wrapped-parse) Bravo/Charlie
   // flagged on #168.
   const wrapped = parseAuditVerdictV0_3Wrapped(body);
   const v = wrapped !== null ? wrapped.body : parseAuditVerdictBody(body);
   if (v === null) return null;
   const c = v.counts;
-  const signed = wrapped !== null;
+  const isWrapped = wrapped !== null;
   return (
     `audit-verdict ${v.verdict} PR#${v.target_pr.number} → ${v.target_peer} ` +
     `[${v.audit_class}] B${c.blocker}/F${c.fold}/N${c.nit} ` +
-    `lenses=${v.lens_set_applied.join("+")} ${signed ? "(signed)" : "(raw)"}`
+    `lenses=${v.lens_set_applied.join("+")} ${isWrapped ? "(wrapped)" : "(raw)"}`
   );
 }
 

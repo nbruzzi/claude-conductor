@@ -352,7 +352,7 @@ describe("renderMessage — audit-verdict readability", () => {
     expect(out).not.toContain("kind_version");
   });
 
-  it("decodes a DSSE-wrapped (signed) verdict into the same readable summary", async () => {
+  it("decodes a DSSE-wrapped verdict into the same readable summary (labeled wrapped, not signed)", async () => {
     const kp = await generateKeypair();
     const wrapped = await wrapAuditVerdictBody(
       SAMPLE_VERDICT,
@@ -369,7 +369,8 @@ describe("renderMessage — audit-verdict readability", () => {
     };
     const out = renderMessage(msg);
     expect(out).toContain("audit-verdict SHIP-CLEAN PR#165 → Charlie");
-    expect(out).toContain("(signed)");
+    expect(out).toContain("(wrapped)");
+    expect(out).not.toContain("(signed)");
     expect(out).not.toContain("payloadType");
   });
 
