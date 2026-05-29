@@ -59,6 +59,10 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       // (Pair B Delta-pen capacity-take per §5 flexibility-clause +
       // Charlie 19:42Z tool-flow-accuracy explicit-defer)
       "key-revoke",
+      // Cycle 6 item-2 (Sundry-P1; agetor steal-list A-P1-4) cycle
+      // 2026-05-29 — `poll` structured-choice question kind (a NEW kind,
+      // not an extension of free-form `question`)
+      "poll",
     ]);
   });
 
@@ -74,8 +78,9 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // drift catch (Delta N2 sharper assertion) holds at 14 post-T2V2.
     // 14 → 15 with Tier 2 Verb 1 `wind-down-checkin`. 15 → 16 with
     // Cycle 1 substrate-core PR-A7 `key-revoke` per Pair B body §2.5
-    // + §4.3 + §8 step 7 LOCKED.
-    expect(CHANNEL_KINDS.length).toBe(16);
+    // + §4.3 + §8 step 7 LOCKED. 16 → 17 with Cycle 6 item-2 (Sundry-P1;
+    // agetor steal-list A-P1-4) `poll` structured-choice kind 2026-05-29.
+    expect(CHANNEL_KINDS.length).toBe(17);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {

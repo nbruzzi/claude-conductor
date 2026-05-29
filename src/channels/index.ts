@@ -181,6 +181,16 @@ export const CHANNEL_KINDS = [
   // defer + `feedback-cohort-standby-standoff-anti-pattern` named-
   // alternate-owner rule.
   "key-revoke",
+  // Cycle 6 item-2 (Sundry-P1; agetor steal-list A-P1-4) 2026-05-29 — `poll`
+  // structured-choice question kind. A NEW kind (NOT an extension of the
+  // free-form `question`) per the "structured shape earns a new kind"
+  // convention (see audit-ask.ts § "Why a new kind vs extending question").
+  // Carries a typed body (question + >=2 validated options + optional
+  // multi_select / free_text flags) for cohort decisions / votes /
+  // structured approvals. See `src/channels/poll.ts` for `PollBody` +
+  // `parsePollBody`; readers trust the SHAPE, the option set is an
+  // author-claim.
+  "poll",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

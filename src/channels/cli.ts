@@ -89,6 +89,7 @@ import { isSubstrateClassPR } from "./substrate-class.ts";
 import { parseMemoryProposalBody } from "./memory-proposal.ts";
 import { parseWindDownCheckinBody } from "./wind-down-checkin.ts";
 import { parseKeyRevokeBody } from "./key-revoke.ts";
+import { parsePollBody } from "./poll.ts";
 import {
   resolveActiveChannelForHandoff,
   summarizeChannelForHandoff,
@@ -144,7 +145,7 @@ const VERB_HELP: Record<string, string> = {
     "create <channel-id> <handoff-id>\n  Create a new channel with metadata for the given handoff id.",
   join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
-  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest, live-update, audit-ask, audit-verdict, memory-proposal, wind-down-checkin, key-revoke}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.\n  kind=live-update carries the LiveUpdateBody schema (src/channels/live-update.ts) but is currently NOT pre-validated at send time (parser runs at read time per the verification-budget convention).\n  kind=audit-ask validates body against the AuditAskBody schema (src/channels/audit-ask.ts) before send.\n  kind=audit-verdict validates body against the AuditVerdictBody schema (src/channels/audit-verdict.ts) before send.\n  kind=memory-proposal validates body against the MemoryProposalBody schema (src/channels/memory-proposal.ts) before send.\n  kind=wind-down-checkin validates body against the WindDownCheckinBody schema (src/channels/wind-down-checkin.ts) before send.\n  kind=key-revoke validates body against the KeyRevokeBody schema (src/channels/key-revoke.ts) before send.",
+  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest, live-update, audit-ask, audit-verdict, memory-proposal, wind-down-checkin, key-revoke, poll}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.\n  kind=live-update carries the LiveUpdateBody schema (src/channels/live-update.ts) but is currently NOT pre-validated at send time (parser runs at read time per the verification-budget convention).\n  kind=audit-ask validates body against the AuditAskBody schema (src/channels/audit-ask.ts) before send.\n  kind=audit-verdict validates body against the AuditVerdictBody schema (src/channels/audit-verdict.ts) before send.\n  kind=memory-proposal validates body against the MemoryProposalBody schema (src/channels/memory-proposal.ts) before send.\n  kind=wind-down-checkin validates body against the WindDownCheckinBody schema (src/channels/wind-down-checkin.ts) before send.\n  kind=key-revoke validates body against the KeyRevokeBody schema (src/channels/key-revoke.ts) before send.\n  kind=poll validates body against the PollBody schema (src/channels/poll.ts) before send.",
   kinds:
     "kinds\n  Print the message-kind reference: semantic gloss + recommended body content\n  per kind + reader verification budget. See also: docs/conventions/message-kinds-and-verification.md.",
   read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen-cursors/<sid>.json (legacy: last-seen/; dual-read fallback ≥30d post-Step-G).\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
@@ -200,6 +201,7 @@ const KINDS_HELP =
   "  memory-proposal— peer surfaces memorialization candidate to Nick's batch yes/no decision queue (Tier 2 Verb 2). Trust the SHAPE; primary-source-verify slug uniqueness vs existing memories (when amends_existing is null) or the named memory exists on disk (when non-null). Body: JSON conforming to MemoryProposalBody (see src/channels/memory-proposal.ts).\n" +
   "  wind-down-checkin— peer broadcasts structured cycle-close state at wind-down time (Tier 2 Verb 1). Trust the SHAPE; primary-source-verify cycle_character claim against actual cycle artifacts (PR squashes/CI/failed-approach captures) + memory_candidates slug names against the memory directory. Body: JSON conforming to WindDownCheckinBody (see src/channels/wind-down-checkin.ts).\n" +
   "  key-revoke— operator revokes their own Ed25519 key OR cohort co-signs a compromise revocation (Cycle 1 substrate-core PR-A7). Wire-format drives <nato>.history.json maintenance which feeds resolveKeyAtTime + verifyChannelAuditChain (PR-A6 audit verify CLI maps revoked entries to breaks[].reason='revoked-key' distinct from 'tamper' + 'key-rotation-discontinuity'). Trust the SHAPE; primary-source-verify (a) signed_by[] contains the revoking NATO, (b) revoked_at is Date.parse-valid ISO-8601, (c) revoked_fingerprint matches an existing history entry. Body: JSON conforming to KeyRevokeBody (see src/channels/key-revoke.ts).\n" +
+  "  poll      — structured-choice question (votes / approvals / decisions); a NEW kind, NOT free-form question. Trust the SHAPE; the option set is an author-claim. Body: JSON conforming to PollBody (see src/channels/poll.ts).\n" +
   "\n" +
   "Send is blocked when this session's role is 'out' unless kind=out\n" +
   "(announcing departure is the one send allowed from an out-role peer).\n" +
@@ -1065,6 +1067,24 @@ export async function runChannelsCli(
               category: "VALIDATION",
               remediation:
                 "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md. Use inferAuditAskTier(loc, invariantRich) from claude-conductor/channels/api to compute the default tier.",
+            },
+          );
+        }
+
+        // Cycle 6 item-2 2026-05-29 — `poll` validator gate (parallel to
+        // audit-ask above). Body must JSON.parse into the PollBody shape per
+        // src/channels/poll.ts. Send-time validation gives operators
+        // immediate feedback rather than dropping silently on a downstream
+        // parse failure.
+        if (kind === "poll" && parsePollBody(body) === null) {
+          die(
+            ctx,
+            `[send] poll body failed schema validation — body must be JSON conforming to PollBody (see src/channels/poll.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, question (non-empty string), options (>=2 items, each {id (unique non-empty string), label (non-empty string), description? (string)}); optional multi_select / free_text (booleans, default false).`,
+            {
+              code: 2,
+              category: "VALIDATION",
+              remediation:
+                "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md.",
             },
           );
         }
