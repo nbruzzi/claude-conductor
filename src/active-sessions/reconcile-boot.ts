@@ -29,10 +29,11 @@ import {
   GC_WINDOW_MS,
   LIVE_WINDOW_MS,
   classifyLiveness,
-  listAllHeartbeats,
   listArtifactIds,
   readSessionPausedAt,
+  scanHeartbeats,
   type HeartbeatListing,
+  type HeartbeatScan,
   type Liveness,
 } from "./index.ts";
 
@@ -67,9 +68,17 @@ export type ReconcileBootCandidate = {
   /** Two sessions claim one artifact. Separate flag, never a `classification`
    *  value — resolves the stale-collision. `--apply` does NOT auto-resolve. */
   split_brain: boolean;
-  /** Derived: stale AND past the GC_WINDOW_MS safety-floor. The ONLY thing
-   *  `--apply` will GC. */
+  /** Derived: stale AND past the GC_WINDOW_MS safety-floor AND not paused. The
+   *  ONLY thing `--apply` will GC. */
   gc_eligible: boolean;
+  /** Session deliberately paused (markSessionPaused) — a SESSION-level lookup
+   *  (readSessionPausedAt), so `true` across ALL of a paused session's
+   *  candidates, not just its anchor. Makes a stale + gc_eligible=false entry
+   *  operator-VISIBLE as paused (vs a silent indistinguishable skip) →
+   *  manual-self-heal viable. Pause is a PROTECTION, not a failed liveness
+   *  signal, so it is its own field, never a `failed_signals` member.
+   *  (Cycle-6 item-4 / Bravo+Charlie #175 paused-dead report-visibility.) */
+  paused: boolean;
   /** Which liveness signals failed (never-auto-kill transparency). */
   failed_signals: ReconcileBootSignal[];
   age_ms: number;
@@ -108,11 +117,12 @@ export type ReconcileBootOptions = {
 
 /**
  * Compute which of the three live-requiring signals failed for a heartbeat.
- * `listAllHeartbeats` already drops future-mtime garbage and unparseable owner
- * records, so an entry that reaches us has a parseable owner; the signals we
- * can still observe failing on a surviving listing are mtime-age and
- * host-match. (`owner-record-parses` is in the union for direct callers that
- * read raw entries.) `pid-alive` is never listed yet (reserved — see type).
+ * `scanHeartbeats` routes future-mtime garbage and unparseable owner records
+ * into its `malformed` set (surfaced as errors), so an entry in the `valid`
+ * set we classify here has a parseable owner; the signals we can still observe
+ * failing on a surviving listing are mtime-age and host-match.
+ * (`owner-record-parses` is in the union for direct callers that read raw
+ * entries.) `pid-alive` is never listed yet (reserved — see type).
  */
 function failedSignals(
   h: HeartbeatListing,
@@ -152,12 +162,19 @@ function isGcEligible(
   return classification === "stale" && ageMs > GC_WINDOW_MS && !paused;
 }
 
-/** Enumerate + classify every presence heartbeat across all artifacts. */
+/**
+ * Enumerate + classify every presence heartbeat across all artifacts, AND
+ * surface the entries that could not be evaluated. Returns both the candidates
+ * (the valid, classified heartbeats) and the malformed-entry errors (corrupt
+ * owner records / future-mtime garbage that {@link scanHeartbeats} routes into
+ * its `malformed` set) so the report can be honest about its blind spots.
+ */
 function enumeratePresence(
   now: number,
   currentHost: string,
-): ReconcileBootCandidate[] {
+): { candidates: ReconcileBootCandidate[]; errors: ReconcileBootError[] } {
   const out: ReconcileBootCandidate[] = [];
+  const errors: ReconcileBootError[] = [];
 
   // Session-level pause lookup, memoized (Cycle-6 item-4, Option X). `pausedAt`
   // is written on the session's canonical-claude-home ANCHOR heartbeat
@@ -185,17 +202,30 @@ function enumeratePresence(
   try {
     artifactIds = listArtifactIds();
   } catch {
-    return out;
+    return { candidates: out, errors };
   }
   for (const artifactId of artifactIds) {
-    let entries: HeartbeatListing[];
+    let scan: HeartbeatScan;
     try {
-      entries = listAllHeartbeats({ artifactId, now });
+      scan = scanHeartbeats({ artifactId, now });
     } catch {
       continue;
     }
-    for (const h of entries) {
+    // Surface what the walk could not evaluate (corrupt owner / future-mtime).
+    // These never become candidates (we can't classify them), but they make
+    // `ok` load-bearing → exit 3, so an operator knows the report skipped data.
+    for (const m of scan.malformed) {
+      errors.push({
+        artifact_id: artifactId,
+        error_class: "malformed-entry",
+        detail: `${m.sessionId}: ${m.reason}`,
+      });
+    }
+    for (const h of scan.valid) {
       const classification = classifyLiveness(h);
+      // Compute the session-pause lookup ONCE — it feeds both the gc_eligible
+      // AND-term and the operator-visible `paused` field (Cycle-6 item-4).
+      const paused = isSessionPaused(h.sessionId);
       out.push({
         artifact_class: "presence",
         artifact_id: artifactId,
@@ -203,17 +233,14 @@ function enumeratePresence(
         classification,
         // split-brain is a cross-entry property; computed in a second pass.
         split_brain: false,
-        gc_eligible: isGcEligible(
-          classification,
-          h.ageMs,
-          isSessionPaused(h.sessionId),
-        ),
+        gc_eligible: isGcEligible(classification, h.ageMs, paused),
+        paused,
         failed_signals: failedSignals(h, currentHost),
         age_ms: h.ageMs,
       });
     }
   }
-  return out;
+  return { candidates: out, errors };
 }
 
 /**
@@ -255,21 +282,26 @@ export function runReconcileBoot(
   const currentHost = hostname();
 
   const candidates: ReconcileBootCandidate[] = [];
+  const errors: ReconcileBootError[] = [];
   if (scope === "all" || scope === "presence") {
-    candidates.push(...enumeratePresence(now, currentHost));
+    const presence = enumeratePresence(now, currentHost);
+    candidates.push(...presence.candidates);
+    errors.push(...presence.errors);
   }
   // identity + worktree enumeration: report-only, next increment (§10 Q4).
-  // TODO(increment-2, N1): listArtifactIds / listAllHeartbeats can throw on a
-  // filesystem-level error (malformed *entries* are already skipped safely).
-  // Acceptable for this report-only CLI caller (an uncaught throw → CLI exit),
-  // but the session-start HOOK integration MUST wrap enumeration in try/catch —
-  // a hook throwing at session-start is worse than a CLI exit. Fold into the
-  // error-surfacing (exit-3) work alongside --apply.
+  // TODO(increment-2, N1): listArtifactIds / scanHeartbeats can throw on a
+  // filesystem-level error (malformed *entries* are now surfaced as
+  // errors[]{malformed-entry}, distinct from an fs-level throw of the whole
+  // walk). Acceptable for this report-only CLI caller (an uncaught throw → CLI
+  // exit), but the session-start HOOK integration MUST wrap enumeration in
+  // try/catch — a hook throwing at session-start is worse than a CLI exit.
 
   markSplitBrain(candidates);
 
   return {
-    ok: true,
+    // Load-bearing (§3, #174 F2/F3): the report is `ok` only if it could read
+    // everything it found. A surfaced malformed-entry → ok=false → exit 3.
+    ok: errors.length === 0,
     total_enumerated: candidates.length,
     live_count: candidates.filter((c) => c.classification === "live").length,
     likely_dead_count: candidates.filter(
@@ -281,6 +313,6 @@ export function runReconcileBoot(
     // `--apply` GC is the next increment; report-mode never sets applied.
     applied: false,
     candidates,
-    errors: [],
+    errors,
   };
 }

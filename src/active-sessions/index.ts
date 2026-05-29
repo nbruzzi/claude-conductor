@@ -165,6 +165,36 @@ export type HeartbeatListing = PeerInfo & {
 };
 
 /**
+ * A heartbeat entry that {@link scanHeartbeats} found on disk but could NOT
+ * turn into a {@link HeartbeatListing}. Surfaced rather than silently dropped
+ * so an operator report can show what it could not evaluate — a report honest
+ * about its own blind spots (#174 F2/F3). `sessionId` is the raw directory
+ * entry (the filename); `reason` is why the valid-walk dropped it:
+ *   - "unparseable-owner": the body is not a valid OwnerRecord (corrupt JSON,
+ *     missing/mistyped fields) — readOwnerRecord returned null.
+ *   - "future-mtime": mtime sits implausibly far in the future, past the
+ *     clock-skew tolerance — defensiveAgeMs returned null (corrupt/garbage).
+ * A stat() failure (file vanished mid-walk) is NOT malformed — it is a benign
+ * race (nothing to GC, nothing corrupt), so scanHeartbeats skips it from BOTH
+ * sets, exactly as listAllHeartbeats always has.
+ */
+export type MalformedHeartbeat = {
+  sessionId: string;
+  reason: "unparseable-owner" | "future-mtime";
+};
+
+/**
+ * Result of ONE walk over an artifact's heartbeat directory: the valid
+ * listings plus the entries that existed but could not be evaluated.
+ * {@link listAllHeartbeats} is the `.valid`-only projection — the two sets
+ * come from a single pass over the same readdir, so they can never drift.
+ */
+export type HeartbeatScan = {
+  valid: HeartbeatListing[];
+  malformed: MalformedHeartbeat[];
+};
+
+/**
  * Three-bucket liveness classification of a heartbeat by mtime-age.
  *
  * NOTE the axis: `"stale"` is the OLDEST bucket here (age > LIVE_WINDOW_MS) —
@@ -779,20 +809,21 @@ export function listLivePeers(args: {
  * not-yet-GC'd entries with a `likelyDead` flag so `/presence list` can
  * distinguish recently-dead from live.
  */
-export function listAllHeartbeats(args: {
+export function scanHeartbeats(args: {
   artifactId: string;
   now: number;
-}): HeartbeatListing[] {
+}): HeartbeatScan {
   const { artifactId, now } = args;
   const dir = heartbeatsDir(artifactId);
-  if (!existsSync(dir)) return [];
+  const valid: HeartbeatListing[] = [];
+  const malformed: MalformedHeartbeat[] = [];
+  if (!existsSync(dir)) return { valid, malformed };
 
-  const out: HeartbeatListing[] = [];
   let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch {
-    return out;
+    return { valid, malformed };
   }
 
   for (const entry of entries) {
@@ -801,20 +832,42 @@ export function listAllHeartbeats(args: {
     try {
       mtimeMs = statSync(path).mtimeMs;
     } catch {
+      // File vanished mid-walk — benign race, nothing to GC. Skip from BOTH
+      // sets (not malformed): exactly the prior listAllHeartbeats behavior.
       continue;
     }
     const owner = readOwnerRecord(path);
-    if (!owner) continue;
+    if (!owner) {
+      malformed.push({ sessionId: entry, reason: "unparseable-owner" });
+      continue;
+    }
     const ageMs = defensiveAgeMs(now, mtimeMs);
-    if (ageMs === null) continue; // future-mtime garbage — skip in operator view
-    out.push({
+    if (ageMs === null) {
+      // future-mtime garbage — skipped from the operator view, but surfaced.
+      malformed.push({ sessionId: entry, reason: "future-mtime" });
+      continue;
+    }
+    valid.push({
       sessionId: entry,
       ageMs,
       owner,
       likelyDead: ageMs > LIKELY_DEAD_MS,
     });
   }
-  return out;
+  return { valid, malformed };
+}
+
+/**
+ * List the valid heartbeats for an artifact. Thin projection of
+ * {@link scanHeartbeats} — its `.valid` half. Callers that also need to know
+ * what was dropped (reconcile-boot's malformed surfacing) call scanHeartbeats
+ * directly. Behavior of the valid set is unchanged from the pre-scan version.
+ */
+export function listAllHeartbeats(args: {
+  artifactId: string;
+  now: number;
+}): HeartbeatListing[] {
+  return scanHeartbeats(args).valid;
 }
 
 /** Remove our own heartbeat — called at Stop. Best-effort. */

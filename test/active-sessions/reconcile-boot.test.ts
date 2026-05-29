@@ -14,10 +14,12 @@
  * with wall-clock. Each test writes heartbeats into a tmpDir-isolated registry
  * (CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR) and back-dates mtime via utimesSync.
  *
- * Scope this increment: presence-class enumeration. `--apply` GC + identity /
- * worktree enumeration + malformed-error surfacing (exit 3) land next (§10 Q4);
- * here malformed entries are asserted to be safely SKIPPED (not surfaced),
- * which is what the composed `listAllHeartbeats` primitive does.
+ * Scope this increment (2a): presence-class enumeration + malformed-entry
+ * surfacing (corrupt owner / future-mtime → errors[]{malformed-entry}, ok
+ * load-bearing → exit 3) + the operator-visible `paused` field. `--apply` GC
+ * lands in 2b (§10 Q4). Malformed entries are NOT candidates (we can't
+ * classify them) but ARE surfaced — `scanHeartbeats` partitions the one walk
+ * into valid + malformed, and `listAllHeartbeats` is its `.valid` projection.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -31,6 +33,7 @@ import {
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CLOCK_SKEW_TOLERANCE_MS,
   GC_WINDOW_MS,
   LIKELY_DEAD_MS,
   LIVE_WINDOW_MS,
@@ -193,15 +196,47 @@ describe("runReconcileBoot — presence-class logic", () => {
     expect(c?.gc_eligible).toBe(false); // fresh -> never GC'd regardless of host
   });
 
-  it("malformed heartbeat is safely SKIPPED this increment (not surfaced, no crash)", () => {
+  it("malformed heartbeat (corrupt owner) is SURFACED as a malformed-entry → ok=false (2a)", () => {
     writeHeartbeat("a", "ffffffff-0000-4000-8000-000000000001", 0); // one valid
     writeHeartbeat("a", "ffffffff-0000-4000-8000-000000000002", 0, {
       raw: "{ not json",
     });
     const out = runReconcileBoot({ now: NOW });
+    // The malformed entry is NOT a candidate (we can't classify it) ...
+    expect(out.total_enumerated).toBe(1);
+    // ... but it IS surfaced, and makes the report not-ok (→ exit 3).
+    expect(out.ok).toBe(false);
+    expect(out.errors.length).toBe(1);
+    const err = out.errors[0];
+    expect(err?.error_class).toBe("malformed-entry");
+    expect(err?.artifact_id).toBe("a");
+    expect(err?.detail).toContain("ffffffff-0000-4000-8000-000000000002");
+    expect(err?.detail).toContain("unparseable-owner");
+  });
+
+  it("future-mtime garbage is surfaced as a malformed-entry (future-mtime reason)", () => {
+    // Negative age → mtime back-dated to NOW + |age| (the future, beyond the
+    // clock-skew tolerance) → defensiveAgeMs returns null → scanHeartbeats
+    // routes it to malformed{future-mtime}, not the valid set.
+    writeHeartbeat("a", "ffffffff-0000-4000-8000-000000000003", 0); // one valid
+    writeHeartbeat(
+      "a",
+      "ffffffff-0000-4000-8000-000000000004",
+      -(CLOCK_SKEW_TOLERANCE_MS + 60_000),
+    );
+    const out = runReconcileBoot({ now: NOW });
+    expect(out.total_enumerated).toBe(1); // future-mtime is not a candidate
+    expect(out.ok).toBe(false);
+    expect(out.errors.length).toBe(1);
+    expect(out.errors[0]?.error_class).toBe("malformed-entry");
+    expect(out.errors[0]?.detail).toContain("future-mtime");
+  });
+
+  it("clean enumeration (no malformed) keeps ok=true and errors empty", () => {
+    writeHeartbeat("a", "ffffffff-0000-4000-8000-000000000005", 0);
+    const out = runReconcileBoot({ now: NOW });
     expect(out.ok).toBe(true);
-    expect(out.total_enumerated).toBe(1); // malformed dropped by listAllHeartbeats
-    expect(out.errors.length).toBe(0); // error-surfacing (exit 3) is next increment
+    expect(out.errors.length).toBe(0);
   });
 
   it("scope=presence enumerates the presence class", () => {
