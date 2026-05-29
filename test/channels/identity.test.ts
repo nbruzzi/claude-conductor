@@ -32,6 +32,7 @@ import {
   identitySentinelPath,
   INTERNAL,
   isValidIdentity,
+  listClaims,
   type NatoIdentity,
   NATO_POOL,
   NatoExhaustedError,
@@ -241,6 +242,54 @@ describe("identity", () => {
         defaultRole: "pen",
       });
       expect(result.role).toBe("pen");
+    });
+  });
+
+  describe("listClaims (full-scan twin of findExistingClaim)", () => {
+    it("returns every valid claim on a channel (multi-session)", async () => {
+      await createChannel({
+        channelId: "c-list-1",
+        handoffId: "c-list-1",
+        sessionId: "sess-a",
+      });
+      await claimIdentity({ channelId: "c-list-1", sessionId: "sess-a" });
+      await claimIdentity({ channelId: "c-list-1", sessionId: "sess-b" });
+      const claims = listClaims("c-list-1");
+      expect(claims.length).toBe(2);
+      const bySession = new Map(claims.map((c) => [c.claim.session_id, c]));
+      expect(bySession.get("sess-a")?.identity).toBe("Alpha");
+      expect(bySession.get("sess-b")?.identity).toBe("Bravo");
+    });
+
+    it("skips malformed + bad-role sentinels (best-effort)", async () => {
+      await createChannel({
+        channelId: "c-list-2",
+        handoffId: "c-list-2",
+        sessionId: "sess-good",
+      });
+      // Alpha: a real, valid claim.
+      await claimIdentity({ channelId: "c-list-2", sessionId: "sess-good" });
+      const identitiesPath = join(SANDBOX, "c-list-2", "identities");
+      // Bravo: corrupt JSON → validateIdentityClaim null → dropped.
+      writeFileSync(join(identitiesPath, "Bravo"), "{ not json", "utf-8");
+      // Charlie: valid JSON but role outside the enum → role-narrow drop.
+      writeFileSync(
+        join(identitiesPath, "Charlie"),
+        JSON.stringify({
+          session_id: "sess-charlie",
+          role: "not-a-real-channel-role-value",
+          joined_at: "2026-01-01T00:00:00.000Z",
+        }),
+        "utf-8",
+      );
+      const claims = listClaims("c-list-2");
+      expect(claims.length).toBe(1); // only the valid Alpha claim
+      expect(claims[0]?.identity).toBe("Alpha");
+      expect(claims[0]?.claim.session_id).toBe("sess-good");
+    });
+
+    it("returns [] for a channel with no identities dir", () => {
+      expect(listClaims("c-nonexistent")).toEqual([]);
     });
   });
 
