@@ -1499,6 +1499,7 @@ affects:
 **Supersedes / superseded_by:** Additive — implements the handoff teardown gap (slice-plan `cycle-6-item-3-teardown-parity-slice-plan-2026-05-29.md`). Cross-pair-shadowed by Pair A at the PR boundary.
 
 ---
+
 ## 2026-05-29 — Decision: Cycle 6 item-4 — session pause/resume markers + reconcile-boot pause-protection
 
 ```yaml
