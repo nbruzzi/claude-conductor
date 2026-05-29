@@ -54,6 +54,12 @@ export type { NatoIdentity } from "./identity.ts";
 // from `claude-conductor/channels/api` alongside `parseDigestBody`.
 export type { DigestBody } from "./digest.ts";
 
+// Cycle 6 item-2 2026-05-29 — `poll` structured-choice kind body schema +
+// nested `PollOption`. Consumers (operator tools, a future poll-answer /
+// tally verb, dashboard) import these from `claude-conductor/channels/api`
+// alongside `parsePollBody`.
+export type { PollBody, PollOption } from "./poll.ts";
+
 // Tier 1 Slice 1 2026-05-19 — `audit-ask` kind body schema type +
 // shared audit-discipline types (`AuditAskTier`, `AuditClass`,
 // `LensClass`). Consumers (operator tools, future audit-queue verb in
@@ -198,6 +204,12 @@ export { explicitlyOutPeers } from "./explicitly-out-peers.ts";
 // audit-class/SHA citations) lives in
 // `docs/conventions/message-kinds-and-verification.md`.
 export { parseDigestBody } from "./digest.ts";
+
+// Cycle 6 item-2 2026-05-29 — `poll` kind shared parser. Cross-edge
+// consumers (dotfiles shim if a hook/CLI consumes it directly; a future
+// poll-answer tally) import the value binding from
+// `claude-conductor/channels/api`.
+export { parsePollBody } from "./poll.ts";
 
 // Tier 1 Slice 1 2026-05-19 — `audit-ask` kind shared parser +
 // tier-default helper + audit-discipline type-guards + as-const tuples.
