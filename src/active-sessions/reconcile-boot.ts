@@ -37,6 +37,13 @@ import {
   type HeartbeatScan,
   type Liveness,
 } from "./index.ts";
+// Cross-module imports for the identity + worktree classes. channels/* and
+// worktrees/* both depend on active-sessions, so these EXTEND the existing
+// index↔reconcile-boot cycle (now spanning three subsystems). LOAD-SAFE only
+// because every use below is CALL-TIME — inside enumerateIdentity /
+// enumerateWorktree, never at module-eval. A future module-EVAL-time use of any
+// of these in this cycle would hit a TDZ on the partially-initialized exports.
+// Keep all cross-module uses call-time. (Bravo+Charlie #179 integration-lens.)
 import { listChannels } from "../channels/index.ts";
 import { listClaims } from "../channels/identity.ts";
 import { listWorktrees } from "../worktrees/index.ts";
