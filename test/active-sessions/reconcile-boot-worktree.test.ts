@@ -168,6 +168,11 @@ describe("runReconcileBoot — worktree report-only enumeration (§2)", () => {
     expect(wt?.classification).toBe("stale");
     expect(wt?.failed_signals).toEqual(["no-presence-heartbeat"]);
     expect(wt?.gc_eligible).toBe(false);
+    // An orphan worktree exposes only the 8-char prefix, so paused can't be
+    // resolved (readSessionPausedAt needs the full sid) → false. Locked here
+    // because it becomes load-bearing when worktree-GC lands (a later increment
+    // must resolve paused via prefix-scan OR document the gap — tracked).
+    expect(wt?.paused).toBe(false);
   });
 
   it("config absent → no worktree candidates", () => {

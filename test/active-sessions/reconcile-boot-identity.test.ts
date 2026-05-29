@@ -141,6 +141,36 @@ describe("runReconcileBoot — identity report-only enumeration (§2)", () => {
     expect(idc?.gc_eligible).toBe(false);
   });
 
+  it("a YOUNG orphan (recent joined_at) is STILL stale — classification is the absence-signal, age_ms is informational", async () => {
+    const creator = "bbbbbbbb-0000-4000-8000-00000000000b";
+    const orphan = "cccccccc-0000-4000-8000-00000000000c";
+    await createChannel({
+      channelId: "c-young",
+      handoffId: "c-young",
+      sessionId: creator,
+    });
+    // Raw sentinel for the orphan with joined_at AT NOW (young) — bypass
+    // claimIdentity to control joined_at. No heartbeat → orphan. The contract:
+    // an orphan is stale because it has NO presence heartbeat, NOT because it is
+    // old; age_ms is purely informational (now - joined_at), never a liveness age.
+    const identitiesPath = join(channelsDir, "c-young", "identities");
+    mkdirSync(identitiesPath, { recursive: true });
+    writeFileSync(
+      join(identitiesPath, "Bravo"),
+      JSON.stringify({
+        session_id: orphan,
+        role: "pen",
+        joined_at: new Date(NOW).toISOString(),
+      }),
+    );
+
+    const out = runReconcileBoot({ now: NOW, scope: "identity" });
+    const idc = out.candidates.find((c) => c.session_id === orphan);
+    expect(idc?.classification).toBe("stale"); // absence-signal, independent of age
+    expect(idc?.failed_signals).toEqual(["no-presence-heartbeat"]);
+    expect(idc?.age_ms).toBe(0); // now - joined_at(NOW) = 0 — informational, not liveness
+  });
+
   it("paused is carried onto the identity claim (session-level lookup)", async () => {
     const sid = "33333333-0000-4000-8000-000000000003";
     const anchorId = canonicalClaudeHomeArtifactId();
