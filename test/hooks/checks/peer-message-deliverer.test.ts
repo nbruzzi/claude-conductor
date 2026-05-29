@@ -49,6 +49,11 @@ import {
   resolvePeerMessageEmitCursorPath,
   resolvePendingPeerMessageEmitCursorPath,
 } from "../../../src/channels/peer-message-cursors.ts";
+import {
+  wrapAuditVerdictBody,
+  type AuditVerdictBody,
+} from "../../../src/channels/audit-verdict.ts";
+import { generateKeypair } from "../../../src/channels/key-surface.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
 const SANDBOX = `/tmp/test-peer-message-deliverer-${process.pid}`;
@@ -167,6 +172,27 @@ async function appendPeer(
 function messagesPath(ch: string): string {
   return join(resolveChannelsDir(), ch, "messages.jsonl");
 }
+
+/** Minimal valid audit-verdict body (sibling-shape to the fixture in
+ *  test/channels/render.test.ts). Decodes to the one-line summary
+ *  "audit-verdict SHIP-CLEAN PR#165 → Charlie [cross-pair-shadow]
+ *  B0/F0/N0 lenses=Contract+Architecture". */
+const SAMPLE_VERDICT: AuditVerdictBody = {
+  kind_version: 1,
+  target_pr: { repo: "claude-conductor", number: 165 },
+  target_peer: "Charlie",
+  lens_set_applied: ["Contract", "Architecture"],
+  audit_class: "cross-pair-shadow",
+  audit_axes: ["depth"],
+  verdict: "SHIP-CLEAN",
+  counts: { blocker: 0, fold: 0, nit: 0 },
+  three_option_ask: {
+    a_ratify: "ship",
+    b_fold_if_applicable: null,
+    c_reframe_if_applicable: null,
+  },
+  findings: [],
+};
 
 // ─── Tests ──────────────────────────────────────────────────────
 
@@ -599,6 +625,146 @@ describe("peer-message-deliverer hook", () => {
       const fenceMatch = result.stdout.match(/\[peer-body-([0-9a-f]{8})\]/);
       expect(fenceMatch).not.toBeNull();
       expect(fenceMatch?.[1]).not.toBe("deadbeef");
+    });
+  });
+
+  // ──────────────────── AUDIT-VERDICT DECODE (#168 fast-follow)
+  // The hook-digest surface mirror of the #168 `read`-verb fix: a
+  // DSSE-wrapped verdict must not show as an opaque base64 blob, and a
+  // body_ref-sidecarred verdict must not show as a bare pointer.
+  describe("audit-verdict decode (hook-digest surface)", () => {
+    function seedSelfCursor(): void {
+      seedCommittedCursor(
+        CH,
+        SESSION_SELF,
+        Date.now() - 60_000,
+        new Date(Date.now() - 60_000).toISOString(),
+      );
+    }
+
+    it("decodes an inline RAW verdict into the readable summary (not raw JSON)", async () => {
+      await setupChannel();
+      seedSelfCursor();
+      await appendMessage({
+        channelId: CH,
+        message: {
+          ts: new Date().toISOString(),
+          from: SESSION_BRAVO,
+          kind: "audit-verdict",
+          body: JSON.stringify(SAMPLE_VERDICT),
+        },
+      });
+      const result = await check(inputFor(SESSION_SELF));
+      expect(result.stdout).toContain(
+        "audit-verdict SHIP-CLEAN PR#165 → Charlie",
+      );
+      expect(result.stdout).toContain("B0/F0/N0");
+      expect(result.stdout).toContain("lenses=Contract+Architecture");
+      expect(result.stdout).toContain("(raw)");
+      // Opaque raw-JSON keys must NOT leak into the digest.
+      expect(result.stdout).not.toContain("kind_version");
+      // Decoded summary still flows through the per-emission nonce fence.
+      expect(result.stdout).toMatch(/\[peer-body-[0-9a-f]{8}\]/);
+    });
+
+    it("decodes an inline DSSE-wrapped (signed) verdict into the same summary", async () => {
+      await setupChannel();
+      seedSelfCursor();
+      const kp = await generateKeypair();
+      const wrapped = await wrapAuditVerdictBody(
+        SAMPLE_VERDICT,
+        kp.privateKey,
+        "alpha",
+      );
+      await appendMessage({
+        channelId: CH,
+        message: {
+          ts: new Date().toISOString(),
+          from: SESSION_BRAVO,
+          kind: "audit-verdict",
+          body: wrapped,
+        },
+      });
+      const result = await check(inputFor(SESSION_SELF));
+      expect(result.stdout).toContain(
+        "audit-verdict SHIP-CLEAN PR#165 → Charlie",
+      );
+      expect(result.stdout).toContain("(signed)");
+      // DSSE envelope internals must NOT leak (base64 payload / payloadType).
+      expect(result.stdout).not.toContain("payloadType");
+    });
+
+    it("resolves a body_ref-sidecarred verdict and decodes the sidecar", async () => {
+      await setupChannel();
+      seedSelfCursor();
+      // Direct-write the sidecar body file + a raw JSONL line that points to
+      // it by a valid UUID-shaped ref (mirrors the substrate's writeBodyFile
+      // naming). Bypasses appendMessage to control the ref exactly.
+      const ref = "aaaaaaaa-0000-4000-8000-000000000001";
+      const bodiesDir = join(resolveChannelsDir(), CH, "bodies");
+      mkdirSync(bodiesDir, { recursive: true });
+      writeFileSync(
+        join(bodiesDir, `${ref}.txt`),
+        JSON.stringify(SAMPLE_VERDICT),
+        "utf-8",
+      );
+      const verdictMsg = {
+        ts: new Date().toISOString(),
+        from: SESSION_CHARLIE, // unclaimed → identity auto-attach skips
+        kind: "audit-verdict",
+        body_ref: ref,
+      };
+      const path = messagesPath(CH);
+      const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+      writeFileSync(path, `${existing}${JSON.stringify(verdictMsg)}\n`);
+      const result = await check(inputFor(SESSION_SELF));
+      // Decoded FROM THE SIDECAR — not the bare body_ref pointer hint.
+      expect(result.stdout).toContain(
+        "audit-verdict SHIP-CLEAN PR#165 → Charlie",
+      );
+      expect(result.stdout).toContain("(raw)");
+      expect(result.stdout).not.toContain("body via body_ref");
+    });
+
+    it("falls back to the raw fenced body for an undecodable verdict body", async () => {
+      await setupChannel();
+      seedSelfCursor();
+      await appendMessage({
+        channelId: CH,
+        message: {
+          ts: new Date().toISOString(),
+          from: SESSION_BRAVO,
+          kind: "audit-verdict",
+          body: "not a verdict at all",
+        },
+      });
+      const result = await check(inputFor(SESSION_SELF));
+      // Undecodable → no summary; raw body surfaced (fenced) instead.
+      expect(result.stdout).toContain("not a verdict at all");
+      expect(result.stdout).not.toContain("audit-verdict SHIP-CLEAN");
+      expect(result.stdout).toMatch(/\[peer-body-[0-9a-f]{8}\]/);
+    });
+
+    it("degrades gracefully on a path-traversal body_ref (no leak, no throw)", async () => {
+      await setupChannel();
+      seedSelfCursor();
+      // Peer-controlled traversal ref: readBodyFile's guard returns null →
+      // decode null → falls back to the sanitized body_ref pointer hint. No
+      // throw, no file-content leak.
+      const verdictMsg = {
+        ts: new Date().toISOString(),
+        from: SESSION_CHARLIE,
+        kind: "audit-verdict",
+        body_ref: "../../etc/passwd",
+      };
+      const path = messagesPath(CH);
+      const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+      writeFileSync(path, `${existing}${JSON.stringify(verdictMsg)}\n`);
+      const result = await check(inputFor(SESSION_SELF));
+      // Message still surfaced, exit 0, no decoded summary, pointer hint shown.
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("body via body_ref");
+      expect(result.stdout).not.toContain("audit-verdict SHIP-CLEAN");
     });
   });
 

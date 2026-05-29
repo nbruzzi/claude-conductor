@@ -47,6 +47,7 @@ import { join } from "node:path";
 
 import {
   isChannelMessage,
+  readBodyFile,
   resolveChannelsDir,
   type ChannelMessage,
 } from "../../channels/index.ts";
@@ -59,7 +60,10 @@ import {
   sanitizePeerBody,
   writePendingPeerMessageCursor,
 } from "../../channels/peer-message-cursors.ts";
-import { renderKindPrefix } from "../../channels/render.ts";
+import {
+  renderAuditVerdictSummary,
+  renderKindPrefix,
+} from "../../channels/render.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { extractValidSessionId } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
@@ -107,6 +111,44 @@ function readChannelMessages(channelId: string): readonly ChannelMessage[] {
   return messages;
 }
 
+/** Decode an `audit-verdict` message into the one-line readable summary
+ *  shared with the `read` CLI verb (SSOT: `renderAuditVerdictSummary`), or
+ *  null when the message is not a decodable verdict.
+ *
+ *  Mirrors the #168 `read`-verb fix on the hook-digest surface: without this,
+ *  a DSSE-wrapped (signed) verdict shows as an opaque base64 blob inline, and
+ *  a body_ref-sidecarred verdict shows only as a `body_ref:` pointer — both
+ *  lose the verdict at a glance in the UserPromptSubmit digest.
+ *
+ *  Two body sources, in priority order:
+ *    1. inline `body` (raw v0.1/v0.2 OR v0.3 DSSE-wrapped — both decoded by
+ *       the SSOT parser).
+ *    2. `body_ref` sidecar — resolved via `readBodyFile(channelId, ref)`,
+ *       the only safe resolver (it guards the peer-controlled `ref` against
+ *       path traversal and returns null on any unresolvable/unsafe ref).
+ *
+ *  Returns null (→ caller falls back to the raw-body display path) for non-
+ *  verdict kinds, undecodable bodies, and unresolvable refs. The returned
+ *  summary still contains peer-controlled fields (target_peer, verdict,
+ *  audit_class, lens names) → the caller routes it through the SAME
+ *  sanitize+fence path as a raw body. */
+function decodeVerdictSummary(
+  channelId: string,
+  msg: ChannelMessage,
+  body: string | undefined,
+): string | null {
+  if (msg.kind !== "audit-verdict") return null;
+  if (body !== undefined && body.length > 0) {
+    return renderAuditVerdictSummary(body);
+  }
+  if (msg.body_ref !== undefined) {
+    const resolved = readBodyFile(channelId, msg.body_ref);
+    if (resolved === null) return null;
+    return renderAuditVerdictSummary(resolved);
+  }
+  return null;
+}
+
 /** Format one peer message as the operator-facing emission block per
  *  plan v5 §Phase 1 §Emission format.
  *
@@ -137,9 +179,17 @@ function formatMessageBlock(
   const safeTs = sanitizePeerBody(msg.ts);
   const speaker = `• ${identityLabel}${roleSuffix} ${kindPrefix} @${safeTs}:`;
 
+  // audit-verdict decode (the #168 fast-follow): replace an opaque inline
+  // DSSE blob / bare body_ref pointer with the readable one-line summary.
+  // Null for non-verdict / undecodable / unresolvable-ref → falls back to the
+  // raw body. The summary then flows through the SAME sanitize+fence+truncate
+  // path below as a raw body, since it carries peer-controlled fields.
+  const decoded = decodeVerdictSummary(channelId, msg, body);
+  const displayBody = decoded ?? body;
+
   // Body absent → body_ref-only message. Surface the body_ref pointer
   // with recovery hint (`channels read --since-cursor` to follow).
-  if (body === undefined || body.length === 0) {
+  if (displayBody === undefined || displayBody.length === 0) {
     const refHint =
       msg.body_ref !== undefined
         ? `  (body via body_ref:${sanitizePeerBody(msg.body_ref)} — channels read ${channelId} --since-cursor)`
@@ -148,9 +198,9 @@ function formatMessageBlock(
   }
 
   const truncated =
-    body.length > MAX_INLINE_BODY_CHARS
-      ? body.slice(0, MAX_INLINE_BODY_CHARS)
-      : body;
+    displayBody.length > MAX_INLINE_BODY_CHARS
+      ? displayBody.slice(0, MAX_INLINE_BODY_CHARS)
+      : displayBody;
   const sanitized = sanitizePeerBody(truncated);
   const nonce = randomUUID().slice(0, 8);
   const fenced = fencePeerBody(sanitized, nonce);
@@ -159,7 +209,7 @@ function formatMessageBlock(
   // or stayed inline. The body_ref mention misled operators into thinking
   // body_ref was the recovery mechanism for any truncation.
   const overflowHint =
-    body.length > MAX_INLINE_BODY_CHARS
+    displayBody.length > MAX_INLINE_BODY_CHARS
       ? `\n  (truncated to ${MAX_INLINE_BODY_CHARS} chars in this preview; full body via 'channels read ${channelId} --since-cursor')`
       : "";
   return `${speaker}\n${fenced}${overflowHint}`;

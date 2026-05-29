@@ -164,8 +164,15 @@ function renderBody(kind: ChannelKind, body: string): string {
  * One-line readable summary of an audit-verdict body (raw OR DSSE-wrapped),
  * or null if `body` does not parse as a verdict. Keys on the inner-body
  * fields; appends `(signed)` for a v0.3 DSSE envelope, `(raw)` otherwise.
+ *
+ * **Exported** (sibling to `renderKindPrefix`) so the SAME summary format is
+ * the single source of truth across both verdict-display surfaces: the `read`
+ * CLI verb (via `renderBody` above) and the `peer-message-deliverer` hook
+ * digest (UserPromptSubmit). The hook imports this via in-plugin relative
+ * path; like `renderKindPrefix`, it is NOT added to the `package.json` exports
+ * map (the render format stays an internal presentation choice).
  */
-function renderAuditVerdictSummary(body: string): string | null {
+export function renderAuditVerdictSummary(body: string): string | null {
   // Single-parse: parseAuditVerdictV0_3Wrapped does the wrapped-envelope work
   // once; reuse its result for both the inner body and the `signed` flag, then
   // fall back to the raw parser. Avoids the double-parse (composing
