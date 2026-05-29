@@ -227,6 +227,39 @@ describe("channels", () => {
       expect(readBodyFile("c-big", appended.body_ref)).toBe(big);
     });
 
+    it("readBodyFile blocks a path-traversal ref (peer-controlled input)", async () => {
+      await createChannel({
+        channelId: "c-guard",
+        handoffId: "c-guard",
+        sessionId: SESSION,
+      });
+      // Make the bodies dir exist so `bodies/../secret.txt` would resolve to
+      // <channel>/secret.txt — i.e. an unguarded read WOULD leak the planted
+      // file. With the ref guard, this returns null before any fs access, so
+      // removing the guard turns this assertion red (true regression guard).
+      const channelRoot = join(SANDBOX, "c-guard");
+      mkdirSync(join(channelRoot, "bodies"), { recursive: true });
+      writeFileSync(join(channelRoot, "secret.txt"), "TOP-SECRET", "utf-8");
+      expect(readBodyFile("c-guard", "../secret")).toBeNull();
+      expect(readBodyFile("c-guard", "../../etc/passwd")).toBeNull();
+      // Leading-dot ref is rejected too (VALID_ID_REGEX requires an
+      // alphanumeric first char).
+      expect(readBodyFile("c-guard", ".hidden")).toBeNull();
+    });
+
+    it("readBodyFile returns null for a valid-shaped but missing ref", async () => {
+      await createChannel({
+        channelId: "c-miss",
+        handoffId: "c-miss",
+        sessionId: SESSION,
+      });
+      // UUID-shaped ref that was never written → the guard admits the shape,
+      // the absent file produces the null (ENOENT path).
+      expect(
+        readBodyFile("c-miss", "deadbeef-0000-4000-8000-000000000000"),
+      ).toBeNull();
+    });
+
     it("extraMetadataMutator: atomic message-append + metadata write (happy path)", async () => {
       // Phase 4 Step A Layer 3 fold — appendMessage's
       // extraMetadataMutator parameter lets the auto-out path land

@@ -860,6 +860,13 @@ export function readBodyFile(id: string, ref: string): string | null {
       `[channels] readBodyFile: invalid channelId "${id}" — must match isValidArtifactId pattern`,
     );
   }
+  // body_ref is peer-controlled (a peer can append JSONL directly), so an
+  // unvalidated ref interpolated into `${ref}.txt` below would allow ../, /,
+  // or NUL to traverse out of bodyDir. Unlike a bad channelId (caller bug →
+  // throw), an unsafe ref is untrusted input → return null ("unresolvable"),
+  // matching the ENOENT path. The sole legitimate producer is writeBodyFile's
+  // randomUUID(), which always satisfies isValidArtifactId.
+  if (!isValidArtifactId(ref)) return null;
   try {
     return readFileSync(join(bodyDir(id), `${ref}.txt`), "utf-8");
   } catch {

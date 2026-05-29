@@ -1329,3 +1329,38 @@ affects: [src/channels/render.ts, test/channels/render.test.ts]
 **Reason:** The opacity is a presentation defect, and render.ts is the SSOT presentation layer (internal-only, not in `package.json` exports). Decoding there fixes both wire shapes for every `read` consumer (the read verb resolves body_refs before rendering, so inline + ref'd verdicts both benefit), with zero new export surface. Kind-gated + null-fallback keeps non-verdict + undecodable bodies unchanged.
 
 ---
+
+## 2026-05-28 — Decision: harden `readBodyFile` against peer-controlled `ref` before wiring the verdict-decode into the deliverer hook (Cycle-5 #168 fast-follow)
+
+```yaml
+---
+ts: 2026-05-28T23:59:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/channels/index.ts,
+    src/channels/render.ts,
+    src/hooks/checks/peer-message-deliverer.ts,
+    test/channels/index.test.ts,
+    test/hooks/checks/peer-message-deliverer.test.ts,
+  ]
+---
+```
+
+**Context:** The #168 decode (above) fixed the `read` CLI surface but not the `peer-message-deliverer` hook digest (UserPromptSubmit), where a DSSE-wrapped verdict still showed as an opaque base64 blob and a body_ref-sidecarred verdict as a bare `body_ref:` pointer. Extending the decode to the hook requires resolving body_refs from the hook — but `body_ref` is **peer-controlled** (a peer can append JSONL directly; that is the hook's stated threat model), and `readBodyFile(id, ref)` interpolated `ref` raw into `` `${ref}.txt` ``. Pre-existing callers (cli/api) all pass `writeBodyFile`'s `randomUUID()`, so the path-traversal (`../`, `/`, NUL) was latent; the new auto-firing hook call site is the first to reach it with untrusted input.
+
+**Options considered:**
+
+1. **Guard `ref` at the SSOT resolver, return null on unsafe input (CHOSEN).** Add `if (!isValidArtifactId(ref)) return null;` to `readBodyFile` — sibling-parity with the existing `id` guard, but null (not throw) because `ref` is untrusted input, not a caller bug. Reuse the exported `renderAuditVerdictSummary` (no duplicated render logic); decoded summaries flow through the hook's existing `sanitizePeerBody`+`fencePeerBody` path since they carry peer-controlled fields.
+2. Guard at the hook call site only. Rejected: leaves the latent traversal in the SSOT resolver for the next caller to re-discover; violates "harden at the trust boundary, not per-consumer."
+3. Throw on an unsafe `ref` (parity with the `id` guard's throw). Rejected: `id` is a validated channel id (caller bug → throw is correct), but `ref` is untrusted input and the hook's whole-batch blast radius makes a throw a fail-open liability; null ("unresolvable") matches the existing ENOENT path the callers already handle.
+
+**Chosen:** Option 1.
+
+**Reason:** Hardening at the SSOT resolver protects the new hook call site **and** every pre-existing caller with one guard, keeping the trust boundary where the path is constructed rather than at each consumer. `isValidArtifactId` is already traversal-safe (rejects leading-dot, `/`, `\`) and admits the only legitimate producer (UUID refs from `writeBodyFile`), so no real caller breaks. Graceful-null over throw because an unsafe `ref` is untrusted input on an auto-firing path; the verdict decode then reuses the #168 SSOT summary + the deliverer's existing sanitize/fence, so undecodable / unresolvable / non-verdict messages render exactly as before.
+
+**Supersedes / superseded_by:** Fast-follow to the #168 entry above (`read`-verb decode); extends the same SSOT summary to the hook digest surface.
+
+---
