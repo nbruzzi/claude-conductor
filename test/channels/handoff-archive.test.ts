@@ -383,4 +383,24 @@ describe("sweepArchivableHandoffs — (b) lineage-input protection (increment-2)
     // (Alpha convergent F2 — a healthy protection must never flip ok:false).
     expect(out.ok).toBe(true);
   });
+
+  it("N2 (Alpha #177 shadow): the read-THROW branch — a DIR named HANDOFF_x.md (readFileSync EISDIR) is protected", () => {
+    // A directory named like a handoff: readdir finds it (matches the regex) +
+    // statSync succeeds (it's a dir) so it's a candidate; scanLineage's
+    // readFileSync throws EISDIR -> the read-THROW branch -> malformedProtected.
+    // Exercises the read-throw path (the parse-null path is covered above); EISDIR
+    // is a deterministic, cross-platform (macOS+Linux) trigger.
+    const name = "HANDOFF_dir-as-handoff.md";
+    const dirPath = join(tmpDir, name);
+    mkdirSync(dirPath, { recursive: true });
+    const oldMtime = new Date(NOW - 60 * DAY);
+    utimesSync(dirPath, oldMtime, oldMtime);
+    const out = sweepArchivableHandoffs({
+      now: NOW,
+      retentionDays: 14,
+      keepRecent: 0,
+    });
+    expect(out.protected_malformed).toContain(name);
+    expect(out.archivable.map((c) => c.name)).not.toContain(name);
+  });
 });

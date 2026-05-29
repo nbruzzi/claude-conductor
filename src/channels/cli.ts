@@ -48,6 +48,11 @@ import {
 import { parseFlags } from "../cli/flags.ts";
 import { getWallClockNow } from "../shared/clock.ts";
 import {
+  archiveHandoff,
+  pruneHandoffArchive,
+  sweepArchivableHandoffs,
+} from "./handoff-archive.ts";
+import {
   describeSource,
   formatRecoveryHint,
   resolveSessionId as discoverSessionId,
@@ -150,6 +155,10 @@ const VERB_HELP: Record<string, string> = {
     "kinds\n  Print the message-kind reference: semantic gloss + recommended body content\n  per kind + reader verification budget. See also: docs/conventions/message-kinds-and-verification.md.",
   read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen-cursors/<sid>.json (legacy: last-seen/; dual-read fallback ≥30d post-Step-G).\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
   list: "list [--include-archived]\n  Print active (or active+archived) channels as JSON.",
+  "handoff-archive":
+    "handoff-archive [--apply] [--retention-days <n>] [--keep-recent <n>]\n  Report-only by default: print the archivable-handoffs sweep as JSON (protects the\n  LATEST target, lineage-input-referenced handoffs, the keep-recent window, and\n  unreadable/malformed handoffs). --apply MOVES each archivable handoff into\n  .archive/ (recoverable; collision-stamped) and REFUSES when ok:false. Defaults:\n  retention-days 14, keep-recent 5.",
+  "handoff-prune":
+    "handoff-prune [--retention-days <n>] [--max-entries <n>]\n  Delete ALREADY-ARCHIVED handoffs past retention, then cap the archive at\n  max-entries (oldest-first). The only delete path; never touches live handoffs.\n  Defaults: retention-days 30, max-entries 50.",
   meta: "meta <channel-id>\n  Print parsed metadata as JSON.",
   heartbeat:
     "heartbeat <channel-id>\n  Touch this session's heartbeat file in the channel.",
@@ -463,6 +472,24 @@ async function readStdin(): Promise<string> {
 
 function printJson(v: unknown): void {
   process.stdout.write(`${JSON.stringify(v, null, 2)}\n`);
+}
+
+/**
+ * Read a numeric `--flag <n>` from the positional tail (the handoff-archive /
+ * handoff-prune verbs). Unknown flags pass through parseFlags into `rest`;
+ * returns `def` when the flag is absent, non-numeric, OR NEGATIVE.
+ *
+ * F1 (Alpha #178 shadow): the `n >= 0` guard is DELETE-path safety — a negative
+ * --retention-days / --max-entries would invert pruneHandoffArchive's age + cap
+ * comparisons (now - mtime > negative -> always true) into mass-deletion of the
+ * whole archive. A nonsensical negative falls back to the safe default.
+ */
+function numFlag(rest: readonly string[], name: string, def: number): number {
+  const i = rest.indexOf(name);
+  if (i === -1) return def;
+  const raw = rest[i + 1];
+  const n = raw === undefined ? NaN : Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : def;
 }
 
 function liveness(
@@ -1901,6 +1928,44 @@ export async function runChannelsCli(
       case "--help":
       case "-h": {
         process.stdout.write(`${TOP_LEVEL_HELP}\n`);
+        return;
+      }
+      case "handoff-archive": {
+        const apply = rest.includes("--apply");
+        const report = sweepArchivableHandoffs({
+          now: getWallClockNow(),
+          retentionDays: numFlag(rest, "--retention-days", 14),
+          keepRecent: numFlag(rest, "--keep-recent", 5),
+        });
+        if (!apply) {
+          printJson(report);
+          return;
+        }
+        // --apply MUTATES: refuse on a degraded sweep (F2/F3 ok-honesty) so we
+        // never archive against an unreliable protection view.
+        if (!report.ok) {
+          printJson({
+            ...report,
+            applied: false,
+            reason: "sweep degraded (ok:false) — refusing to --apply",
+          });
+          return;
+        }
+        const archived: string[] = [];
+        for (const c of report.archivable) {
+          archiveHandoff(c.name);
+          archived.push(c.name);
+        }
+        printJson({ ...report, applied: true, archived });
+        return;
+      }
+      case "handoff-prune": {
+        printJson({
+          purged: pruneHandoffArchive({
+            retentionDays: numFlag(rest, "--retention-days", 30),
+            maxEntries: numFlag(rest, "--max-entries", 50),
+          }),
+        });
         return;
       }
       default:
