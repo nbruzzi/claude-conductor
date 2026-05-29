@@ -42,18 +42,27 @@ import {
 
 let tmpDir: string;
 let prev: string | undefined;
+let prevChannels: string | undefined;
 const NOW = 1_800_000_000_000; // fixed reference; tests pass this as `now`.
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "reconcile-boot-"));
   prev = process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
+  prevChannels = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
   process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = tmpDir;
+  // Isolate the channels dir: runReconcileBoot's default scope now enumerates
+  // identity, which reads the channels dir. Point it at an empty (non-existent)
+  // path so these presence-focused tests see no real identity claims leak in.
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = join(tmpDir, "no-channels");
 });
 
 afterEach(() => {
   if (prev === undefined)
     delete process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
   else process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = prev;
+  if (prevChannels === undefined)
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  else process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannels;
   try {
     rmSync(tmpDir, { recursive: true, force: true });
   } catch {

@@ -36,16 +36,25 @@ import {
   type HeartbeatScan,
   type Liveness,
 } from "./index.ts";
+import { listChannels } from "../channels/index.ts";
+import { listClaims } from "../channels/identity.ts";
 
-/** Which substrate class a candidate belongs to. Presence is fully enumerated
- *  this slice; identity + worktree are report-only (enumeration deepens next
- *  increment per Pair-B §10 Q4). */
+/** Which substrate class a candidate belongs to. Presence is fully enumerated;
+ *  identity + worktree are report-only (enumerated as candidates, never
+ *  `--apply`-GC'd this increment — their GC primitives are deferred). */
 export type ReconcileBootArtifactClass = "presence" | "identity" | "worktree";
 
 /**
  * The three liveness signals that "live" requires (active-sessions/index.ts
  * §"Liveness of a heartbeat requires all three"): mtime within the live window,
  * a parseable OwnerRecord body (anti-ghost), and a host match.
+ *
+ * `no-presence-heartbeat` is a DIFFERENT kind of signal — not a per-heartbeat
+ * liveness check but the ABSENCE of any presence heartbeat for the session. It
+ * is the sole `failed_signals` member of an ORPHAN identity/worktree candidate
+ * (a sentinel/worktree whose session left no presence heartbeat — §2
+ * enumeration). A presence candidate never lists it (it always has a heartbeat
+ * to evaluate); only the cross-class identity/worktree enumeration can.
  *
  * `pid-alive` is RESERVED forward-compat (Pair-B §10 Q2): a same-host
  * `kill(pid, 0)` probe that can only ever force `gc_eligible = false` (a safety
@@ -57,6 +66,7 @@ export type ReconcileBootSignal =
   | "mtime-age"
   | "owner-record-parses"
   | "host-match"
+  | "no-presence-heartbeat"
   | "pid-alive";
 
 export type ReconcileBootCandidate = {
@@ -172,26 +182,10 @@ function isGcEligible(
 function enumeratePresence(
   now: number,
   currentHost: string,
+  isSessionPaused: (sessionId: string) => boolean,
 ): { candidates: ReconcileBootCandidate[]; errors: ReconcileBootError[] } {
   const out: ReconcileBootCandidate[] = [];
   const errors: ReconcileBootError[] = [];
-
-  // Session-level pause lookup, memoized (Cycle-6 item-4, Option X). `pausedAt`
-  // is written on the session's canonical-claude-home ANCHOR heartbeat
-  // (markSessionPaused), NOT per-artifact — so one anchor read protects every
-  // one of a paused session's candidates across all artifacts. Memoize per
-  // sessionId: a session typically holds heartbeats on several artifacts and
-  // the anchor read is identical for each. readSessionPausedAt is defensive
-  // (never throws — readOwnerRecord swallows parse/IO errors → null), so the
-  // lookup needs no guard of its own.
-  const pausedMemo = new Map<string, boolean>();
-  const isSessionPaused = (sessionId: string): boolean => {
-    const cached = pausedMemo.get(sessionId);
-    if (cached !== undefined) return cached;
-    const paused = readSessionPausedAt(sessionId) != null;
-    pausedMemo.set(sessionId, paused);
-    return paused;
-  };
 
   // N1 (Bravo #173 nit, folded here since item-4 touches this read path): a
   // malformed artifact dir or unreadable heartbeat listing must not abort the
@@ -244,6 +238,113 @@ function enumeratePresence(
 }
 
 /**
+ * A session's freshest presence liveness — the cross-class basis for
+ * classifying identity claims + worktrees, which have no heartbeat of their own.
+ */
+type SessionLiveness = {
+  classification: Liveness;
+  age_ms: number;
+  failed_signals: ReconcileBootSignal[];
+};
+
+/**
+ * Map each session_id to its FRESHEST (most-live = min age_ms) presence
+ * candidate's liveness. A session is as-live-as its freshest heartbeat — the
+ * most-live tiebreak avoids falsely-staling a session that is live on another
+ * artifact. Identity/worktree claims inherit their session's entry; a session
+ * absent from this map has no presence heartbeat (→ orphan).
+ */
+function buildSessionLivenessMap(
+  presenceCandidates: ReconcileBootCandidate[],
+): Map<string, SessionLiveness> {
+  const map = new Map<string, SessionLiveness>();
+  for (const c of presenceCandidates) {
+    const existing = map.get(c.session_id);
+    if (existing === undefined || c.age_ms < existing.age_ms) {
+      map.set(c.session_id, {
+        classification: c.classification,
+        age_ms: c.age_ms,
+        failed_signals: c.failed_signals,
+      });
+    }
+  }
+  return map;
+}
+
+/**
+ * Enumerate identity sentinels across all channels as REPORT-ONLY candidates.
+ * A sentinel has no heartbeat of its own (joined_at is not refreshed → not a
+ * liveness signal), so a claim's liveness IS its session's presence liveness
+ * (cross-ref {@link buildSessionLivenessMap}). A claim whose session left NO
+ * presence heartbeat is an ORPHAN sentinel — the meaningful signal this
+ * surfaces: classified `stale`, `failed_signals:["no-presence-heartbeat"]`, and
+ * an INFORMATIONAL age (how long the orphan has existed, NOT a liveness age).
+ * `gc_eligible` is ALWAYS false — identity GC (unlinkIdentitySentinelOrLogOrphan)
+ * is deferred to a later increment. N1: a bad channel/listing is skipped, not
+ * fatal (blast-radius isolation, mirroring enumeratePresence).
+ */
+function enumerateIdentity(
+  now: number,
+  sessionLiveness: Map<string, SessionLiveness>,
+  isSessionPaused: (sessionId: string) => boolean,
+): ReconcileBootCandidate[] {
+  const out: ReconcileBootCandidate[] = [];
+  let channels: ReturnType<typeof listChannels>;
+  try {
+    channels = listChannels();
+  } catch {
+    return out;
+  }
+  for (const channel of channels) {
+    let claims: ReturnType<typeof listClaims>;
+    try {
+      claims = listClaims(channel.id);
+    } catch {
+      continue;
+    }
+    for (const { claim } of claims) {
+      const sessionId = claim.session_id;
+      const paused = isSessionPaused(sessionId);
+      const live = sessionLiveness.get(sessionId);
+      if (live !== undefined) {
+        // WITH presence: inherit the session's freshest heartbeat liveness.
+        out.push({
+          artifact_class: "identity",
+          artifact_id: channel.id,
+          session_id: sessionId,
+          classification: live.classification,
+          split_brain: false,
+          gc_eligible: false,
+          paused,
+          failed_signals: live.failed_signals,
+          age_ms: live.age_ms,
+        });
+      } else {
+        // ORPHAN: the session left no presence heartbeat. age_ms is the claim's
+        // own age (now - joined_at) — INFORMATIONAL (how long the orphan has
+        // lingered), NOT a session-liveness age. Unparseable joined_at → 0.
+        const joinedMs = Date.parse(claim.joined_at);
+        const orphanAgeMs = Number.isNaN(joinedMs)
+          ? 0
+          : Math.max(0, now - joinedMs);
+        out.push({
+          artifact_class: "identity",
+          artifact_id: channel.id,
+          session_id: sessionId,
+          classification: "stale",
+          split_brain: false,
+          gc_eligible: false,
+          paused,
+          failed_signals: ["no-presence-heartbeat"],
+          age_ms: orphanAgeMs,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Mark split-brain: more than one NON-stale (live or likely-dead) claim on the
  * same artifact_id means two sessions believe they hold it. Stale entries don't
  * count — they're the residue split-brain leaves, not the contention itself.
@@ -251,6 +352,12 @@ function enumeratePresence(
 function markSplitBrain(candidates: ReconcileBootCandidate[]): void {
   const nonStaleByArtifact = new Map<string, number>();
   for (const c of candidates) {
+    // Split-brain is a PRESENCE property: one coordination artifact should have
+    // one live holder. Identity channels legitimately carry MANY claims (the
+    // participants), so counting them would falsely flag every multi-participant
+    // channel. (Worktree split-brain — two sids on one worktree path — is
+    // considered when worktree enumeration lands in 2a-commit-3b.)
+    if (c.artifact_class !== "presence") continue;
     if (c.classification !== "stale") {
       nonStaleByArtifact.set(
         c.artifact_id,
@@ -260,6 +367,7 @@ function markSplitBrain(candidates: ReconcileBootCandidate[]): void {
   }
   for (const c of candidates) {
     if (
+      c.artifact_class === "presence" &&
       c.classification !== "stale" &&
       (nonStaleByArtifact.get(c.artifact_id) ?? 0) > 1
     ) {
@@ -269,10 +377,11 @@ function markSplitBrain(candidates: ReconcileBootCandidate[]): void {
 }
 
 /**
- * Boot reconciliation entry point. Report-mode by default. `--apply` GC + the
- * identity/worktree report-only enumeration land in the next increment (§10
- * Q4); this pass enumerates the presence class fully and lands the report
- * contract that the CLI verb + subprocess tests assert against.
+ * Boot reconciliation entry point. Report-mode by default (the `--apply` GC
+ * mutation is PR 2b). Presence is ALWAYS enumerated — it is both its own output
+ * (when in scope) AND the cross-ref basis for identity/worktree liveness (a
+ * claim/worktree has no heartbeat of its own). identity + worktree are
+ * report-only candidates (never `--apply`-GC'd this increment).
  */
 export function runReconcileBoot(
   opts: ReconcileBootOptions,
@@ -281,20 +390,45 @@ export function runReconcileBoot(
   const scope = opts.scope ?? "all";
   const currentHost = hostname();
 
+  // Session-level pause lookup, memoized ONCE across ALL classes. Pause is
+  // session-state (markSessionPaused writes pausedAt on the canonical-claude-
+  // home ANCHOR heartbeat, not per-artifact), and a session may surface in
+  // presence AND identity AND worktree — so one shared memo protects every one
+  // of its candidates with a single anchor read. readSessionPausedAt is
+  // defensive (never throws → null), so the lookup needs no guard of its own.
+  const pausedMemo = new Map<string, boolean>();
+  const isSessionPaused = (sessionId: string): boolean => {
+    const cached = pausedMemo.get(sessionId);
+    if (cached !== undefined) return cached;
+    const paused = readSessionPausedAt(sessionId) != null;
+    pausedMemo.set(sessionId, paused);
+    return paused;
+  };
+
+  // Presence is enumerated UNCONDITIONALLY: identity/worktree classification
+  // cross-refs each session's presence liveness (buildSessionLivenessMap), so
+  // the presence pass must run even when only identity/worktree are in scope.
+  // Its candidates/errors are OUTPUT only when presence is in scope.
+  const presence = enumeratePresence(now, currentHost, isSessionPaused);
+  const sessionLiveness = buildSessionLivenessMap(presence.candidates);
+
   const candidates: ReconcileBootCandidate[] = [];
   const errors: ReconcileBootError[] = [];
   if (scope === "all" || scope === "presence") {
-    const presence = enumeratePresence(now, currentHost);
     candidates.push(...presence.candidates);
     errors.push(...presence.errors);
   }
-  // identity + worktree enumeration: report-only, next increment (§10 Q4).
-  // TODO(increment-2, N1): listArtifactIds / scanHeartbeats can throw on a
-  // filesystem-level error (malformed *entries* are now surfaced as
-  // errors[]{malformed-entry}, distinct from an fs-level throw of the whole
-  // walk). Acceptable for this report-only CLI caller (an uncaught throw → CLI
-  // exit), but the session-start HOOK integration MUST wrap enumeration in
-  // try/catch — a hook throwing at session-start is worse than a CLI exit.
+  if (scope === "all" || scope === "identity") {
+    candidates.push(
+      ...enumerateIdentity(now, sessionLiveness, isSessionPaused),
+    );
+  }
+  // worktree report-only enumeration: 2a-commit-3b (next).
+  // N1 reminder: the session-start HOOK integration MUST wrap runReconcileBoot
+  // in try/catch — listArtifactIds/scanHeartbeats/listChannels can throw at the
+  // fs level (malformed *entries* are surfaced as errors[]; an fs-level throw of
+  // a whole listing is a different class). A hook throwing at session-start is
+  // worse than a CLI exit, which this report-only caller tolerates.
 
   markSplitBrain(candidates);
 
