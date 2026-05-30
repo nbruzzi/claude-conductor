@@ -1641,3 +1641,43 @@ affects:
 **Supersedes / superseded_by:** Additive — realizes increment-1 (#173) §10 Q4 deferrals (malformed-surface + identity/worktree enumeration groundwork) + #175 paused-dead visibility. Cross-pair-shadowed by Charlie (inside-pair) + Pair A (cross-shadow) at the 2a PR boundary.
 
 ---
+
+## 2026-05-30 — Decision: Cycle 2 boot-reconciliation increment-2 (2b — `--apply` CAS-recheck GC mutation + honest removal telemetry)
+
+```yaml
+---
+ts: 2026-05-30T00:30:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/index.ts,
+    src/active-sessions/reconcile-boot.ts,
+    test/active-sessions/remove-heartbeat-telemetry.test.ts,
+    test/active-sessions/reconcile-boot-apply.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle-2 increment-2, PR 2b — the SAFETY-CRITICAL half: the `--apply` GC mutation, the ONLY path that deletes coordination state. Builds on merged 2a (#179). The §1 design was shadow-ratified PRE-build (Alpha §1-author re-nod); this entry records the v2 fold-ins + the option-A scope decision.
+
+**Options considered + chosen:**
+
+1. **`--apply` CAS-recheck (the mutation) — CHOSEN: a SECOND pass after enumeration that re-reads disk at apply-time.** For each `gc_eligible` presence candidate, re-stat the heartbeat mtime (→ `defensiveAgeMs`), re-read the `OwnerRecord` (`readOwnerRecord`), re-classify (`classifyLiveness` still `stale` AND `ageMs > GC_WINDOW_MS` AND `readSessionPausedAt(sid) == null`). Only if the recheck STILL holds → remove. Closes the enumeration→apply TOCTOU: the snapshot can be stale by apply-time (a peer touched its heartbeat → live, or `markSessionPaused`'d → paused in the gap); GC'ing on the snapshot would kill a now-live/now-paused peer. The re-read is the whole reason `--apply` is a separate pass.
+2. **cas-race OUT of `errors[]` into `cas_races[]` (F2) — CHOSEN: a separate exit/ok-NEUTRAL field.** A recheck-flip (peer now live/paused/mtime-refreshed/file-gone) is a HEALTHY skip, not an error — putting it in `errors[]` would flip `ok=false`→exit 3, wrongly signaling failure for a correct protective skip. Convergent with 2a's "a healthy protection must not signal an error". `cas_races[]` is advisory.
+3. **Honest removal telemetry (F1) — CHOSEN: option A (telemetry-only, defer the rename).** `removeOwnHeartbeat(artifactId, sessionId, opts?: {reason, actorPid})` — the reconcile-gc caller passes `{reason:"reconcile-gc", actorPid}` so the presence-failure-log records `target_sid + reason + actor_pid + caller_top4` instead of the forensic LIE `self-stop pid=<operator>`. The misnomer RENAME (`removeOwnHeartbeat`→`removeHeartbeat` — "Own" lies for the reconcile-gc + dotfiles-cli TARGET-removal callers) is separable naming-hygiene, DEFERRED to a coordinated cross-edge slice (cohort-ratified A-vs-B: Bravo concur + Alpha §1-author intent-confirm). The now-false "single-caller" comment is corrected to MULTI-CALLER + a deferred-rename breadcrumb in the primitive's JSDoc (name-lie documented-not-silent).
+4. **`&& !split_brain` DiD — CHOSEN: a split-brain `gc_eligible` candidate is NOT auto-GC'd.** Defense-in-depth: split-brain needs operator resolution, not auto-GC, even if otherwise eligible.
+5. **defensiveAgeMs null-skip + benign-final-gap.** A future-mtime re-stat (`defensiveAgeMs`→null) skips (don't GC garbage). The residual final-gap (between the CAS-recheck and the unlink a peer could touch→live) is BENIGN: the live peer re-creates its heartbeat on its next touch; the unlink just forces a re-register.
+
+**Exit precedence:** `malformed(3) > gc-failed(1) > gc_eligible_remaining(2) > 0` (cohort-unanimous). `gc-failed` (the unlink threw) is the new exit-1; `cas_races` is exit-neutral.
+
+**Scope (this PR = 2b):** the `--apply` CAS-recheck mutation (presence-only) + the honest-telemetry opts + the misnomer-comment-fix. NEVER-auto-kill PRESERVED + STRENGTHENED: `--apply` is operator-explicit (no auto-path passes it; session-start hook stays report-mode); only `gc_eligible` (already `stale && age>floor && !paused`) is touched, re-confirmed at apply-time, AND not split-brain; identity/worktree are NOT GC'd. Four independent guards: safety-floor + pause-exclusion + CAS-recheck + split-brain-exclusion.
+
+**Deferred (tracked cross-edge slice):** `removeOwnHeartbeat`→`removeHeartbeat` rename + the dotfiles shim/cli/cross-edge-test migration + drop a back-compat alias. Out of 2b to isolate the safety-critical mutation PR; the opts telemetry already makes the multi-caller reality honest-in-the-log, so the rename adds no safety (Alpha §1-author). Charlie owns the dotfiles-migration mechanics.
+
+**Reason:** The CAS-recheck closes the TOCTOU that would otherwise let `--apply` kill a now-live/now-paused peer — the cardinal never-auto-kill risk of the one state-deleting path. cas-race-neutrality keeps a healthy protective skip from signaling failure. Honest-telemetry closes the forensic lie in the removal record. The rename-deferral isolates naming-hygiene from the safety-critical PR.
+
+**Supersedes / superseded_by:** Additive — realizes the increment-2 §1 `--apply` mutation deferred from 2a (#179). Shadow-ratified PRE-build (Alpha §1 re-nod) + max-safety cross-shadow at the 2b PR boundary.
+
+---

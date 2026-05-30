@@ -870,25 +870,54 @@ export function listAllHeartbeats(args: {
   return scanHeartbeats(args).valid;
 }
 
-/** Remove our own heartbeat — called at Stop. Best-effort. */
+/**
+ * Remove a heartbeat by (artifactId, sessionId). Best-effort (unlink; swallow
+ * if already gone or never existed).
+ *
+ * MULTI-CALLER (the "Own" in the name is a misnomer — DEFERRED-RENAME, below):
+ *   1. Stop-hook SELF-removal (session-presence-unregister.ts) — own heartbeat,
+ *      no `opts` → forensic detail records "self-stop".
+ *   2. reconcile-boot `--apply` GC (Cycle-2 increment-2 2b) — removes a DEAD
+ *      PEER's heartbeat (NOT own); passes `{reason:"reconcile-gc", actorPid}` so
+ *      the forensic record is HONEST — never "self-stop pid=<operator>" for a
+ *      peer's removal (F1 honest-telemetry; the never-auto-kill mutation's
+ *      removal record must not lie about who/why).
+ *   3. dotfiles `cli.ts` target-removal — a TARGET session (also not "own").
+ *
+ * DEFERRED RENAME (tracked cross-edge slice, Cycle-2 follow-up): the honest name
+ * is `removeHeartbeat` — `removeOwnHeartbeat` lies for callers 2+3. Separable
+ * naming-hygiene: the `opts` telemetry already makes the multi-caller reality
+ * honest-IN-THE-LOG, so the rename adds no safety. It is a COORDINATED cross-edge
+ * change (conductor rename + dotfiles shim/cli/cross-edge-test migration + drop a
+ * back-compat alias), kept OUT of the safety-critical 2b mutation PR to isolate
+ * it (cohort-ratified — Alpha §1-author + Bravo + the 2b A-vs-B sounding-board).
+ *
+ * `opts` (F1 honest-telemetry): when a caller removes a heartbeat that is NOT
+ * its own, it passes `{reason, actorPid}` so the presence-failure-log records
+ * WHO removed it (actor pid + caller_top4 stack) and WHY (reason) — mirroring
+ * the caller-stack capture of `unregisterActiveSession` / `tryReapHeartbeat`.
+ */
 export function removeOwnHeartbeat(
   artifactId: string,
   sessionId: string,
+  opts?: { reason: string; actorPid: number },
 ): void {
   if (!isValidArtifactId(artifactId) || !isValidSessionId(sessionId)) return;
   const path = heartbeatPath(artifactId, sessionId);
   try {
     unlinkSync(path);
-    // Slice 7 A2 — Point 6: success-path emit. Stop-hook self-removal
-    // is single-caller (`session-presence-unregister.ts:41`); no
-    // caller-stack capture needed.
+    // Honest forensic record: a non-self caller (opts) logs target_sid + reason
+    // + actor pid + caller-stack; the Stop-hook self path keeps "self-stop".
+    const detail = opts
+      ? `target_sid=${sessionId} reason=${opts.reason} actor_pid=${opts.actorPid} caller_top4=${callerTop4()}`
+      : `pid=${process.pid} self-stop`;
     appendPresenceFailure({
       timestamp: new Date().toISOString(),
       sessionId,
       source: "active-sessions-registry",
       kind: "heartbeat-removed",
       artifactPath: path,
-      detail: `pid=${process.pid} self-stop`,
+      detail,
     });
   } catch {
     /* already gone or never existed */
