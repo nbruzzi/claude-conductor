@@ -1681,3 +1681,37 @@ affects:
 **Supersedes / superseded_by:** Additive — realizes the increment-2 §1 `--apply` mutation deferred from 2a (#179). Shadow-ratified PRE-build (Alpha §1 re-nod) + max-safety cross-shadow at the 2b PR boundary.
 
 ---
+
+## 2026-05-30 — Decision: Cycle-6 Task #6 — opportunistic reap honors `!paused`
+
+```yaml
+---
+ts: 2026-05-30T17:25:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects:
+  [
+    src/active-sessions/index.ts,
+    test/active-sessions/reap-pause-protection.test.ts,
+  ]
+---
+```
+
+**Context:** Cycle-6 Task #6 (the Cycle-2 wind-down item-4 pause-completeness gap). #175 added `markSessionPaused`/`readSessionPausedAt` + reconcile-boot's `gc_eligible` `!paused` AND-term; #180's `casRecheckFlip` re-checks pause at apply-time. But the OPPORTUNISTIC reap paths — `listLivePeers` (PreToolUse GC) and `gcStaleArtifacts` (sweep) — predate the pause feature and reaped purely on age, so a deliberately-paused session (which stops heartbeating → mtime ages past `GC_WINDOW_MS`) was silently reaped on the next scan.
+
+**Options considered + chosen:**
+
+1. **Where to guard — CHOSEN: at each opportunistic reap site, before `tryReapHeartbeat`.** `readSessionPausedAt(entry) != null` → protect, in both `listLivePeers` (`continue`) and `gcStaleArtifacts` (set `dirStillOccupied=true`, skip reap). Mirrors reconcile-boot's `casRecheckFlip` idiom ("pause is a PROTECTION independent of liveness — check first"). Rejected a single shared chokepoint: the two reaps have different control-flow (peer-list build vs dir-occupancy sweep), and the guard is one cheap disk read on the already-rare aged-out branch.
+2. **`unregisterActiveSession` (the 3rd `tryReapHeartbeat` caller) — CHOSEN: leave UNGUARDED.** It is the low-level explicit-teardown primitive (Stop-hook abnormal-exit recovery + worktree-GC RE-3 self-heal). Explicit teardown MUST remove a paused-then-ended session's heartbeats; guarding the primitive would leak heartbeats on real teardown. The age-based caller's pause-respect belongs in the CALLER, not the primitive.
+3. **clock-skew (`ageMs === null`) case — CHOSEN: protect a paused session there too.** The pause check sits before the reap regardless of WHY the heartbeat is eligible (aged-out OR future-mtime garbage) — conservative: never reap a paused session's heartbeat on the opportunistic path. Negligible cost; a paused session rarely has future-mtime garbage, and it is cleaned on resume/end.
+
+**Scope:** `readSessionPausedAt` guard at the `listLivePeers` + `gcStaleArtifacts` reap sites + a regression test (`reap-pause-protection.test.ts`: a paused session survives both paths, an unpaused one is still reaped). No new exports (shim-safe). reconcile-boot's `--apply` GC already excludes paused via `gc_eligible`; unchanged.
+
+**Deferred (already tracked):** the AGE-BASED worktree-GC's own `!paused` respect — the #179 (2a) entry's "worktree-orphan `paused:false`" deferral (a worktree path yields only the 8-char sid-prefix, so `readSessionPausedAt` needs full-sid resolution; SAFE today because a paused session always retains its presence anchor, but worktree-GC must re-verify before keying eligibility off `!paused`). This PR does NOT touch worktree-GC.
+
+**Reason:** Closes a silent never-keep-paused gap: a paused session that stopped heartbeating was indistinguishable from a dead one to the opportunistic reaps, so the operator's deliberate pause was lost on the next scan. The fix extends the pause-protection invariant already enforced in reconcile-boot to the two reap paths that bypassed it, at one disk read on the rare reap branch.
+
+**Supersedes / superseded_by:** Additive — completes the #175/#179/#180 pause-protection arc by closing its opportunistic-reap gap. Pair-A cross-shadow (Bravo) at the conductor #181 PR boundary.
+
+---

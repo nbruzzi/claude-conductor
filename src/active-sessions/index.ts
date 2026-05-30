@@ -782,8 +782,14 @@ export function listLivePeers(args: {
     }
     const ageMs = defensiveAgeMs(now, mtimeMs);
 
-    // Clock-skew garbage or aged-out — opportunistic reap.
+    // Clock-skew garbage or aged-out — opportunistic reap, UNLESS the session is
+    // deliberately paused. Pause is a PROTECTION independent of liveness (mirrors
+    // reconcile-boot `casRecheckFlip`): a paused session stops heartbeating so its
+    // mtime ages out, but its heartbeat must NOT be reaped. Cycle-6 Task #6 closes
+    // the item-4 pause-completeness gap — reconcile-boot honored !paused, the
+    // opportunistic reap did not.
     if (ageMs === null || ageMs > GC_WINDOW_MS) {
+      if (readSessionPausedAt(entry) != null) continue; // paused → protected
       tryReapHeartbeat(artifactId, entry, path);
       continue;
     }
@@ -1042,7 +1048,13 @@ export function gcStaleArtifacts(now: number): string[] {
         const mtime = statSync(path).mtimeMs;
         const age = defensiveAgeMs(now, mtime);
         if (age === null || age > GC_WINDOW_MS) {
-          if (tryReapHeartbeat(artifactId, entry, path)) {
+          // Pause is a PROTECTION independent of liveness (mirrors reconcile-boot
+          // + listLivePeers, Cycle-6 Task #6): a deliberately-paused session's
+          // aged-out heartbeat must NOT be reaped. It persists, so the dir is
+          // still occupied — don't trigger the recursive empty-dir cleanup.
+          if (readSessionPausedAt(entry) != null) {
+            dirStillOccupied = true;
+          } else if (tryReapHeartbeat(artifactId, entry, path)) {
             reaped.push(`${artifactId}/${entry}`);
           } else {
             // Unlink failed (EISDIR/EACCES/EPERM/EIO). The entry is still on
