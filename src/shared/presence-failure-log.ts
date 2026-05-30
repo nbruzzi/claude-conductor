@@ -62,7 +62,8 @@ export type PresenceFailureSource =
   | "session-presence-unregister"
   | "active-sessions-registry"
   | "channels-identity"
-  | "dispatcher";
+  | "dispatcher"
+  | "session-reconcile-boot";
 
 export type PresenceFailureKind =
   | "lock-timeout"
@@ -388,7 +389,8 @@ function isPresenceFailureSource(s: string): s is PresenceFailureSource {
     s === "session-presence-unregister" ||
     s === "active-sessions-registry" ||
     s === "channels-identity" ||
-    s === "dispatcher"
+    s === "dispatcher" ||
+    s === "session-reconcile-boot"
   );
 }
 

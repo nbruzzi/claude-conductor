@@ -27,6 +27,35 @@ Followed by:
 
 ---
 
+## 2026-05-30 — Cycle-3: session-start reconcile-boot hook is REPORT-MODE (not auto-apply)
+
+```yaml
+---
+ts: 2026-05-30T18:08:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/hooks/checks/session-reconcile-boot.ts,
+    src/hooks/checks/bundled-registrations.ts,
+    src/hooks/bundled-check-names.ts,
+    src/active-sessions/reconcile-boot.ts,
+  ]
+---
+```
+
+**Context:** The reconcile-boot library (Cycle-2 2a/2b) ships the GC, but it is only invocable manually via the `reconcile-boot --apply` CLI (Charlie #167). Cycle-3 TODO #1 ("--apply operator-reachability") adds a session-start hook so the GC surfaces automatically at boot. Design question: should the hook run `runReconcileBoot({ apply: true })` (auto-GC stale presence at every session-start) or report-only?
+
+**Options considered:**
+
+1. **Report-mode (chosen)** — the hook runs `runReconcileBoot` with NO `apply`, surfacing gc-eligible/malformed counts as a non-blocking briefing; the operator invokes `--apply` via the CLI at their discretion. Pros: preserves `applyGc`'s NEVER-auto-kill guard #1 (operator-explicit `--apply`); "operator-reachable" is satisfied by surfacing; boot is the worst moment to auto-GC (mid-startup / briefly-quiet / paused peers present). Cons: GC is not fully automatic (requires an operator action after the nudge).
+2. **Auto-apply at session-start** — the hook runs `{ apply: true }`, deleting gc-eligible stale presence at every boot. Pros: fully automatic. Cons: STRIPS the operator-explicit guard for ALL sessions — the cardinal NEVER-auto-kill invariant the entire 2a/2b arc was isolated to protect; auto-deletes coordination state with zero operator action.
+
+**Chosen:** Report-mode.
+
+**Reason:** `applyGc`'s NEVER-auto-kill rests on four guards, the first being operator-explicit `--apply` (`reconcile-boot.ts` `applyGc` JSDoc). Auto-applying at boot removes that guard cohort-wide. "Operator-reachable" (TODO #1's goal) is fully satisfied by SURFACING at boot + the operator closing the loop via the CLI — agency, not auto-deletion. Auto-apply-at-boot would be a deliberate mode-2 relaxation of the cardinal invariant for all sessions: an explicit operator escalation, never a hook default. Ratified by Alpha (reconcile-boot arc owner + Cycle-3 captain), 2026-05-30.
+
 ## 2026-04-30 — Decision A: `CLAUDE_CONDUCTOR_DISABLE_HOOKS` env-var primitive
 
 ```yaml

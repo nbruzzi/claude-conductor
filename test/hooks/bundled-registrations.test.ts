@@ -92,7 +92,11 @@ import type { HookEvent } from "../../src/hooks/types.ts";
 // (Tier 4 (a) composition primitive: pattern-trace × memory-proposal).
 // Count rises 15 → 16. Plan: T4-X3 v0.2 + Alpha plan-tier audit RATIFY-
 // WITH-FOLDS 4/4 @ 15:20Z.
-const EXPECTED_COUNT = 16;
+//
+// Cycle-3 2026-05-30 — `session-reconcile-boot` session-start hook added
+// (report-mode boot-reconciliation briefing; Pair-B --apply operator-
+// reachability, REPORT-MODE per Alpha arc-owner ratification). Count 16 → 17.
+const EXPECTED_COUNT = 17;
 
 /** TA-9 fold (Phase 4 Step A Layer 1 audit): explicit-presence pin for
  *  `peer-message-deliverer` on `user-prompt-submit` event. Sibling-shape
@@ -176,6 +180,11 @@ describe("bundled-registrations meta-test", () => {
   it("Phase 3 Slice 2 — gc reaper registered on session-start", () => {
     const names = BUNDLED_CHECKS_BY_EVENT["session-start"];
     expect(names).toContain("dotfiles-worktree-gc");
+  });
+
+  it("Cycle-3 — session-reconcile-boot registered on session-start", () => {
+    const names = BUNDLED_CHECKS_BY_EVENT["session-start"];
+    expect(names).toContain("session-reconcile-boot");
   });
 
   it("Phase 4 Step A Layer 1 — peer-message-deliverer registered on user-prompt-submit", () => {

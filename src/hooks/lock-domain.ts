@@ -261,6 +261,13 @@ export const BUNDLED_LOCK_DOMAINS_BY_EVENT = {
         "Per-(channel, session) emission rate-limit cursor at `<channelsDir>/<id>/identity-emit-cursors/<sid>.json` (Step G renamed from `identity-emit/`; writer is NEW-only, reader falls back to legacy during the 30-day dual-read window). Direct `writeFileSync` (NOT tmp+rename atomic; corrupt-on-crash self-heals via parse-fail → emit-anyway). Error-path appendPresenceFailure on cursor write failure.",
     },
     {
+      phase: "session-reconcile-boot",
+      event: "session-start",
+      domains: ["presence-failure-log"],
+      comment:
+        "REPORT-MODE (DLOG phase-3.md): calls `runReconcileBoot({ now })` with NO `apply` → READS heartbeats (presence) + channels (identity) + worktree-config; classifies + returns counts as a briefing. NO writes on the happy path (report-mode never invokes `--apply`/`removeOwnHeartbeat`; the operator-explicit GC stays in the CLI). Sole write is the error-path `appendPresenceFailure` breadcrumb (shared presence-failure-log) when `runReconcileBoot` throws at the fs-listing level.",
+    },
+    {
       phase: "dotfiles-worktree-provisioner",
       event: "session-start",
       domains: [
