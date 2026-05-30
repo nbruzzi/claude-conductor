@@ -8,6 +8,7 @@
  *   - clean registry → pass() (no spam)
  *   - gc-eligible stale presence → warn() briefing that names the `--apply` CLI
  *   - REPORT-MODE invariant: the stale heartbeat is NOT deleted (no auto-GC)
+ *   - malformed presence entry → warn() briefing naming the malformed count
  *
  * Report-mode is the cardinal contract (DLOG decisions/phase-3.md): the hook
  * must NEVER delete coordination state — that stays operator-explicit via
@@ -19,7 +20,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,6 +89,15 @@ function staleHeartbeat(artifactPath: string, sessionId: string): string {
   return path;
 }
 
+/** Write a CORRUPT (unparseable-owner) presence heartbeat so scanHeartbeats
+ *  surfaces it as a malformed-entry (errors[]), exercising the hook's
+ *  `malformed > 0` briefing branch. */
+function malformedHeartbeat(artifactPath: string, sessionId: string): void {
+  const dir = join(tmpDir, artifactIdFromPath(artifactPath), "heartbeats");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, sessionId), "{ not json");
+}
+
 function inputFor(sessionId: string): HookInput {
   return {
     toolName: undefined,
@@ -115,5 +132,13 @@ describe("session-reconcile-boot hook", () => {
     await check(inputFor(SESSION));
     // Cardinal contract: report-mode never deletes coordination state.
     expect(existsSync(path)).toBe(true);
+  });
+
+  it("warns with a malformed-entry briefing when a presence entry is corrupt", async () => {
+    malformedHeartbeat("/private/tmp/srb-malformed-repo", STALE_SESSION);
+    const result = await check(inputFor(SESSION));
+    expect(result.exitCode).toBe(0);
+    expect(result.source).toBe("session-reconcile-boot");
+    expect(result.stdout).toContain("malformed");
   });
 });
