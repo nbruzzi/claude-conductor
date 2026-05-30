@@ -870,29 +870,113 @@ export function listAllHeartbeats(args: {
   return scanHeartbeats(args).valid;
 }
 
-/** Remove our own heartbeat — called at Stop. Best-effort. */
+/**
+ * Remove a heartbeat by (artifactId, sessionId). Best-effort (unlink; swallow
+ * if already gone or never existed).
+ *
+ * MULTI-CALLER (the "Own" in the name is a misnomer — DEFERRED-RENAME, below):
+ *   1. Stop-hook SELF-removal (session-presence-unregister.ts) — own heartbeat,
+ *      no `opts` → forensic detail records "self-stop".
+ *   2. reconcile-boot `--apply` GC (Cycle-2 increment-2 2b) — removes a DEAD
+ *      PEER's heartbeat (NOT own); passes `{reason:"reconcile-gc", actorPid}` so
+ *      the forensic record is HONEST — never "self-stop pid=<operator>" for a
+ *      peer's removal (F1 honest-telemetry; the never-auto-kill mutation's
+ *      removal record must not lie about who/why).
+ *   3. dotfiles `cli.ts` target-removal — a TARGET session (also not "own").
+ *
+ * DEFERRED RENAME (tracked cross-edge slice, Cycle-2 follow-up): the honest name
+ * is `removeHeartbeat` — `removeOwnHeartbeat` lies for callers 2+3. Separable
+ * naming-hygiene: the `opts` telemetry already makes the multi-caller reality
+ * honest-IN-THE-LOG, so the rename adds no safety. It is a COORDINATED cross-edge
+ * change (conductor rename + dotfiles shim/cli/cross-edge-test migration + drop a
+ * back-compat alias), kept OUT of the safety-critical 2b mutation PR to isolate
+ * it (cohort-ratified — Alpha §1-author + Bravo + the 2b A-vs-B sounding-board).
+ *
+ * `opts` (F1 honest-telemetry): when a caller removes a heartbeat that is NOT
+ * its own, it passes `{reason, actorPid}` so the presence-failure-log records
+ * WHO removed it (actor pid + caller_top4 stack) and WHY (reason) — mirroring
+ * the caller-stack capture of `unregisterActiveSession` / `tryReapHeartbeat`.
+ */
+/**
+ * The outcome of a removal — so a caller that GCs a NON-own heartbeat
+ * (reconcile-boot `--apply`) can tell a real failure from a benign already-gone:
+ *   - "removed": unlinked successfully.
+ *   - "absent": the file was already gone (ENOENT) — benign; "gone" IS the GC's
+ *     desired end-state, so this is not a failure (the benign-final-gap: a peer
+ *     or Stop may have removed it between the CAS-recheck and the unlink).
+ *   - "failed": invalid input, or a non-ENOENT unlink error (EACCES/EISDIR/...)
+ *     — a real removal failure the caller should surface (reconcile-boot → exit 1).
+ * (The Stop-hook self path ignores the return — its only caller never failed
+ * meaningfully; the return exists for the GC caller's gc-failed detection.)
+ */
+export type RemoveHeartbeatOutcome = "removed" | "absent" | "failed";
+
 export function removeOwnHeartbeat(
   artifactId: string,
   sessionId: string,
-): void {
-  if (!isValidArtifactId(artifactId) || !isValidSessionId(sessionId)) return;
+  opts?: { reason: string; actorPid: number },
+): RemoveHeartbeatOutcome {
+  if (!isValidArtifactId(artifactId) || !isValidSessionId(sessionId)) {
+    return "failed";
+  }
   const path = heartbeatPath(artifactId, sessionId);
   try {
     unlinkSync(path);
-    // Slice 7 A2 — Point 6: success-path emit. Stop-hook self-removal
-    // is single-caller (`session-presence-unregister.ts:41`); no
-    // caller-stack capture needed.
+    // Honest forensic record: a non-self caller (opts) logs target_sid + reason
+    // + actor pid + caller-stack; the Stop-hook self path keeps "self-stop".
+    const detail = opts
+      ? `target_sid=${sessionId} reason=${opts.reason} actor_pid=${opts.actorPid} caller_top4=${callerTop4()}`
+      : `pid=${process.pid} self-stop`;
     appendPresenceFailure({
       timestamp: new Date().toISOString(),
       sessionId,
       source: "active-sessions-registry",
       kind: "heartbeat-removed",
       artifactPath: path,
-      detail: `pid=${process.pid} self-stop`,
+      detail,
     });
-  } catch {
-    /* already gone or never existed */
+    return "removed";
+  } catch (err) {
+    // ENOENT = already gone (benign — the GC's end-state). Anything else is a
+    // real removal failure the caller surfaces.
+    if (
+      err !== null &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: unknown }).code === "ENOENT"
+    ) {
+      return "absent";
+    }
+    return "failed";
   }
+}
+
+/**
+ * Re-read a SINGLE heartbeat by (artifactId, sessionId) — the targeted CAS
+ * re-read reconcile-boot `--apply` uses at apply-time to confirm a `gc_eligible`
+ * candidate is STILL gc-able before removing it (closing the enumeration→apply
+ * TOCTOU). Returns the fresh {@link HeartbeatListing}, or `null` if the heartbeat
+ * is now GONE / unparseable / future-mtime garbage (any of which means "do not
+ * GC"). Same per-entry acceptance as {@link scanHeartbeats}, for one path.
+ */
+export function reReadHeartbeat(args: {
+  artifactId: string;
+  sessionId: string;
+  now: number;
+}): HeartbeatListing | null {
+  const { artifactId, sessionId, now } = args;
+  const path = heartbeatPath(artifactId, sessionId);
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    return null; // gone
+  }
+  const owner = readOwnerRecord(path);
+  if (!owner) return null; // unparseable / corrupt
+  const ageMs = defensiveAgeMs(now, mtimeMs);
+  if (ageMs === null) return null; // future-mtime garbage
+  return { sessionId, ageMs, owner, likelyDead: ageMs > LIKELY_DEAD_MS };
 }
 
 /** Enumerate tracked artifact IDs that exist in the registry. */
