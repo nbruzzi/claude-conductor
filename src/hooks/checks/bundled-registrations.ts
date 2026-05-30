@@ -40,6 +40,7 @@ import { check as checkDotfilesWorktreeProvisioner } from "./dotfiles-worktree-p
 import { check as checkDotfilesWorktreeGc } from "./dotfiles-worktree-gc.ts";
 import { check as checkRepoWorktreeProvisioner } from "./repo-worktree-provisioner.ts";
 import { check as checkRepoWorktreeGc } from "./repo-worktree-gc.ts";
+import { check as checkSessionReconcileBoot } from "./session-reconcile-boot.ts";
 
 export function registerBundled(
   builder: RegistryBuilder<BundledCheckName>,
@@ -168,6 +169,14 @@ export function registerBundled(
     fn: checkRepoWorktreeGc,
     description:
       "Phase 3 Slice 3 of generic-worktree-provisioner RFC (Stream 3 Slice 3) — orphan reaper for the per-session worktrees provisioned by repo-worktree-provisioner. Per-repo cursor file (~/.claude/logs/.repo-worktree-gc-cursor.<repoName>) with 5-min rate-gate; sid-prefix-liveness primary check via listAllHeartbeats on the canonical-claude-home anchor; per-repo `cleanupAfterIdleHours` overrides default GC_WINDOW_MS=60min per FOLD-ARCH-3. Safety guards mirror dotfiles-worktree-gc (.git/index.lock < 1hr; node_modules recent < 5min; forensic-marker active → skip). Reconciliation guard + presence-failure-log breadcrumbs on each reap.",
+    canBlock: false,
+    profiles: ["standard", "strict"],
+  });
+  builder.register("session-start", {
+    name: "session-reconcile-boot",
+    fn: checkSessionReconcileBoot,
+    description:
+      "Cycle-3 --apply operator-reachability — run reconcile-boot in REPORT-MODE at session-start and surface gc-eligible stale presence as a non-blocking briefing so the operator can invoke `reconcile-boot --apply` (the operator-explicit GC). REPORT-MODE, never auto-apply: preserves applyGc's operator-explicit NEVER-auto-kill guard #1 (DLOG decisions/phase-3.md). Fail-open + presence-failure-log breadcrumb; runReconcileBoot try/catch-wrapped (an fs-level listing throw is a distinct class from in-band malformed-entry errors[]).",
     canBlock: false,
     profiles: ["standard", "strict"],
   });

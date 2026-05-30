@@ -73,6 +73,7 @@ export const BUNDLED_CHECKS_BY_EVENT = {
     "dotfiles-worktree-gc",
     "repo-worktree-provisioner",
     "repo-worktree-gc",
+    "session-reconcile-boot",
   ],
   "user-prompt-submit": ["peer-message-deliverer", "teammate-idle-reminder"],
 } as const satisfies Record<HookEvent, readonly string[]>;

@@ -163,6 +163,11 @@
       "import": "./src/hooks/checks/identity-injector.ts",
       "default": "./src/hooks/checks/identity-injector.ts"
     },
+    "./hooks/checks/session-reconcile-boot": {
+      "types": "./src/hooks/checks/session-reconcile-boot.ts",
+      "import": "./src/hooks/checks/session-reconcile-boot.ts",
+      "default": "./src/hooks/checks/session-reconcile-boot.ts"
+    },
     "./channels/identity-context": {
       "types": "./src/channels/identity-context.ts",
       "import": "./src/channels/identity-context.ts",
