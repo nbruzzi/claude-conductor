@@ -571,33 +571,34 @@ export const INTERNAL = {
   },
 };
 
+/** A validated identity claim paired with the NATO letter that holds it. */
+export type IdentityClaimListing = {
+  identity: NatoIdentity;
+  claim: IdentityClaim;
+};
+
 /**
- * Scan the identities/ directory for an existing claim by `sessionId`.
- * Returns the {identity, claim} pair on first match, or null. Used for
- * idempotent rejoin in `claimIdentity`.
+ * List every valid identity claim on a channel — the full scan that
+ * {@link findExistingClaim} is the session-filtered projection of. Applies the
+ * SAME per-sentinel acceptance (valid NATO entry → readable → validated by
+ * {@link validateIdentityClaim} → role in `"pen" | "queue" | "out"`), so the
+ * claims returned here are exactly the set findExistingClaim would match
+ * across all sessions — single source of sentinel-scan truth, no drift (same
+ * pattern as `scanHeartbeats`/`listAllHeartbeats` in active-sessions).
  *
- * Delegates the 4-step shape-validation (JSON.parse → non-null object →
- * `string`-typed `session_id`/`role`/`joined_at`) to
- * {@link validateIdentityClaim} in `./claim.ts` (Phase 3 Step D2 close-out
- * per Decision A ARCH-2 + Charlie's pre-flight scout M.0 disposition). The
- * role-enum narrowing (`"pen" | "queue" | "out"`) and the `sessionId`
- * filter stay at this call site — `validateIdentityClaim` intentionally
- * treats `role` as opaque-string (see `test/channels/claim.test.ts` test 9
- * pinning the contract). Behavior contract: byte-for-byte equivalent to
- * the pre-D2 inline 4-step check + 2 additional narrows; same
- * skip-vs-match outcome for every observable sentinel-file shape.
+ * Best-effort: a missing/unreadable identities dir yields `[]`; a malformed or
+ * bad-role sentinel is skipped (it is not a claim). Returns entries in readdir
+ * order. Used by reconcile-boot's identity report-only enumeration (Cycle 2).
  */
-function findExistingClaim(
-  channelId: string,
-  sessionId: string,
-): { identity: NatoIdentity; claim: IdentityClaim } | null {
+export function listClaims(channelId: string): IdentityClaimListing[] {
+  const out: IdentityClaimListing[] = [];
   const dir = identitiesDir(channelId);
-  if (!existsSync(dir)) return null;
+  if (!existsSync(dir)) return out;
   let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch {
-    return null;
+    return out;
   }
   for (const entry of entries) {
     if (!isValidIdentity(entry)) continue;
@@ -609,7 +610,7 @@ function findExistingClaim(
       continue;
     }
     const claim = validateIdentityClaim(raw);
-    if (claim === null || claim.session_id !== sessionId) continue;
+    if (claim === null) continue;
     // `validateIdentityClaim` treats `role` as opaque-string per
     // `test/channels/claim.test.ts` test 9 — the runtime value may
     // legitimately be outside `ChannelRole`'s compile-time union. Widen to
@@ -623,7 +624,29 @@ function findExistingClaim(
     ) {
       continue;
     }
-    return { identity: entry, claim };
+    out.push({ identity: entry, claim });
+  }
+  return out;
+}
+
+/**
+ * Scan the identities/ directory for an existing claim by `sessionId`.
+ * Returns the {identity, claim} pair on first match, or null. Used for
+ * idempotent rejoin in `claimIdentity`.
+ *
+ * The session-filtered projection of {@link listClaims}: the per-sentinel
+ * acceptance (JSON.parse → non-null object → `string`-typed
+ * `session_id`/`role`/`joined_at` via {@link validateIdentityClaim}, plus the
+ * `"pen" | "queue" | "out"` role narrowing) lives ONCE in listClaims. Behavior
+ * contract is unchanged: same skip-vs-match outcome for every observable
+ * sentinel-file shape, first match in readdir order.
+ */
+function findExistingClaim(
+  channelId: string,
+  sessionId: string,
+): { identity: NatoIdentity; claim: IdentityClaim } | null {
+  for (const listing of listClaims(channelId)) {
+    if (listing.claim.session_id === sessionId) return listing;
   }
   return null;
 }

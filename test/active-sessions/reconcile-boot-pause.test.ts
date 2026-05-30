@@ -37,18 +37,37 @@ import {
 
 let tmpDir: string;
 let prev: string | undefined;
+let prevChannels: string | undefined;
+let prevConfig: string | undefined;
 const NOW = 1_800_000_000_000;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "reconcile-pause-"));
   prev = process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
+  prevChannels = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  prevConfig = process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"];
   process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = tmpDir;
+  // Isolate the channels dir + worktree-provisioner config: runReconcileBoot's
+  // default scope now enumerates identity (channels dir) and worktrees (repo
+  // config, default ~/.claude/worktree-provisioner.json). Point both at
+  // non-existent paths so the pause-focused presence tests stay deterministic.
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = join(tmpDir, "no-channels");
+  process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"] = join(
+    tmpDir,
+    "no-config.json",
+  );
 });
 
 afterEach(() => {
   if (prev === undefined)
     delete process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"];
   else process.env["CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR"] = prev;
+  if (prevChannels === undefined)
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  else process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannels;
+  if (prevConfig === undefined)
+    delete process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"];
+  else process.env["CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG"] = prevConfig;
   try {
     rmSync(tmpDir, { recursive: true, force: true });
   } catch {
