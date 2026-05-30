@@ -897,12 +897,28 @@ export function listAllHeartbeats(args: {
  * WHO removed it (actor pid + caller_top4 stack) and WHY (reason) — mirroring
  * the caller-stack capture of `unregisterActiveSession` / `tryReapHeartbeat`.
  */
+/**
+ * The outcome of a removal — so a caller that GCs a NON-own heartbeat
+ * (reconcile-boot `--apply`) can tell a real failure from a benign already-gone:
+ *   - "removed": unlinked successfully.
+ *   - "absent": the file was already gone (ENOENT) — benign; "gone" IS the GC's
+ *     desired end-state, so this is not a failure (the benign-final-gap: a peer
+ *     or Stop may have removed it between the CAS-recheck and the unlink).
+ *   - "failed": invalid input, or a non-ENOENT unlink error (EACCES/EISDIR/...)
+ *     — a real removal failure the caller should surface (reconcile-boot → exit 1).
+ * (The Stop-hook self path ignores the return — its only caller never failed
+ * meaningfully; the return exists for the GC caller's gc-failed detection.)
+ */
+export type RemoveHeartbeatOutcome = "removed" | "absent" | "failed";
+
 export function removeOwnHeartbeat(
   artifactId: string,
   sessionId: string,
   opts?: { reason: string; actorPid: number },
-): void {
-  if (!isValidArtifactId(artifactId) || !isValidSessionId(sessionId)) return;
+): RemoveHeartbeatOutcome {
+  if (!isValidArtifactId(artifactId) || !isValidSessionId(sessionId)) {
+    return "failed";
+  }
   const path = heartbeatPath(artifactId, sessionId);
   try {
     unlinkSync(path);
@@ -919,9 +935,48 @@ export function removeOwnHeartbeat(
       artifactPath: path,
       detail,
     });
-  } catch {
-    /* already gone or never existed */
+    return "removed";
+  } catch (err) {
+    // ENOENT = already gone (benign — the GC's end-state). Anything else is a
+    // real removal failure the caller surfaces.
+    if (
+      err !== null &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: unknown }).code === "ENOENT"
+    ) {
+      return "absent";
+    }
+    return "failed";
   }
+}
+
+/**
+ * Re-read a SINGLE heartbeat by (artifactId, sessionId) — the targeted CAS
+ * re-read reconcile-boot `--apply` uses at apply-time to confirm a `gc_eligible`
+ * candidate is STILL gc-able before removing it (closing the enumeration→apply
+ * TOCTOU). Returns the fresh {@link HeartbeatListing}, or `null` if the heartbeat
+ * is now GONE / unparseable / future-mtime garbage (any of which means "do not
+ * GC"). Same per-entry acceptance as {@link scanHeartbeats}, for one path.
+ */
+export function reReadHeartbeat(args: {
+  artifactId: string;
+  sessionId: string;
+  now: number;
+}): HeartbeatListing | null {
+  const { artifactId, sessionId, now } = args;
+  const path = heartbeatPath(artifactId, sessionId);
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    return null; // gone
+  }
+  const owner = readOwnerRecord(path);
+  if (!owner) return null; // unparseable / corrupt
+  const ageMs = defensiveAgeMs(now, mtimeMs);
+  if (ageMs === null) return null; // future-mtime garbage
+  return { sessionId, ageMs, owner, likelyDead: ageMs > LIKELY_DEAD_MS };
 }
 
 /** Enumerate tracked artifact IDs that exist in the registry. */

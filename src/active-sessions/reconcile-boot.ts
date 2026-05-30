@@ -31,7 +31,9 @@ import {
   LIVE_WINDOW_MS,
   classifyLiveness,
   listArtifactIds,
+  reReadHeartbeat,
   readSessionPausedAt,
+  removeOwnHeartbeat,
   scanHeartbeats,
   type HeartbeatListing,
   type HeartbeatScan,
@@ -106,8 +108,28 @@ export type ReconcileBootCandidate = {
 
 export type ReconcileBootError = {
   artifact_id: string;
-  error_class: "gc-failed" | "malformed-entry" | "cas-race";
+  /** `gc-failed`: a `--apply` unlink genuinely failed (EACCES/EISDIR/...) →
+   *  exit 1. `malformed-entry`: an unreadable presence heartbeat (corrupt owner
+   *  / future-mtime) → exit 3. A cas-race is NOT an error — a recheck-skip is a
+   *  HEALTHY protection (see {@link ReconcileBootCasRace}). */
+  error_class: "gc-failed" | "malformed-entry";
   detail: string;
+};
+
+/**
+ * A `--apply` candidate that was `gc_eligible` at enumeration but FLIPPED at the
+ * apply-time CAS re-read — so it was SKIPPED, not removed. A HEALTHY protective
+ * skip (the re-read saw the peer recover or vanish), NOT an error: `cas_races`
+ * is exit/ok-NEUTRAL — it never flips `ok` and drives no exit code. Advisory: it
+ * surfaces what the TOCTOU re-read protected (convergent with 2a's "a healthy
+ * protection must not signal an error").
+ */
+export type ReconcileBootCasRace = {
+  artifact_id: string;
+  session_id: string;
+  /** Why the re-read no longer permits GC: the session is now live, now paused,
+   *  its heartbeat was refreshed back under the GC floor, or it is gone/garbage. */
+  reason: "now-live" | "now-paused" | "mtime-refreshed" | "file-gone";
 };
 
 export type ReconcileBootOutput = {
@@ -121,15 +143,18 @@ export type ReconcileBootOutput = {
   applied: boolean;
   candidates: ReconcileBootCandidate[];
   errors: ReconcileBootError[];
+  /** `--apply` recheck-skips (healthy, exit/ok-neutral). Empty in report-mode. */
+  cas_races: ReconcileBootCasRace[];
 };
 
 export type ReconcileBootOptions = {
   now: number;
   /**
-   * Reserved for the next increment's `--apply` GC. UNREAD this increment:
-   * runReconcileBoot is report-only and always returns `applied: false`, so
-   * passing `apply: true` is a silent no-op until the GC path lands (N2). The
-   * field is forward-declared so the CLI verb's flag surface is stable now.
+   * `--apply` GC (2b): when `true`, after enumeration run the CAS-recheck pass
+   * that removes the `gc_eligible` PRESENCE candidates (re-confirmed at
+   * apply-time) and sets `applied: true`. Default/absent → report-only (no
+   * mutation; `applied: false`). The ONLY operator-explicit, state-deleting
+   * switch — no auto-path passes it (the session-start hook stays report-mode).
    */
   apply?: boolean;
   scope?: ReconcileBootArtifactClass | "all";
@@ -473,11 +498,91 @@ function markSplitBrain(candidates: ReconcileBootCandidate[]): void {
 }
 
 /**
- * Boot reconciliation entry point. Report-mode by default (the `--apply` GC
- * mutation is PR 2b). Presence is ALWAYS enumerated — it is both its own output
- * (when in scope) AND the cross-ref basis for identity/worktree liveness (a
- * claim/worktree has no heartbeat of its own). identity + worktree are
- * report-only candidates (never `--apply`-GC'd this increment).
+ * Apply-time CAS re-read for one `gc_eligible` candidate. Re-reads the heartbeat
+ * from disk (NOT the enumeration snapshot) and returns the cas-race reason if it
+ * is NO LONGER safe to GC, or `null` if the recheck STILL holds (safe to
+ * remove). Closes the enumeration→apply TOCTOU: a peer may have touched its
+ * heartbeat (→ live / refreshed-under-floor) or `markSessionPaused`'d in the gap.
+ */
+function casRecheckFlip(
+  c: ReconcileBootCandidate,
+  now: number,
+): ReconcileBootCasRace["reason"] | null {
+  const fresh = reReadHeartbeat({
+    artifactId: c.artifact_id,
+    sessionId: c.session_id,
+    now,
+  });
+  if (fresh === null) return "file-gone"; // gone / unparseable / future-mtime
+  // Pause is a PROTECTION independent of liveness — check first.
+  if (readSessionPausedAt(c.session_id) != null) return "now-paused";
+  // A touch since enumeration flips it out of the stale bucket ...
+  if (classifyLiveness(fresh) !== "stale") return "now-live";
+  // ... or refreshes it back under the GC floor (still stale, but no longer
+  // past the safety floor — so no longer gc_eligible).
+  if (fresh.ageMs <= GC_WINDOW_MS) return "mtime-refreshed";
+  return null; // still stale, still past the floor, still not paused → GC
+}
+
+/**
+ * The `--apply` GC pass — the ONLY path in reconcile-boot that deletes state.
+ * For each `gc_eligible` PRESENCE candidate that is NOT split-brain, CAS-recheck
+ * at apply-time and remove only if the recheck holds.
+ *
+ * NEVER-auto-kill — FOUR independent guards: operator-explicit `--apply`;
+ * presence-only + `gc_eligible`-only (already stale && age>floor && !paused);
+ * the `!split_brain` DiD (split-brain needs operator resolution, not auto-GC);
+ * and the CAS-recheck closing the enumeration→apply TOCTOU. A recheck-flip → a
+ * HEALTHY skip into `cas_races` (exit/ok-neutral). A real unlink failure →
+ * `errors`{gc-failed}; a benign already-gone ("absent") is not surfaced.
+ *
+ * Exported for direct safety-testing: the CAS-recheck FLIP cases (now-live /
+ * now-paused / file-gone / mtime-refreshed) require the disk to differ from the
+ * enumeration snapshot, which cannot happen within a single runReconcileBoot
+ * call (one `now`, one disk read) — so they are exercised by constructing a
+ * candidate + a controlled on-disk heartbeat and calling this directly.
+ */
+export function applyGc(
+  candidates: ReconcileBootCandidate[],
+  now: number,
+): { cas_races: ReconcileBootCasRace[]; errors: ReconcileBootError[] } {
+  const cas_races: ReconcileBootCasRace[] = [];
+  const errors: ReconcileBootError[] = [];
+  for (const c of candidates) {
+    if (c.artifact_class !== "presence" || !c.gc_eligible || c.split_brain) {
+      continue;
+    }
+    const flip = casRecheckFlip(c, now);
+    if (flip !== null) {
+      cas_races.push({
+        artifact_id: c.artifact_id,
+        session_id: c.session_id,
+        reason: flip,
+      });
+      continue;
+    }
+    const outcome = removeOwnHeartbeat(c.artifact_id, c.session_id, {
+      reason: "reconcile-gc",
+      actorPid: process.pid,
+    });
+    if (outcome === "failed") {
+      errors.push({
+        artifact_id: c.artifact_id,
+        error_class: "gc-failed",
+        detail: `${c.session_id}: heartbeat unlink failed`,
+      });
+    }
+    // "removed" → success; "absent" → benign final-gap (vanished post-recheck).
+  }
+  return { cas_races, errors };
+}
+
+/**
+ * Boot reconciliation entry point. Report-mode by default; `--apply` (2b) runs
+ * the CAS-recheck GC pass — the ONLY state-deleting path. Presence is ALWAYS
+ * enumerated — both its own output (when in scope) AND the cross-ref basis for
+ * identity/worktree liveness (a claim/worktree has no heartbeat of its own).
+ * identity + worktree are report-only (never `--apply`-GC'd — presence-only).
  */
 export function runReconcileBoot(
   opts: ReconcileBootOptions,
@@ -532,9 +637,24 @@ export function runReconcileBoot(
 
   markSplitBrain(candidates);
 
+  // `--apply` GC — the ONLY state-deleting path. Runs AFTER markSplitBrain so
+  // the `!split_brain` DiD sees the computed flag. Report-mode (no `--apply`)
+  // skips it entirely: cas_races empty, applied false. Presence-only,
+  // gc_eligible-only, CAS-rechecked at apply-time (NEVER-auto-kill).
+  const cas_races: ReconcileBootCasRace[] = [];
+  let applied = false;
+  if (opts.apply === true) {
+    const gc = applyGc(candidates, now);
+    cas_races.push(...gc.cas_races);
+    errors.push(...gc.errors);
+    applied = true;
+  }
+
   return {
-    // Load-bearing (§3, #174 F2/F3): the report is `ok` only if it could read
-    // everything it found. A surfaced malformed-entry → ok=false → exit 3.
+    // Load-bearing (§3 #174 F2/F3 + 2b gc-failed): `ok` only if the report could
+    // read everything it found AND every attempted GC succeeded. A
+    // malformed-entry → exit 3; a gc-failed → exit 1. cas_races are HEALTHY
+    // recheck-skips → exit/ok-NEUTRAL (never flip `ok`).
     ok: errors.length === 0,
     total_enumerated: candidates.length,
     live_count: candidates.filter((c) => c.classification === "live").length,
@@ -543,10 +663,14 @@ export function runReconcileBoot(
     ).length,
     stale_count: candidates.filter((c) => c.classification === "stale").length,
     split_brain_count: candidates.filter((c) => c.split_brain).length,
+    // Snapshot count of what WAS gc_eligible at enumeration (the candidates array
+    // is the enumeration snapshot; --apply does not mutate it). The CLI derives
+    // "gc_eligible_remaining" for exit 2 from this minus what --apply removed
+    // (i.e. minus cas_races minus gc-failed).
     gc_eligible_count: candidates.filter((c) => c.gc_eligible).length,
-    // `--apply` GC is the next increment; report-mode never sets applied.
-    applied: false,
+    applied,
     candidates,
     errors,
+    cas_races,
   };
 }
