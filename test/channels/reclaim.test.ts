@@ -23,10 +23,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { reclaimStaleIdentities } from "../../src/channels/reclaim.ts";
@@ -44,20 +46,32 @@ import {
   type NatoIdentity,
 } from "../../src/channels/identity.ts";
 
-const SANDBOX = `/tmp/test-channels-reclaim-${process.pid}`;
 const CHANNEL = "coordination";
 const OWNER = "00000000-0000-4000-8000-000000000000";
 
+let tmpRoot: string;
+let prevChannelsDir: string | undefined;
+let prevSessionId: string | undefined;
+
 function sandbox(): void {
-  cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
-  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
+  tmpRoot = mkdtempSync(join(tmpdir(), "channels-reclaim-test-"));
+  prevChannelsDir = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  prevSessionId = process.env["CLAUDE_SESSION_ID"];
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = join(tmpRoot, "channels");
 }
 
 function cleanup(): void {
-  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
-  delete process.env["CLAUDE_SESSION_ID"];
-  if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
+  if (prevChannelsDir !== undefined) {
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannelsDir;
+  } else {
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  }
+  if (prevSessionId !== undefined) {
+    process.env["CLAUDE_SESSION_ID"] = prevSessionId;
+  } else {
+    delete process.env["CLAUDE_SESSION_ID"];
+  }
 }
 
 function heartbeatPath(channelId: string, sessionId: string): string {

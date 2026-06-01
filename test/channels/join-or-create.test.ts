@@ -9,7 +9,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   createChannel,
@@ -17,21 +19,33 @@ import {
   readMetadata,
 } from "../../src/channels/index.ts";
 
-const SANDBOX = `/tmp/test-channels-joc-${process.pid}`;
 const CHANNEL = "coordination";
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
+let tmpRoot: string;
+let prevChannelsDir: string | undefined;
+let prevSessionId: string | undefined;
+
 function sandbox(): void {
-  cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
-  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
+  tmpRoot = mkdtempSync(join(tmpdir(), "channels-joc-test-"));
+  prevChannelsDir = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  prevSessionId = process.env["CLAUDE_SESSION_ID"];
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = join(tmpRoot, "channels");
 }
 
 function cleanup(): void {
-  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
-  delete process.env["CLAUDE_SESSION_ID"];
-  if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
+  if (prevChannelsDir !== undefined) {
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannelsDir;
+  } else {
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  }
+  if (prevSessionId !== undefined) {
+    process.env["CLAUDE_SESSION_ID"] = prevSessionId;
+  } else {
+    delete process.env["CLAUDE_SESSION_ID"];
+  }
 }
 
 describe("joinOrCreateChannel", () => {

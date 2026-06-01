@@ -11,7 +11,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check } from "../../../src/hooks/checks/channel-gc.ts";
@@ -19,21 +20,28 @@ import {
   COORDINATION_CHANNEL_ID,
   createChannel,
   listChannels,
+  resolveChannelsDir,
 } from "../../../src/channels/index.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
-const SANDBOX = `/tmp/test-channel-gc-${process.pid}`;
 const OWNER = "00000000-0000-4000-8000-000000000000";
 
+let tmpRoot: string;
+let prevChannelsDir: string | undefined;
+
 function sandbox(): void {
-  cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
-  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
+  tmpRoot = mkdtempSync(join(tmpdir(), "channel-gc-test-"));
+  prevChannelsDir = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = join(tmpRoot, "channels");
 }
 
 function cleanup(): void {
-  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
-  if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
+  if (prevChannelsDir !== undefined) {
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannelsDir;
+  } else {
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  }
 }
 
 function inputFor(): HookInput {
@@ -55,7 +63,7 @@ function inputFor(): HookInput {
  * the staleness trigger isStale() evaluates.
  */
 function makeStale(channelId: string): void {
-  const hbPath = join(SANDBOX, channelId, "heartbeats", OWNER);
+  const hbPath = join(resolveChannelsDir(), channelId, "heartbeats", OWNER);
   const past = Date.now() / 1000 - 25 * 60 * 60; // 25h ago
   utimesSync(hbPath, past, past);
 }
