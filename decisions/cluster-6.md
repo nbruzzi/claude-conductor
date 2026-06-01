@@ -67,3 +67,33 @@ affects:
 **Operationalized:** `reclaimStaleIdentities` + `ReclaimResult` curated via `api.ts` (+ paired-contract value-presence test). `closeStalePeerIdentity` stays imported intra-module (not on the public surface), per the existing curation policy. `joinOrCreateChannel` + `COORDINATION_CHANNEL_ID` also curated; `cli.ts` join verb routes the constant through join-or-create (handoff_id self-anchors to the channel id).
 
 **Cross-edge note:** dotfiles shim-mirror of the 3 new `api.ts` exports DEFERRED (no dotfiles-surface consumer; integration-lead verdict 2026-06-01) — lands with the first consumer.
+
+---
+
+## 2026-06-01 — Decision C: body-returning peer-recent-message helper via module subpath (deploy follow-up #6)
+
+```yaml
+---
+ts: 2026-06-01T18:35:00Z
+kind: api-shape
+severity: minor
+phase: cluster-6
+affects:
+  - src/channels/peer-recent-message.ts
+  - test/channels/peer-recent-message.test.ts
+---
+```
+
+**Context:** Post-merge deploy follow-up #6 (scope the dotfiles `live-update-reminder` hook to the parallel-join marker instead of any present peer) must read a present peer's most-recent `status` BODY to test for the marker. The two existing `peer-recent-message` helpers (`getMostRecentPeerKind` / `getMostRecentPeerMessageOfKind`) return `{ kind, ts }` only — no body. A body-returning helper is required; the open questions were its public surface (where exported / curated) and its body-resolution semantics.
+
+**Options considered:**
+
+1. **New sibling `getMostRecentPeerMessageWithBody`, exposed via the module's existing `./channels/peer-recent-message` subpath — no `api.ts` curation (CHOSEN).** Refactor the private `tailScanForPeer` to return the matched `ChannelMessage`; the two kind-variants project `{ kind, ts }` (ZERO behavior change); the new variant resolves the body (inline, or `body_ref` via `readBodyFile`, with `body_read_error` on failure).
+2. Curate the new fn in `api.ts` per Option-R's "new exported fn → api.ts curation + paired-contract test." Rejected: the module's two existing siblings are NOT in `api.ts` — the dotfiles consumer imports them directly from `claude-conductor/channels/peer-recent-message`; adding only the third to `api.ts` is a one-of-three inconsistent surface, and no CI gate enforces api.ts curation. Option-R's intent (a guarded cross-edge contract) is met here by the stable subpath export + the in-repo test importing via that path.
+3. Overload `getMostRecentPeerMessageOfKind` with an optional `includeBody` flag. Rejected: violates the module's explicit sibling-not-optional-param convention (caller-intent stays explicit at the use site).
+
+**Chosen:** Option 1. (Subpath surface flagged to Alpha on-channel for the post-PR audit; Delta independently converged on the same subpath consumption before the note — not yet an explicit Alpha ratification.)
+
+**Reason:** The `peer-recent-message` module predates Option-R and already established direct-subpath consumption, so the smallest correct surface is a third sibling on the same subpath — consistency with the module's actual pattern beats literal Option-R compliance. Body resolution mirrors the channel read path so the helper stays correct for large (`body_ref`) bodies too, not only the small inline marker #6 needs.
+
+**Operationalized:** `getMostRecentPeerMessageWithBody(channelId, peerSessionId, kindFilter) -> { kind, ts, body, body_read_error? } | null`; READ-ONLY (at most one extra `readBodyFile`; zero writes, zero locks). Delta wires the dotfiles #6 consumer against the subpath import. The test sandbox was migrated `/tmp+pid -> mkdtemp+tmpdir` (FINDING-1 class) in the same PR per the Alpha + Bravo deconfliction (the file was out of #5 scope).

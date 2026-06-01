@@ -55,6 +55,7 @@ import { join } from "node:path";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   isChannelMessage,
+  readBodyFile,
   resolveChannelsDir,
   type ChannelMessage,
 } from "./index.ts";
@@ -81,7 +82,8 @@ export function getMostRecentPeerKind(
   channelId: string,
   peerSessionId: string,
 ): { readonly kind: string; readonly ts: string } | null {
-  return tailScanForPeer(channelId, peerSessionId, null);
+  const match = tailScanForPeer(channelId, peerSessionId, null);
+  return match === null ? null : { kind: match.kind, ts: match.ts };
 }
 
 /**
@@ -120,24 +122,110 @@ export function getMostRecentPeerMessageOfKind(
   kindFilter: string,
 ): { readonly kind: string; readonly ts: string } | null {
   if (!kindFilter) return null;
-  return tailScanForPeer(channelId, peerSessionId, kindFilter);
+  const match = tailScanForPeer(channelId, peerSessionId, kindFilter);
+  return match === null ? null : { kind: match.kind, ts: match.ts };
+}
+
+/**
+ * Body-returning sibling of `getMostRecentPeerMessageOfKind`. Returns the
+ * most-recent message of `kindFilter` from `peerSessionId` INCLUDING its
+ * resolved `body`, so a consumer can inspect the message text (not just
+ * its kind/ts).
+ *
+ * First consumer: the `live-update-reminder` scope-to-parallel-marker fix
+ * (follow-up #6) — it checks whether a present peer's most-recent `status`
+ * body carries the parallel-join marker, instead of firing for any present
+ * peer.
+ *
+ * Body resolution mirrors the channel read path: an inline `body` is
+ * returned as-is (including an empty string — a real empty body, distinct
+ * from "no body"); a `body_ref` (large body shunted to a `bodies/`
+ * sidecar) is resolved via `readBodyFile`. If the ref cannot be read
+ * (missing / permission / IO / invalid channelId) `body` is `undefined`
+ * and `body_read_error` carries the reason — the same "distinguish no-body
+ * from couldn't-load-it" contract the `ChannelMessage` type encodes. A
+ * message with neither `body` nor `body_ref` yields `body: undefined` with
+ * no error.
+ *
+ * Same READ-ONLY + safe-default-`null` contract as the two siblings: the
+ * only added IO is the at-most-one `readBodyFile` for a body_ref match —
+ * still zero writes, zero locks.
+ *
+ * Why a third sibling rather than an optional `includeBody` flag on
+ * `getMostRecentPeerMessageOfKind`: caller-intent stays explicit at the
+ * use site (per the sibling-not-optional-param rationale above).
+ *
+ * @param channelId - per-channel id.
+ * @param peerSessionId - the session id whose post to look up.
+ * @param kindFilter - canonical CHANNEL_KIND literal to match. Empty
+ *   string returns `null` (no match possible), same as the sibling.
+ */
+export function getMostRecentPeerMessageWithBody(
+  channelId: string,
+  peerSessionId: string,
+  kindFilter: string,
+): {
+  readonly kind: string;
+  readonly ts: string;
+  readonly body: string | undefined;
+  readonly body_read_error?: string;
+} | null {
+  if (!kindFilter) return null;
+  const match = tailScanForPeer(channelId, peerSessionId, kindFilter);
+  if (match === null) return null;
+
+  // Inline body wins (including an empty string — a real empty body).
+  if (match.body !== undefined) {
+    return { kind: match.kind, ts: match.ts, body: match.body };
+  }
+  // No inline body and no ref → the message simply carries no body.
+  if (match.body_ref === undefined) {
+    return { kind: match.kind, ts: match.ts, body: undefined };
+  }
+  // Resolve the body_ref sidecar (read-only). readBodyFile returns null on
+  // an unresolvable/unsafe ref and throws only on an invalid channelId
+  // (caller bug) — surface either as body_read_error rather than throwing
+  // out of this read-only helper.
+  let resolved: string | null;
+  try {
+    resolved = readBodyFile(channelId, match.body_ref);
+  } catch (err: unknown) {
+    return {
+      kind: match.kind,
+      ts: match.ts,
+      body: undefined,
+      body_read_error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  if (resolved === null) {
+    return {
+      kind: match.kind,
+      ts: match.ts,
+      body: undefined,
+      body_read_error: `body_ref unresolvable: ${match.body_ref}`,
+    };
+  }
+  return { kind: match.kind, ts: match.ts, body: resolved };
 }
 
 /**
  * Shared tail-scan core. Walks the channel's messages.jsonl backwards
  * within the MAX_TAIL_BYTES + MAX_TAIL_LINES bound, returning the
- * latest line whose `from` matches `peerSessionId` and whose `kind`
- * matches `kindFilter` (or any kind when `kindFilter === null`).
+ * latest message whose `from` matches `peerSessionId` and whose `kind`
+ * matches `kindFilter` (or any kind when `kindFilter === null`). Returns
+ * the full `ChannelMessage` so each public caller projects what it needs
+ * (`{ kind, ts }` for the kind variants; the resolved body for the body
+ * variant).
  *
- * Private helper — public callers must use `getMostRecentPeerKind` or
- * `getMostRecentPeerMessageOfKind` so caller-intent stays explicit at
- * use sites.
+ * Private helper — public callers must use `getMostRecentPeerKind`,
+ * `getMostRecentPeerMessageOfKind`, or `getMostRecentPeerMessageWithBody`
+ * so caller-intent stays explicit at use sites.
  */
 function tailScanForPeer(
   channelId: string,
   peerSessionId: string,
   kindFilter: string | null,
-): { readonly kind: string; readonly ts: string } | null {
+): ChannelMessage | null {
   if (!channelId || !peerSessionId) return null;
 
   const messagesPath = join(resolveChannelsDir(), channelId, "messages.jsonl");
@@ -238,7 +326,7 @@ function tailScanForPeer(
     if (msg.from !== peerSessionId) continue;
     if (kindFilter !== null && msg.kind !== kindFilter) continue;
 
-    return { kind: msg.kind, ts: msg.ts };
+    return msg;
   }
 
   return null;
