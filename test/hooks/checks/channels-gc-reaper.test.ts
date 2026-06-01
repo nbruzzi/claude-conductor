@@ -13,12 +13,14 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check } from "../../../src/hooks/checks/channels-gc-reaper.ts";
@@ -32,18 +34,29 @@ import {
 } from "../../../src/channels/index.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
-const SANDBOX = `/tmp/test-channels-gc-reaper-${process.pid}`;
+/** Per-test channels root (CLAUDE_CONDUCTOR_CHANNELS_DIR) — a fresh mkdtemp dir
+ *  each test, matching the api.test.ts / identity-reclaim.test.ts sibling
+ *  convention. Avoids the hardcoded-/tmp macOS-symlink (/tmp→/private/tmp)
+ *  CI-vs-local divergence class; atomic mkdtemp uniqueness over process.pid. */
+let SANDBOX: string;
+let prevChannelsDir: string | undefined;
 const SESSION_OWNER = "11111111-1111-4111-8111-111111111111";
 
 function sandbox(): void {
-  cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
+  SANDBOX = mkdtempSync(join(tmpdir(), "test-channels-gc-reaper-"));
+  prevChannelsDir = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
   process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
 }
 
 function cleanup(): void {
-  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
-  if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  if (prevChannelsDir !== undefined) {
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannelsDir;
+  } else {
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  }
+  if (SANDBOX !== undefined && existsSync(SANDBOX)) {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  }
 }
 
 function inputFor(): HookInput {
