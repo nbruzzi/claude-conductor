@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -36,19 +37,30 @@ import {
   type ChannelSummary,
 } from "../../src/channels/index.ts";
 
-const SANDBOX = `/tmp/test-channels-${process.pid}`;
+/** Per-test channels root (CLAUDE_CONDUCTOR_CHANNELS_DIR) — a fresh mkdtemp dir
+ *  each test, matching the api.test.ts / identity-reclaim.test.ts sibling
+ *  convention. Avoids the hardcoded-/tmp macOS-symlink (/tmp→/private/tmp)
+ *  CI-vs-local divergence class; atomic mkdtemp uniqueness over process.pid. */
+let SANDBOX: string;
+let prevChannelsDir: string | undefined;
 const SESSION = "sess-test";
 
 function sandbox(): void {
-  cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
+  SANDBOX = mkdtempSync(join(tmpdir(), "test-channels-"));
+  prevChannelsDir = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
   process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
 }
 
 function cleanup(): void {
-  delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  if (prevChannelsDir !== undefined) {
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prevChannelsDir;
+  } else {
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+  }
   delete process.env["CLAUDE_SESSION_ID"];
-  if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  if (SANDBOX !== undefined && existsSync(SANDBOX)) {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  }
 }
 
 function msg(overrides: Partial<ChannelMessage> = {}): ChannelMessage {
