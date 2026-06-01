@@ -24,8 +24,11 @@ import { join } from "node:path";
 import { check } from "../../../src/hooks/checks/channels-gc-reaper.ts";
 import {
   archiveChannel,
+  commitIdentityClaim,
+  COORDINATION_CHANNEL_ID,
   createChannel,
   resolveLatestSymlinkPath,
+  touchHeartbeat,
 } from "../../../src/channels/index.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
@@ -439,5 +442,103 @@ describe("channels-gc-reaper hook", () => {
     // Symlink still present, still pointing at the live channel.
     expect(lstatSync(resolveLatestSymlinkPath()).isSymbolicLink()).toBe(true);
     expect(result.stdout).not.toContain("swept stale LATEST symlink");
+  });
+});
+
+describe("channels-gc-reaper coordination stale-identity reclaim", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  const STALE_S = 25 * 60 * 60; // 25h > 24h reclaim window → dead session
+  const LAG_S = 5 * 60; // 5-min heads-down lag (the 2026-06-01 dogfood signal) → live
+
+  function heartbeatPathFor(channelId: string, sessionId: string): string {
+    return join(channelDir(channelId), "heartbeats", sessionId);
+  }
+
+  /** Plant a fully-committed claim (sentinel + metadata entry + heartbeat)
+   *  whose heartbeat mtime is `heartbeatAgeSeconds` old. */
+  async function plantCommittedClaim(
+    channelId: string,
+    letter: string,
+    sessionId: string,
+    heartbeatAgeSeconds: number,
+  ): Promise<void> {
+    const claim = {
+      session_id: sessionId,
+      role: "queue" as const,
+      joined_at: new Date(
+        Date.now() - heartbeatAgeSeconds * 1000,
+      ).toISOString(),
+    };
+    mkdirSync(identitiesDirOf(channelId), { recursive: true });
+    writeFileSync(
+      sentinelPath(channelId, letter),
+      `${JSON.stringify(claim)}\n`,
+      {
+        mode: 0o600,
+      },
+    );
+    await commitIdentityClaim({ channelId, identity: letter, claim });
+    touchHeartbeat(channelId, sessionId);
+    const mtime = Date.now() / 1000 - heartbeatAgeSeconds;
+    utimesSync(heartbeatPathFor(channelId, sessionId), mtime, mtime);
+  }
+
+  it("reclaims a >24h-stale claim on the coordination channel at SessionStart", async () => {
+    await makeChannel(COORDINATION_CHANNEL_ID);
+    await plantCommittedClaim(
+      COORDINATION_CHANNEL_ID,
+      "Alpha",
+      "dead0000-0000-4000-8000-000000000000",
+      STALE_S,
+    );
+
+    const result = await check(inputFor());
+
+    expect(existsSync(sentinelPath(COORDINATION_CHANNEL_ID, "Alpha"))).toBe(
+      false,
+    );
+    expect(result.stdout).toContain(
+      `reclaimed stale identity channel=${COORDINATION_CHANNEL_ID} letter=Alpha`,
+    );
+  });
+
+  it("leaves a fresh claim (5-min heads-down lag) on the coordination channel untouched", async () => {
+    await makeChannel(COORDINATION_CHANNEL_ID);
+    await plantCommittedClaim(
+      COORDINATION_CHANNEL_ID,
+      "Bravo",
+      "11ve0000-0000-4000-8000-000000000000",
+      LAG_S,
+    );
+
+    const result = await check(inputFor());
+
+    // The 24h window clears the long-tool-run heartbeat-lag band by >150x, so
+    // a heads-down session is never reclaimed.
+    expect(existsSync(sentinelPath(COORDINATION_CHANNEL_ID, "Bravo"))).toBe(
+      true,
+    );
+    expect(result.stdout).not.toContain("reclaimed stale identity");
+  });
+
+  it("does NOT reclaim a stale claim on a non-coordination channel (reclaim is coordination-scoped)", async () => {
+    await makeChannel("ordinary-channel");
+    await plantCommittedClaim(
+      "ordinary-channel",
+      "Alpha",
+      "dead0000-0000-4000-8000-000000000001",
+      STALE_S,
+    );
+
+    const result = await check(inputFor());
+
+    // Non-coordination channels rely on whole-channel archival (channel-gc),
+    // not per-claim reclaim — the reaper only reclaims COORDINATION_CHANNEL_ID.
+    expect(existsSync(sentinelPath("ordinary-channel", "Alpha"))).toBe(true);
+    expect(result.stdout).not.toContain(
+      "reclaimed stale identity channel=ordinary-channel",
+    );
   });
 });
