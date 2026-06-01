@@ -58,11 +58,13 @@ afterEach(() => {
 
 // ─── (a) Value-export presence ──────────────────────────────────────
 // One test per value name; explicit (not it.each) so failure messages
-// point at the broken export by name. 24 names total (added
+// point at the broken export by name. 30 names total (added
 // `CHANNEL_KINDS` + `renderKindPrefix` in Phase 0 of Phase 4 Step A
 // commit `8708359`; added `explicitlyOutPeers` + `makeSendOutMutator`
 // in the v5 out-kind atomicity commit per ARCH-1 + ARCH-7 folds of the
-// staged-diff cross-audit cycle).
+// staged-diff cross-audit cycle; + COORDINATION_CHANNEL_ID +
+// joinOrCreateChannel + reclaimStaleIdentities in the 2026-06-01
+// fixed-eternal coordination-channel slice).
 
 describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", () => {
   it("appendMessage is a function", () => {
@@ -147,6 +149,18 @@ describe("api.ts value exports — presence + runtime resolution (TA-1 fix)", ()
   });
   it("validateChannelMetadata is a function", () => {
     expect(typeof api.validateChannelMetadata).toBe("function");
+  });
+  // Fixed-eternal coordination channel slice 2026-06-01 (Charlie-pen):
+  // the constant + the join-or-create primitive + the stale-identity reaper.
+  it("COORDINATION_CHANNEL_ID is a non-empty string", () => {
+    expect(typeof api.COORDINATION_CHANNEL_ID).toBe("string");
+    expect(api.COORDINATION_CHANNEL_ID.length).toBeGreaterThan(0);
+  });
+  it("joinOrCreateChannel is a function", () => {
+    expect(typeof api.joinOrCreateChannel).toBe("function");
+  });
+  it("reclaimStaleIdentities is a function", () => {
+    expect(typeof api.reclaimStaleIdentities).toBe("function");
   });
 });
 

@@ -64,10 +64,12 @@ import {
   closeChannel,
   closeStalePeerIdentity,
   createChannel,
+  COORDINATION_CHANNEL_ID,
   heartbeatMtime,
   isChannelArchived,
   CHANNEL_KINDS,
   joinChannel,
+  joinOrCreateChannel,
   listChannels,
   makeSendOutMutator,
   newestHeartbeatMtime,
@@ -819,7 +821,13 @@ export async function runChannelsCli(
         // `--from-session <sid>` adds CAS-check on the takeover holder
         // per Decision §9. Error classes from identity.ts translated to
         // structured `die()` calls.
-        const meta = await joinChannel({ channelId, sessionId });
+        // The eternal coordination channel is join-or-create: it is not
+        // handoff-derived and must be reachable from nothing on first join.
+        // Every other channel requires prior creation (join never creates).
+        const meta =
+          channelId === COORDINATION_CHANNEL_ID
+            ? await joinOrCreateChannel({ channelId, sessionId })
+            : await joinChannel({ channelId, sessionId });
         let claim:
           | Awaited<ReturnType<typeof claimIdentity>>
           | Awaited<ReturnType<typeof claimIdentityNamed>>;

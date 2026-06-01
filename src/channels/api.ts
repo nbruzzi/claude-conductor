@@ -144,6 +144,7 @@ export {
   ChannelClosedError,
   channelIdFromHandoff,
   closeChannel,
+  COORDINATION_CHANNEL_ID,
   createChannel,
   heartbeatMtime,
   /** Strict ChannelMessage shape validator. Exposed on the curated
@@ -154,6 +155,7 @@ export {
    *  for kind-aware body validation. Per `feedback-cross-edge-contract-via-paired-tests`. */
   isChannelMessage,
   joinChannel,
+  joinOrCreateChannel,
   listChannels,
   makeSendOutMutator,
   newestHeartbeatMtime,
@@ -385,3 +387,15 @@ export {
   INVALID_CHANNEL_ID_MESSAGE_FRAGMENT,
   isInvalidChannelIdError,
 } from "./boundary-errors.ts";
+
+// Fixed-eternal coordination channel slice 2026-06-01 (Charlie-pen) — the
+// stale-identity reclaim-reaper primitive + its result type. Coupled
+// counterpart of channel-gc's COORDINATION_CHANNEL_ID archival-exemption
+// (the exemption removes per-cycle pool recycling; this reclaims dead
+// sessions' letters so the 26-letter NATO pool never exhausts). Consumers:
+// channels-gc-reaper.ts SessionStart wiring (in-plugin direct import) +
+// Bravo's Slice-3 reclaim-invariant tests. Per the design's Ownership
+// (Option-R): substrate primitive curated via api.ts. NO key-revoke
+// (D-INT-3 — identity path unsigned, keys per-letter + persistent).
+export type { ReclaimResult } from "./reclaim.ts";
+export { reclaimStaleIdentities } from "./reclaim.ts";

@@ -20,6 +20,7 @@
 
 import {
   archiveChannel,
+  COORDINATION_CHANNEL_ID,
   listChannels,
   newestHeartbeatMtime,
   pruneArchive,
@@ -74,6 +75,13 @@ function sweepStale(): string[] {
   for (const ch of channels) {
     try {
       if (ch.archived) continue;
+      // The eternal coordination channel is NEVER archived-on-idle: archiving
+      // it would recreate the constant into a fresh empty dir on the next
+      // session (silent history loss + continuity break). Its dead identity
+      // claims are reclaimed per-letter by the stale-identity reaper in
+      // channels-gc-reaper.ts instead — the coupled counterpart of this
+      // exemption (neither ships without the other).
+      if (ch.id === COORDINATION_CHANNEL_ID) continue;
       if (isStale(ch, now)) {
         archiveChannel(ch.id);
         archived.push(ch.id);

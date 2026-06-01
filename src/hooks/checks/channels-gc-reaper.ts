@@ -64,6 +64,7 @@ import {
 import { join } from "node:path";
 
 import {
+  COORDINATION_CHANNEL_ID,
   LOCK_STALE_MS,
   listChannels,
   resolveArchiveDir,
@@ -77,6 +78,7 @@ import {
   type IdentityClaim,
   type UnreachableChannelSummary,
 } from "../../channels/index.ts";
+import { reclaimStaleIdentities } from "../../channels/reclaim.ts";
 import { validateIdentityClaim } from "../../channels/claim.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { isValidSessionId } from "../../active-sessions/index.ts";
@@ -113,6 +115,18 @@ const ORPHAN_MTIME_GATE_MS = 3 * LOCK_STALE_MS;
 /** 7-day TTL on `.reaper-acked` suppression markers. Stale marker → re-emit
  *  system-reminder + refresh marker mtime. */
 const ACKED_MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Stale-identity reclaim window for the eternal coordination channel: 24h —
+ *  the ONLINE-window / dead edge (a heartbeat older than this is no longer
+ *  even "online"; the same 24h boundary channel-gc archives a non-exempt
+ *  channel at). Conservative by design: it clears the heartbeat-lag-during-
+ *  long-tool-runs band (observed 5-9 min on the 2026-06-01 live cohort, where
+ *  the teammate-idle hook false-positived) by >150x, so heads-down-building
+ *  sessions are never reclaimed — only truly dead/crashed sessions (clean
+ *  exits self-release their letter). NOT the 60s close-peer
+ *  STALE_THRESHOLD_MS, which is an operator-gated manual escape hatch and
+ *  false-positives on Monitor-wake-delayed sessions. */
+const COORDINATION_RECLAIM_STALE_MS = 24 * 60 * 60 * 1000;
 
 /** Subdirectory holding the per-channel rate-gate cursor file.
  *  Step G (ARCH-W2-4) renamed from `gc-reap/` to `reap-cursors/` (noun-form
@@ -239,6 +253,41 @@ async function reapAllChannels(): Promise<string[]> {
   // sees the cleanup at session-start.
   const sweepLine = sweepLatestSymlinkStaleness();
   if (sweepLine !== null) summaryLines.push(sweepLine);
+
+  // Eternal coordination channel: reclaim NATO letters held by dead/crashed
+  // sessions. REQUIRED counterpart of channel-gc's archival-exemption for
+  // COORDINATION_CHANNEL_ID — that exemption removed the per-cycle archival
+  // that used to recycle the 26-letter pool, so without this the pool would
+  // exhaust under real come-and-go cadence (claimIdentity → NatoExhaustedError).
+  // Not rate-gated: the scan is cheap (listClaims + per-claim heartbeat read)
+  // and each closeStalePeerIdentity is idempotent + lock-serialized, so a
+  // concurrent session's pass is safe. Fail-open + breadcrumb: never break the
+  // SessionStart chain on a reclaim error.
+  try {
+    const reclaim = await reclaimStaleIdentities({
+      channelId: COORDINATION_CHANNEL_ID,
+      staleThresholdMs: COORDINATION_RECLAIM_STALE_MS,
+    });
+    for (const letter of reclaim.reclaimed) {
+      summaryLines.push(
+        `  reclaimed stale identity channel=${COORDINATION_CHANNEL_ID} letter=${letter}`,
+      );
+    }
+    for (const letter of reclaim.stuck) {
+      summaryLines.push(
+        `  STUCK stale identity channel=${COORDINATION_CHANNEL_ID} letter=${letter} (sentinel unlink failed; orphan-reaper retries)`,
+      );
+    }
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "unhandled",
+      sessionId: null,
+      artifactPath: COORDINATION_CHANNEL_ID,
+      detail: `gc-reaper stale-identity reclaim failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 
   return summaryLines;
 }

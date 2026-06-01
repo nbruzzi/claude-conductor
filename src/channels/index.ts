@@ -68,6 +68,29 @@ export const LOCK_STALE_MS = 30 * 1000;
 const LOCK_MAX_ATTEMPTS = 5;
 const LOCK_BASE_DELAY_MS = 50;
 
+/**
+ * The one global, fixed-name, eternal coordination channel id. Every
+ * session — solo or cohort — joins this constant (via join-or-create)
+ * rather than forking a per-handoff/per-cycle channel; the channel
+ * persists forever while sessions come and go through NATO-identity
+ * claim/release.
+ *
+ * Two coupled invariants keep the eternal channel healthy — NEITHER holds
+ * without the other:
+ *   1. `channel-gc.ts:sweepStale` EXEMPTS this id from whole-channel
+ *      archival. An eternal channel must never be archived-on-idle, else
+ *      the next session recreates the constant into a fresh empty dir →
+ *      silent history loss + continuity break.
+ *   2. Because that exemption removes the per-cycle archival that used to
+ *      implicitly recycle the 26-letter NATO pool, the stale-identity
+ *      reaper (`reclaim.ts:reclaimStaleIdentities`, wired into
+ *      `channels-gc-reaper.ts`) reclaims dead sessions' letters so the
+ *      pool never exhausts under real come-and-go cadence.
+ *
+ * Design: plans-durable/channel-coordination-fixed-eternal-design-2026-05-31.md
+ */
+export const COORDINATION_CHANNEL_ID = "coordination";
+
 export type ChannelLifecycle = "parallel";
 
 /**
@@ -945,6 +968,52 @@ export async function joinChannel(args: {
     touchHeartbeat(channelId, sessionId);
     return meta;
   });
+}
+
+/**
+ * Join the channel if it exists, else create it then join — the eternal
+ * coordination channel's bootstrap path. Unlike {@link joinChannel} (which
+ * requires the channel to pre-exist) and {@link createChannel} (which throws
+ * if it already exists), this is the idempotent "ensure I am a participant
+ * of `channelId`, creating it from nothing if needed" primitive.
+ *
+ * The eternal channel is NOT handoff-derived, so there is no handoff id to
+ * seed `metadata.handoff_id`. `handoffId` defaults to `channelId` itself — a
+ * self/sentinel anchor (the channel is its own provenance).
+ *
+ * Concurrency: cold-start sessions may race to create the channel. We avoid a
+ * fragile error-message match by re-checking existence after a failed
+ * `createChannel` — if the channel now exists, another session won the create
+ * race (benign) and we fall through to join; otherwise the failure was real
+ * (invalid id, IO error) and is rethrown. `createChannel`/`joinChannel` each
+ * take the per-channel metadata lock, so the create itself is atomic.
+ *
+ * Used by the `join` CLI verb for {@link COORDINATION_CHANNEL_ID}.
+ */
+export async function joinOrCreateChannel(args: {
+  channelId: string;
+  sessionId: string;
+  handoffId?: string;
+}): Promise<ChannelMetadata> {
+  const { channelId, sessionId } = args;
+  const handoffId = args.handoffId ?? channelId;
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] joinOrCreateChannel: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (!existsSync(metadataPath(channelId))) {
+    try {
+      return await createChannel({ channelId, handoffId, sessionId });
+    } catch (err) {
+      // Benign create race: a concurrent cold-start session created the
+      // channel between our existsSync check and createChannel's in-lock
+      // guard. If it exists now, fall through to join; else the error was
+      // real — rethrow.
+      if (!existsSync(metadataPath(channelId))) throw err;
+    }
+  }
+  return joinChannel({ channelId, sessionId });
 }
 
 /** Close a channel. Idempotent. Prevents new messages. */
