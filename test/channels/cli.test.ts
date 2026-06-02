@@ -681,6 +681,41 @@ describe("channels CLI — whoami-active verb (subprocess)", () => {
     expect(parsed.channel_id).toBe("c-wa-a");
   });
 
+  it("exact lastMessageTs tie → channel_id ascending wins (determinism fallback)", async () => {
+    // Both channels share the SAME lastMessageTs, so neither the primary key
+    // (lastMessageTs) nor the joined_at fallback can decide — the final
+    // channel_id tiebreak must, deterministically. Create z BEFORE a so the
+    // result (a) differs from creation/enumeration order, proving the tiebreak
+    // is channel_id-based, not filesystem-order-based. (#188 TA nit.)
+    await createChannel({
+      channelId: "c-wa-tie-z",
+      handoffId: "c-wa-tie-z",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-wa-tie-z",
+      sessionId: TEST_SESSION_ID,
+    });
+    await createChannel({
+      channelId: "c-wa-tie-a",
+      handoffId: "c-wa-tie-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-wa-tie-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    const sameTs = `${JSON.stringify({ ts: "2099-01-01T00:00:00.000Z", from: TEST_SESSION_ID, kind: "status", body: "x" })}\n`;
+    writeFileSync(join(waDir, "c-wa-tie-z", "messages.jsonl"), sameTs);
+    writeFileSync(join(waDir, "c-wa-tie-a", "messages.jsonl"), sameTs);
+    const result = runWa(["whoami-active", "--json"], {
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { channel_id: string };
+    expect(parsed.channel_id).toBe("c-wa-tie-a");
+  });
+
   it("malformed metadata.json on one channel does not break the scan", async () => {
     await createChannel({
       channelId: "c-wa-good",

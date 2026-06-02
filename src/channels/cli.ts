@@ -1654,15 +1654,25 @@ export async function runChannelsCli(
           return;
         }
         const found: ActiveMatch[] = [];
-        for (const ch of listChannels()) {
-          const claim = await getIdentityForSession(ch.id, requested);
-          if (claim !== null) {
-            found.push({
-              ...claim,
-              channel_id: ch.id,
-              last_message_ts: ch.lastMessageTs,
-            });
+        try {
+          for (const ch of listChannels()) {
+            const claim = await getIdentityForSession(ch.id, requested);
+            if (claim !== null) {
+              found.push({
+                ...claim,
+                channel_id: ch.id,
+                last_message_ts: ch.lastMessageTs,
+              });
+            }
           }
+        } catch {
+          // Honor "always exits 0" literally: an unexpected throw during the
+          // cross-channel scan (e.g. a future listChannels / getIdentityForSession
+          // regression) degrades to "no identity" rather than a non-zero exit — a
+          // statusline must never error. (#188 RE nit: throw-proof, not just
+          // no-die-path-based.)
+          emitEmpty();
+          return;
         }
         const parseTs = (s: string): number => {
           const n = Date.parse(s);
