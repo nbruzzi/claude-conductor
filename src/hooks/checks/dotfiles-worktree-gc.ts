@@ -214,16 +214,17 @@ export async function check(input: HookInput): Promise<HookResult> {
 
       // F4 never-kill-silently (L1049): this reap survived the cross-artifact
       // liveness gate above (isSessionLiveByPrefix === false), so the owning
-      // session is dead on EVERY artifact — not merely stale on the anchor.
-      // Record that explicitly so the reap is auditable as liveness-confirmed-
-      // dead rather than a blind anchor-age reap.
+      // session had NO live heartbeat (age<window) on ANY artifact — not merely
+      // stale on the anchor. (No-heartbeat is not provably-dead; the
+      // 2-sweep-confirm follow-up adds that — NIT-RE.) Record it so the reap is
+      // auditable rather than a blind anchor-age reap.
       appendPresenceFailure({
         timestamp: new Date().toISOString(),
         sessionId,
         source: "dispatcher",
         kind: "worktree-gc-reaped",
         artifactPath: wt.path,
-        detail: `reaped ${wt.sessionId}${fullSid !== null ? ` (sid=${fullSid})` : " (orphan; no anchor)"} — cross-artifact liveness confirmed dead on all artifacts`,
+        detail: `reaped ${wt.sessionId}${fullSid !== null ? ` (sid=${fullSid})` : " (orphan; no anchor)"} — no live heartbeat on any artifact within window`,
       });
     }
 

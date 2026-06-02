@@ -205,13 +205,17 @@ function reapRepo(args: {
       continue;
     }
 
+    // F4 never-kill-silently (L1049, mirror of dotfiles-worktree-gc): this reap
+    // survived the cross-artifact liveness gate above (isSessionLiveByPrefix
+    // === false), so the owning session had no live heartbeat on any artifact
+    // within the window. Record it so the reap is auditable.
     appendPresenceFailure({
       timestamp: new Date().toISOString(),
       sessionId,
       source: "dispatcher",
       kind: "worktree-gc-reaped",
       artifactPath: wt.path,
-      detail: `[${source}] reaped sid-prefix ${wt.sessionId}`,
+      detail: `[${source}] reaped sid-prefix ${wt.sessionId} — no live heartbeat on any artifact within window`,
     });
   }
 
