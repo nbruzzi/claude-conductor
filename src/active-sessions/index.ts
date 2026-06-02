@@ -877,6 +877,65 @@ export function listAllHeartbeats(args: {
 }
 
 /**
+ * Cross-artifact liveness probe by session-id PREFIX — "is the session that
+ * owns a per-session worktree still alive, ANYWHERE?"
+ *
+ * A worktree path encodes only the 8-char sid-prefix, so the worktree GC
+ * reapers (`dotfiles-worktree-gc` / `repo-worktree-gc`) must decide liveness
+ * from the prefix alone before reaping. The prior fallback
+ * (`sidPrefixHasLiveAnchor`, hook-local) scanned ONLY the `~/.claude` ANCHOR
+ * artifact's heartbeats. But per-tool heartbeat refresh lands on the session's
+ * CWD artifact (its worktree dir), NOT the anchor — the anchor refreshes only
+ * at session-start + channel-send. So a session actively editing files is FRESH
+ * on its cwd artifact while its anchor heartbeat has aged out, and an anchor-only
+ * scan mis-reads it as dead → reaps a LIVE worktree (the 4/4 live-reap of
+ * 2026-06-02; backlog L1049). This probe scans ALL artifacts and returns true if
+ * ANY heartbeat whose sessionId starts with `sidPrefix` is fresh within
+ * `GC_WINDOW_MS` — i.e. the owning session is alive on some artifact, so the
+ * worktree must NOT be reaped.
+ *
+ * Read-only + fail-soft: a missing/unreadable artifact dir is skipped, never
+ * thrown. Deliberately broader than the old fallback's `!likelyDead` (≤10min)
+ * cutoff — it uses the reaper's own `< GC_WINDOW_MS` (60min) staleness boundary
+ * so a session that touched any artifact within the window is protected
+ * (conservative toward never-reap-live; a truly-dead session's worktree just
+ * lingers one window longer). Cross-host heartbeats are NOT excluded — a fresh
+ * same-prefix heartbeat is protection regardless of host (over-protecting
+ * against a live-reap is the safe direction; 8-hex-prefix collisions across
+ * hosts are vanishingly unlikely). First match short-circuits.
+ */
+export function isSessionLiveByPrefix(
+  sidPrefix: string,
+  now: number,
+  // Freshness window; defaults to GC_WINDOW_MS (60min — the worktree reaper's
+  // own staleness boundary). `repo-worktree-gc` passes its per-repo window
+  // (the `cleanupAfterIdleHours` override) so the liveness threshold matches
+  // that repo's configured reap threshold.
+  windowMs: number = GC_WINDOW_MS,
+): boolean {
+  if (sidPrefix.length === 0) return false;
+  let artifactIds: readonly string[];
+  try {
+    artifactIds = listArtifactIds();
+  } catch {
+    return false;
+  }
+  for (const artifactId of artifactIds) {
+    let listings: HeartbeatListing[];
+    try {
+      listings = listAllHeartbeats({ artifactId, now });
+    } catch {
+      continue;
+    }
+    for (const h of listings) {
+      if (!h.sessionId.startsWith(sidPrefix)) continue;
+      if (h.ageMs >= 0 && h.ageMs < windowMs) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Remove a heartbeat by (artifactId, sessionId). Best-effort (unlink; swallow
  * if already gone or never existed).
  *

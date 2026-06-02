@@ -60,19 +60,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import {
-  artifactIdFromPath,
-  listAllHeartbeats,
-  type HeartbeatListing,
-} from "../../active-sessions/index.ts";
+import { isSessionLiveByPrefix } from "../../active-sessions/index.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { effectiveHome } from "../../shared/home.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
-import {
-  listWorktrees,
-  removeWorktree,
-  type WorktreeEntry,
-} from "../../worktrees/index.ts";
+import { listWorktrees, removeWorktree } from "../../worktrees/index.ts";
 import {
   readRepoConfig,
   type RepoConfigEntry,
@@ -111,23 +103,11 @@ export async function check(input: HookInput): Promise<HookResult> {
     if (configResult.repos.length === 0) return pass();
 
     const now = getWallClockNow();
-    // Heartbeats fetched once across all repos. We use the canonical-
-    // claude-home anchor (~/.claude) — all sessions write heartbeats
-    // there via session-presence-register at session-start, regardless
-    // of which repos they're working in. This gives a complete view
-    // of all currently-live sessions for the sid-prefix-liveness check.
-    const anchorArtifactId = artifactIdFromPath(
-      join(effectiveHome(), ".claude"),
-    );
-    const anchors = listAllHeartbeats({
-      artifactId: anchorArtifactId,
-      now,
-    });
 
     for (const repo of configResult.repos) {
       if (repo.gc === false) continue;
       if (repo.auto !== true) continue; // gc only the auto-provisioned set
-      reapRepo({ repo, anchors, sessionId, now });
+      reapRepo({ repo, sessionId, now });
     }
 
     return pass();
@@ -149,11 +129,10 @@ export async function check(input: HookInput): Promise<HookResult> {
  *  so one repo's recent sweep doesn't block another repo's overdue sweep. */
 function reapRepo(args: {
   readonly repo: RepoConfigEntry;
-  readonly anchors: readonly HeartbeatListing[];
   readonly sessionId: string | null;
   readonly now: number;
 }): void {
-  const { repo, anchors, sessionId, now } = args;
+  const { repo, sessionId, now } = args;
   const cursorPath = cursorFilePath(repo.name);
   if (recentSweep(cursorPath, now)) return;
 
@@ -167,7 +146,11 @@ function reapRepo(args: {
   const source = `${SOURCE}:${repo.name}`;
 
   for (const wt of worktrees) {
-    if (isWorktreeLive(anchors, wt, windowMs)) continue;
+    // Cross-artifact liveness (backlog L1049): isSessionLiveByPrefix scans ALL
+    // artifacts, not just the ~/.claude anchor — a session fresh on its cwd
+    // worktree artifact (per-tool heartbeat) is live even when its anchor aged
+    // out. windowMs is this repo's per-repo threshold.
+    if (isSessionLiveByPrefix(wt.sessionId, now, windowMs)) continue;
 
     if (forensicMarkerActive(wt.sessionId)) {
       appendPresenceFailure({
@@ -233,29 +216,6 @@ function reapRepo(args: {
   }
 
   touchCursor(cursorPath);
-}
-
-/** sid-prefix-liveness primary check: ANY heartbeat across all
- *  artifact-ids matching the worktree's sid-prefix + age < windowMs →
- *  worktree is live.
- *
- *  Deliberately ignores the `likelyDead` flag — that flag is set against
- *  the global LIVE_WINDOW_MS (30min) constant, which would override our
- *  per-repo cleanupAfterIdleHours threshold. The per-repo windowMs is
- *  the authoritative threshold here; ageMs-against-windowMs is the
- *  single source of truth. */
-function isWorktreeLive(
-  anchors: readonly HeartbeatListing[],
-  wt: WorktreeEntry,
-  windowMs: number,
-): boolean {
-  const sidPrefix = wt.sessionId;
-  for (const a of anchors) {
-    if (!a.sessionId.startsWith(sidPrefix)) continue;
-    if (a.ageMs < 0) continue;
-    if (a.ageMs < windowMs) return true;
-  }
-  return false;
 }
 
 /** Per-repo staleness threshold. `cleanupAfterIdleHours` (if set + >0)

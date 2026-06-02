@@ -58,6 +58,7 @@ import { effectiveHome } from "../../shared/home.ts";
 import {
   artifactIdFromPath,
   clearSentinelDotfilesRoot,
+  isSessionLiveByPrefix,
   listAllHeartbeats,
   unregisterActiveSession,
   type HeartbeatListing,
@@ -132,14 +133,23 @@ export async function check(input: HookInput): Promise<HookResult> {
       // shares that prefix AND is live within GC_WINDOW_MS, the session
       // whose worktree this is must still be alive — skip the reap and
       // emit a diagnostic breadcrumb instead.
-      if (sidPrefixHasLiveAnchor(anchors, wt.sessionId)) {
+      // Cross-artifact liveness gate (backlog L1049; 2026-06-02 4/4 live-reap
+      // fix). byDotfilesRoot above scans ONLY the ~/.claude anchor, which
+      // refreshes just at session-start + channel-send; per-tool heartbeats
+      // land on the session's CWD artifact (its worktree). So a live session
+      // editing files is fresh on its cwd artifact while its anchor went
+      // stale/absent — the old anchor-only check (`sidPrefixHasLiveAnchor`)
+      // mis-read it as dead and reaped a LIVE worktree. `isSessionLiveByPrefix`
+      // scans ALL artifacts: if the owning session is fresh anywhere, do NOT
+      // reap.
+      if (isSessionLiveByPrefix(wt.sessionId, now)) {
         appendPresenceFailure({
           timestamp: new Date().toISOString(),
           sessionId,
           source: "dispatcher",
           kind: "worktree-gc-liveness-fallback-fired",
           artifactPath: wt.path,
-          detail: `sid-prefix ${wt.sessionId} live in anchors but byDotfilesRoot missed — skipping reap (likely cause: raw-vs-realpath drift in dotfilesRoot sentinel, or heartbeat overwrite without preserving the field)`,
+          detail: `sid-prefix ${wt.sessionId} is live cross-artifact (fresh heartbeat on some artifact) but the ~/.claude anchor was stale/missing — skipping reap of a live worktree (L1049)`,
         });
         continue;
       }
@@ -202,13 +212,18 @@ export async function check(input: HookInput): Promise<HookResult> {
         continue;
       }
 
+      // F4 never-kill-silently (L1049): this reap survived the cross-artifact
+      // liveness gate above (isSessionLiveByPrefix === false), so the owning
+      // session is dead on EVERY artifact — not merely stale on the anchor.
+      // Record that explicitly so the reap is auditable as liveness-confirmed-
+      // dead rather than a blind anchor-age reap.
       appendPresenceFailure({
         timestamp: new Date().toISOString(),
         sessionId,
         source: "dispatcher",
         kind: "worktree-gc-reaped",
         artifactPath: wt.path,
-        detail: `reaped ${wt.sessionId}${fullSid !== null ? ` (sid=${fullSid})` : " (orphan; no anchor)"}`,
+        detail: `reaped ${wt.sessionId}${fullSid !== null ? ` (sid=${fullSid})` : " (orphan; no anchor)"} — cross-artifact liveness confirmed dead on all artifacts`,
       });
     }
 
@@ -285,32 +300,6 @@ function mapByDotfilesRoot(
     out.set(canonical, a);
   }
   return out;
-}
-
-/**
- * Defense-in-depth: scan anchor heartbeats for any session whose full
- * session id starts with the worktree's sid-prefix and whose heartbeat is
- * fresh (within GC_WINDOW_MS, not flagged likelyDead). Returns `true` when
- * such a peer exists, signaling "do not reap — the worktree's owning
- * session is alive even if the byDotfilesRoot map didn't surface it."
- *
- * Filed as `feedback-worktree-provisioner-reaps-live-siblings.md` (slice 6
- * 2026-05-18) — observed when a third sibling spawned during an active
- * Alpha+Bravo cycle and both prior session worktrees were reaped despite
- * being alive. Root cause hypotheses: raw-vs-realpath drift in
- * `dotfilesRoot` sentinel storage, or heartbeat overwrite that wiped the
- * sentinel field. This helper closes both failure modes.
- */
-function sidPrefixHasLiveAnchor(
-  anchors: readonly HeartbeatListing[],
-  sidPrefix: string,
-): boolean {
-  for (const a of anchors) {
-    if (!a.sessionId.startsWith(sidPrefix)) continue;
-    if (a.likelyDead) continue;
-    if (a.ageMs >= 0 && a.ageMs < GC_WINDOW_MS) return true;
-  }
-  return false;
 }
 
 function forensicMarkerActive(sidPrefix: string): boolean {
