@@ -1744,3 +1744,41 @@ affects:
 **Supersedes / superseded_by:** Additive — completes the #175/#179/#180 pause-protection arc by closing its opportunistic-reap gap. Pair-A cross-shadow (Bravo) at the conductor #181 PR boundary.
 
 ---
+
+## 2026-06-02 — Decision: cross-artifact liveness gate — worktree reapers stop reaping LIVE siblings (L1049 slice-1)
+
+```yaml
+---
+ts: 2026-06-02T13:15:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/index.ts,
+    src/hooks/checks/dotfiles-worktree-gc.ts,
+    src/hooks/checks/repo-worktree-gc.ts,
+    test/active-sessions/session-live-by-prefix.test.ts,
+  ]
+---
+```
+
+**Context:** The worktree GC reapers (`dotfiles-worktree-gc` / `repo-worktree-gc`) decided liveness from the `~/.claude` ANCHOR heartbeat only. But per-tool heartbeats land on the session's CWD artifact (its worktree); the anchor refreshes only at session-start + channel-send. So a live session editing files is fresh on its cwd artifact while its anchor ages past `GC_WINDOW_MS`, and the anchor-only scan reaped its LIVE worktree — observed 4/4 this session (2026-06-02), incl. the live captain's worktree at 21:50 (backlog L1049). Telemetry-confirmed: reaps logged `"(orphan; no anchor)"` while the anchor was opportunistically reaped by `listLivePeers` (called from many hooks) and re-created without `dotfilesRoot` (`heartbeat-no-dotfilesroot-on-existing` ×158). 3-lens: Alpha (author) + Charlie (mechanism; plan-gate SHIP-WITH-FOLDS) + Bravo (3rd-lens).
+
+**Options considered + chosen:**
+
+1. **F0 cross-artifact READ — CHOSEN.** New `isSessionLiveByPrefix(sidPrefix, now, windowMs?)` in `active-sessions` scans ALL artifacts (`listArtifactIds` + `listAllHeartbeats`, lock-free); fresh on ANY artifact ⇒ live, don't reap. Replaces anchor-only `sidPrefixHasLiveAnchor` (dotfiles) + `isWorktreeLive` (repo, whose dead anchor plumbing is dropped). **Zero new writes** — read-only, only at the rate-gated 5-min reaper cadence (no hot-path), so the `registry-contention` (#1 event) risk that deferred the heartbeat-refresh fix (F1) does not apply.
+2. **F1 anchor-WRITE (keep the anchor fresh on PreToolUse) — REJECTED.** Same root-fix but adds throttled writes on a contended path + needs a contention canary. F0 dominates (zero-write); Charlie's mechanism-lens converged F1→F0 on the merits.
+3. **pid-liveness probe — REJECTED (broken-by-construction).** `OwnerRecord.pid = process.pid` is the EPHEMERAL dispatcher subprocess pid, not the long-lived `claude` session pid (empirically: all 4 cohort session-start pids dead; the real session is the `claude` binary). `process.kill(owner.pid, 0)` would read every LIVE session dead → reap all. reconcile-boot's RESERVED `pid-alive` (Pair-B §10 Q2) is therefore broken as-designed (separately flagged). Liveness stays heartbeat-mtime.
+4. **Liveness window — CHOSEN: `< GC_WINDOW_MS` (60min)**, the reaper's own staleness boundary (not the old fallback's `!likelyDead`/10min, which was too tight). `repo-worktree-gc` passes its per-repo `cleanupAfterIdleHours` window via the optional `windowMs` param.
+5. **Never-silent (F4) — CHOSEN: enriched reap breadcrumb** records the cross-artifact liveness check confirmed dead on all artifacts (an auditable reap, not a blind anchor-age reap).
+
+**Scope (slice-1):** F0 cross-artifact gate in BOTH reapers + the enriched breadcrumb + unit tests (`session-live-by-prefix.test.ts`, incl. the 4/4 regression / Q4 canary: fresh ONLY on a non-anchor artifact ⇒ live). NOT the multi-cycle L1049 contract.
+
+**Deferred (L1049 stays OPEN — Bravo 3rd-lens FINDING-1):** 2-sweep-confirm before reap (transient-robustness for the rare Read/Bash-only / long-single-tool-run residual stale on ALL artifacts >60min — benign: no uncommitted edits, but disruptive); the full worktree `--apply` GC migration into reconcile-boot; re-sourcing a real session pid to enable pid-liveness. This slice is a focused stop-the-bleed, NOT a P0-complete claim.
+
+**Reason:** The reaper read liveness from the one artifact (the anchor) that a live editing session does NOT keep fresh. Reading cross-artifact restores the never-reap-live invariant using the heartbeat the session already refreshes (its cwd artifact), at zero write cost and only at the rate-gated reaper cadence.
+
+**Supersedes / superseded_by:** Additive — extends the worktree-GC liveness model (Phase 3 Slice 2) + the reconcile-boot cross-artifact enumeration pattern (Cycle 2) to the reaper's reap-decision. Partial-realizes backlog L1049 / agetor-P0-1 (the full boot-reconciliation contract remains open).
+
+---
