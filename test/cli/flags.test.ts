@@ -30,6 +30,7 @@ describe("parseFlags", () => {
         dryRun: false,
         onto: undefined,
         noChain: false,
+        sessionId: undefined,
       });
       expect(result.positional).toEqual(["a", "b", "c"]);
     });
@@ -76,6 +77,7 @@ describe("parseFlags", () => {
         dryRun: false,
         onto: undefined,
         noChain: false,
+        sessionId: undefined,
       });
       expect(result.positional).toEqual(["my-channel"]);
     });
@@ -137,6 +139,7 @@ describe("parseFlags", () => {
         dryRun: false,
         onto: undefined,
         noChain: false,
+        sessionId: undefined,
       });
       expect(result.positional).toEqual([]);
     });

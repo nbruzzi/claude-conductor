@@ -32,6 +32,7 @@ function fakeFlags(overrides: Partial<FlagValues> = {}): FlagValues {
     dryRun: false,
     onto: undefined,
     noChain: false,
+    sessionId: undefined,
     ...overrides,
   };
 }
