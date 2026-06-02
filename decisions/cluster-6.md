@@ -97,3 +97,33 @@ affects:
 **Reason:** The `peer-recent-message` module predates Option-R and already established direct-subpath consumption, so the smallest correct surface is a third sibling on the same subpath — consistency with the module's actual pattern beats literal Option-R compliance. Body resolution mirrors the channel read path so the helper stays correct for large (`body_ref`) bodies too, not only the small inline marker #6 needs.
 
 **Operationalized:** `getMostRecentPeerMessageWithBody(channelId, peerSessionId, kindFilter) -> { kind, ts, body, body_read_error? } | null`; READ-ONLY (at most one extra `readBodyFile`; zero writes, zero locks). Delta wires the dotfiles #6 consumer against the subpath import. The test sandbox was migrated `/tmp+pid -> mkdtemp+tmpdir` (FINDING-1 class) in the same PR per the Alpha + Bravo deconfliction (the file was out of #5 scope).
+
+---
+
+## 2026-06-02 — Decision D: `whoami-active` channel-auto-discovery verb (Arc A)
+
+```yaml
+---
+ts: 2026-06-02T13:15:00Z
+kind: api-shape
+severity: minor
+phase: cluster-6
+affects:
+  - src/channels/cli.ts
+  - src/cli/flags.ts
+---
+```
+
+**Context:** The statusline (and the future permission-relay router) needs to answer "which NATO identity does THIS session hold, and on which channel" without knowing the channel id ahead of time. The existing `whoami <channel-id>` requires the caller to name the channel; the statusline worked around this by iterating `~/.claude/channels/*/metadata.json` in user-side bash — plugin-owned schema knowledge leaking into a dotfile (backlog L124, Arc A).
+
+**Options considered:**
+
+1. **New `whoami-active` verb that auto-discovers the channel, reusing the already-exported `getIdentityForSession` per channel (CHOSEN).** No channel-id arg; `--session-id` (CLAUDE_SESSION_ID fallback); `--json`/bare; always exit 0 with `null`/empty on no-claim.
+2. Extract a new `findActiveIdentity(sessionId)` helper into `identity.ts` + curate via `api.ts`, with the verb as a thin wrapper. Rejected for v1: a new exported helper triggers the "reuse isn't free" cost (api.ts curation + the dotfiles shim-mirror per `feedback-substrate-shim-mirror-on-plugin-export-changes`) for no current cross-edge consumer — the verb's logic is ~25 lines and the item's acceptance criteria are CLI-level. Mirror of Charlie's NF-1 on PR #187 ("already built != already reachable"): here the smallest correct surface is to reuse what is ALREADY reachable.
+3. Harden the inline statusline bash instead. Rejected: the whole point of L124 is to STOP reimplementing plugin schema in user-side bash.
+
+**Chosen:** Option 1.
+
+**Reason:** Reusing `getIdentityForSession` (already on the curated surface) means zero new exports → zero shim-mirror obligation → smallest correct change. The double metadata read (`listChannels` + per-channel `getIdentityForSession`) is acceptable for the small-N statusline use (~10–50ms/tick per the item's perf note); `listChannels`'s split try/catch already skips malformed channels, so a bad metadata.json never breaks the scan. The verb is the canonical sibling of `whoami`.
+
+**Operationalized:** `whoami-active [--session-id <uuid>] [--json]` in `src/channels/cli.ts`; `sessionId` added to `FlagSpec` / `FlagValues` / `DEFAULT_SPEC` + a `--session-id` value-flag branch in `parseFlags` (mirrors `--from-session` via `consumeStringValue`). **Deterministic multi-channel tiebreak:** most-recent by `lastMessageTs`, fallback `joined_at`, then `channel_id` — never filesystem-enumeration-order-dependent (documented at the call site + pinned by a test). **Clean-null contract:** no resolvable session-id OR no claim → `null` (`--json`) / empty (bare) + exit 0 (a statusline must never see an error). 7 subprocess tests + a docs page (`docs/conventions/statusline.md`). The dotfiles `statusline-command.sh` swap is an atomic-paired sibling DEFERRED until this verb is GA on origin/main (don't deprecate the inline before the plugin verb lands).

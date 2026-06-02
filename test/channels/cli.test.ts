@@ -25,7 +25,14 @@ import {
   expect,
   it,
 } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -519,5 +526,219 @@ describe("channels CLI — Slice 5 identity verbs (subprocess)", () => {
     expect(result.exitCode).toBe(5);
     expect(result.stderr).toContain("[release-self]");
     expect(result.stderr).toContain("no identity claim");
+  });
+});
+
+describe("channels CLI — whoami-active verb (subprocess)", () => {
+  let waDir: string;
+
+  beforeEach(() => {
+    waDir = mkdtempSync(join(tmpdir(), "channels-whoami-active-"));
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = waDir;
+  });
+
+  afterEach(() => {
+    delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+    if (existsSync(waDir)) rmSync(waDir, { recursive: true, force: true });
+  });
+
+  // Controls the session env precisely: omits CLAUDE_SESSION_ID entirely when
+  // `sessionId` is undefined (the no-session case must not inherit the ambient
+  // session id). whoami-active reads the flag/env directly — it never falls
+  // through to sid() discovery — so no HOME isolation is needed.
+  function runWa(
+    args: readonly string[],
+    opts: { sessionId?: string } = {},
+  ): RunResult {
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      CLAUDE_CONDUCTOR_CHANNELS_DIR: waDir,
+    };
+    delete env["CLAUDE_SESSION_ID"];
+    if (opts.sessionId !== undefined) env["CLAUDE_SESSION_ID"] = opts.sessionId;
+    const result = Bun.spawnSync({
+      cmd: ["bun", CLI_PATH, ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    return {
+      exitCode: result.exitCode ?? -1,
+      stdout: new TextDecoder().decode(result.stdout),
+      stderr: new TextDecoder().decode(result.stderr),
+    };
+  }
+
+  it("--json: auto-discovers the single channel the session holds", async () => {
+    await createChannel({
+      channelId: "c-wa-solo",
+      handoffId: "c-wa-solo",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({ channelId: "c-wa-solo", sessionId: TEST_SESSION_ID });
+    const result = runWa(["whoami-active", "--json"], {
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const parsed = JSON.parse(result.stdout) as {
+      identity: string;
+      channel_id: string;
+      role: string;
+      joined_at: string;
+    };
+    expect(parsed.identity).toBe("Alpha");
+    expect(parsed.channel_id).toBe("c-wa-solo");
+    expect(parsed.role).toBe("queue");
+    expect(parsed.joined_at).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+  });
+
+  it("bare (no --json): prints just the identity string", async () => {
+    await createChannel({
+      channelId: "c-wa-bare",
+      handoffId: "c-wa-bare",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({ channelId: "c-wa-bare", sessionId: TEST_SESSION_ID });
+    const result = runWa(["whoami-active"], { sessionId: TEST_SESSION_ID });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("Alpha\n");
+  });
+
+  it("--session-id flag overrides the ambient env var", async () => {
+    await createChannel({
+      channelId: "c-wa-flag",
+      handoffId: "c-wa-flag",
+      sessionId: PEER_SESSION_ID,
+    });
+    await claimIdentity({ channelId: "c-wa-flag", sessionId: PEER_SESSION_ID });
+    // Ambient env is TEST_SESSION_ID (holds nothing); the flag points at PEER.
+    const result = runWa(
+      ["whoami-active", "--session-id", PEER_SESSION_ID, "--json"],
+      { sessionId: TEST_SESSION_ID },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      identity: string;
+      channel_id: string;
+    };
+    expect(parsed.identity).toBe("Alpha");
+    expect(parsed.channel_id).toBe("c-wa-flag");
+  });
+
+  it("no claim on any channel → null (exit 0, --json)", async () => {
+    await createChannel({
+      channelId: "c-wa-other",
+      handoffId: "c-wa-other",
+      sessionId: PEER_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-wa-other",
+      sessionId: PEER_SESSION_ID,
+    });
+    const result = runWa(["whoami-active", "--json"], {
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toBeNull();
+  });
+
+  it("no resolvable session id (no flag, no env) → null/empty exit 0", () => {
+    const jsonResult = runWa(["whoami-active", "--json"], {});
+    expect(jsonResult.exitCode).toBe(0);
+    expect(JSON.parse(jsonResult.stdout)).toBeNull();
+    const bareResult = runWa(["whoami-active"], {});
+    expect(bareResult.exitCode).toBe(0);
+    expect(bareResult.stdout).toBe("");
+  });
+
+  it("multiple channels → most-recent by lastMessageTs (beats a later joined_at)", async () => {
+    // A joins FIRST (older joined_at) but gets a far-future message; B joins
+    // SECOND (newer joined_at) with no message. lastMessageTs is the primary
+    // key, so A must win despite B's later join. The fixed far-future ts keeps
+    // the assertion independent of wall-clock.
+    await createChannel({
+      channelId: "c-wa-a",
+      handoffId: "c-wa-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({ channelId: "c-wa-a", sessionId: TEST_SESSION_ID });
+    await createChannel({
+      channelId: "c-wa-b",
+      handoffId: "c-wa-b",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({ channelId: "c-wa-b", sessionId: TEST_SESSION_ID });
+    writeFileSync(
+      join(waDir, "c-wa-a", "messages.jsonl"),
+      `${JSON.stringify({ ts: "2099-01-01T00:00:00.000Z", from: TEST_SESSION_ID, kind: "status", body: "x" })}\n`,
+    );
+    const result = runWa(["whoami-active", "--json"], {
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { channel_id: string };
+    expect(parsed.channel_id).toBe("c-wa-a");
+  });
+
+  it("exact lastMessageTs tie → channel_id ascending wins (determinism fallback)", async () => {
+    // Both channels share the SAME lastMessageTs, so neither the primary key
+    // (lastMessageTs) nor the joined_at fallback can decide — the final
+    // channel_id tiebreak must, deterministically. Create z BEFORE a so the
+    // result (a) differs from creation/enumeration order, proving the tiebreak
+    // is channel_id-based, not filesystem-order-based. (#188 TA nit.)
+    await createChannel({
+      channelId: "c-wa-tie-z",
+      handoffId: "c-wa-tie-z",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-wa-tie-z",
+      sessionId: TEST_SESSION_ID,
+    });
+    await createChannel({
+      channelId: "c-wa-tie-a",
+      handoffId: "c-wa-tie-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-wa-tie-a",
+      sessionId: TEST_SESSION_ID,
+    });
+    const sameTs = `${JSON.stringify({ ts: "2099-01-01T00:00:00.000Z", from: TEST_SESSION_ID, kind: "status", body: "x" })}\n`;
+    writeFileSync(join(waDir, "c-wa-tie-z", "messages.jsonl"), sameTs);
+    writeFileSync(join(waDir, "c-wa-tie-a", "messages.jsonl"), sameTs);
+    const result = runWa(["whoami-active", "--json"], {
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { channel_id: string };
+    expect(parsed.channel_id).toBe("c-wa-tie-a");
+  });
+
+  it("malformed metadata.json on one channel does not break the scan", async () => {
+    await createChannel({
+      channelId: "c-wa-good",
+      handoffId: "c-wa-good",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({ channelId: "c-wa-good", sessionId: TEST_SESSION_ID });
+    // A sibling channel dir with unparseable metadata — listChannels skips it
+    // (its split try/catch treats an unreadable metadata.json as non-listable).
+    mkdirSync(join(waDir, "c-wa-broken"), { recursive: true });
+    writeFileSync(
+      join(waDir, "c-wa-broken", "metadata.json"),
+      "{ not valid json",
+    );
+    const result = runWa(["whoami-active", "--json"], {
+      sessionId: TEST_SESSION_ID,
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      channel_id: string;
+      identity: string;
+    };
+    expect(parsed.channel_id).toBe("c-wa-good");
+    expect(parsed.identity).toBe("Alpha");
   });
 });

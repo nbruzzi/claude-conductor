@@ -169,6 +169,8 @@ const VERB_HELP: Record<string, string> = {
   body: "body <channel-id> <body-ref>\n  Print the body content for a body_ref to stdout.",
   whoami:
     "whoami <channel-id>\n  Print this session's NATO identity + role on the channel as JSON.\n  Exits 0 with `null` if the session has no claim.",
+  "whoami-active":
+    "whoami-active [--session-id <uuid>] [--json]\n  Auto-discover which channel this session holds an identity on (no\n  channel-id arg — the statusline / find-identity use case). --session-id\n  falls back to CLAUDE_SESSION_ID; if neither resolves, exits 0 with\n  `null` (--json) / empty (bare). When the session holds an identity on\n  multiple channels, returns the most-recent by lastMessageTs (joined_at\n  fallback, channel-id tiebreak — deterministic). --json prints\n  {identity, channel_id, role, joined_at}; bare prints the identity\n  string. Always exits 0 (no-claim is a successful 'no identity' read).",
   "set-role":
     "set-role <channel-id> --role <pen|queue|out>\n  Update the role of this session's claimed identity. Exits 5 if no\n  identity is held (per RE-6 — silent no-op is the failure mode).",
   "close-peer":
@@ -225,6 +227,7 @@ const TOP_LEVEL_HELP =
   "\n" +
   "Subcommands: from-handoff | resolve-handoff | summarize-handoff-channel | create | join |\n" +
   "             close | send | read | list | meta | heartbeat | peers | body | whoami |\n" +
+  "             whoami-active |\n" +
   "             set-role | close-peer | release-self | forget-cursor | show-cursor |\n" +
   "             forget-message-cursor |\n" +
   "             show-message-cursor | kinds\n" +
@@ -746,6 +749,9 @@ export async function runChannelsCli(
     // audit-verdict` Mode D engagement (operator-explicit chain-ref
     // opt-out). Other verbs ignore. Per slice plan body §3.3 Mode D.
     noChain: true,
+    // `whoami-active` reads `--session-id <uuid>` (falls back to
+    // CLAUDE_SESSION_ID env). Value-consuming flag; other verbs ignore.
+    sessionId: true,
   });
   // Phase 2 Slice 0 RE-W2-3 fix: per-invocation DieContext replaces the
   // prior module-level `outputJson` toggle. Threaded through every die()
@@ -1624,6 +1630,79 @@ export async function runChannelsCli(
           role: claim.role,
           joined_at: claim.joined_at,
         });
+        return;
+      }
+      case "whoami-active": {
+        // Auto-discover the channel this session holds an identity on — no
+        // channel-id arg (the statusline / find-identity use case where the
+        // caller does not know the channel ahead of time). Clean-null on no
+        // resolvable session-id or no claim (exit 0) so user-side scripts
+        // (statusline) never see an error. Deterministic across multiple
+        // claims: most-recent by lastMessageTs, joined_at fallback, channel_id
+        // tiebreak. Replaces the plugin-schema iteration previously inlined in
+        // ~/.claude/statusline-command.sh.
+        type ActiveMatch = NonNullable<
+          Awaited<ReturnType<typeof getIdentityForSession>>
+        > & { channel_id: string; last_message_ts: string | null };
+        const requested = flags.sessionId ?? process.env["CLAUDE_SESSION_ID"];
+        const emitEmpty = (): void => {
+          if (flags.json) printJson(null);
+          else process.stdout.write("");
+        };
+        if (requested === undefined || requested.length === 0) {
+          emitEmpty();
+          return;
+        }
+        const found: ActiveMatch[] = [];
+        try {
+          for (const ch of listChannels()) {
+            const claim = await getIdentityForSession(ch.id, requested);
+            if (claim !== null) {
+              found.push({
+                ...claim,
+                channel_id: ch.id,
+                last_message_ts: ch.lastMessageTs,
+              });
+            }
+          }
+        } catch {
+          // Honor "always exits 0" literally: an unexpected throw during the
+          // cross-channel scan (e.g. a future listChannels / getIdentityForSession
+          // regression) degrades to "no identity" rather than a non-zero exit — a
+          // statusline must never error. (#188 RE nit: throw-proof, not just
+          // no-die-path-based.)
+          emitEmpty();
+          return;
+        }
+        const parseTs = (s: string): number => {
+          const n = Date.parse(s);
+          return Number.isNaN(n) ? 0 : n;
+        };
+        found.sort((a, b) => {
+          const ta = parseTs(a.last_message_ts ?? a.joined_at);
+          const tb = parseTs(b.last_message_ts ?? b.joined_at);
+          if (tb !== ta) return tb - ta;
+          return a.channel_id < b.channel_id
+            ? -1
+            : a.channel_id > b.channel_id
+              ? 1
+              : 0;
+        });
+        const best = found[0];
+        if (best === undefined) {
+          emitEmpty();
+          return;
+        }
+        if (flags.json) {
+          printJson({
+            identity: best.identity,
+            channel_id: best.channel_id,
+            role: best.role,
+            joined_at: best.joined_at,
+          });
+        } else {
+          process.stdout.write(`${best.identity}\n`);
+        }
         return;
       }
       case "set-role": {

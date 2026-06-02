@@ -106,6 +106,14 @@ export type FlagSpec = {
    * lives at the verb dispatch).
    */
   readonly noChain?: boolean;
+  /**
+   * Accept `--session-id <uuid>` (consumes next argv) — value passed
+   * through verbatim. Used by `whoami-active` for the statusline /
+   * find-identity use case where the caller passes the session id
+   * explicitly; verb-level dispatch falls back to CLAUDE_SESSION_ID when
+   * absent. Other verbs ignore.
+   */
+  readonly sessionId?: boolean;
 };
 
 export type FlagValues = {
@@ -162,6 +170,12 @@ export type FlagValues = {
    * verb dispatch (parseFlags is shape-only).
    */
   readonly noChain: boolean;
+  /**
+   * Raw `--session-id <value>` string when flag was present and accepted,
+   * otherwise `undefined`. Consumed by `whoami-active`; verb-level dispatch
+   * falls back to CLAUDE_SESSION_ID when undefined.
+   */
+  readonly sessionId: string | undefined;
 };
 
 const DEFAULT_SPEC: Required<FlagSpec> = {
@@ -178,6 +192,7 @@ const DEFAULT_SPEC: Required<FlagSpec> = {
   dryRun: false,
   onto: false,
   noChain: false,
+  sessionId: false,
 };
 
 export type ParsedFlags = {
@@ -220,6 +235,7 @@ export function parseFlags(
   const acceptDryRun = spec.dryRun ?? DEFAULT_SPEC.dryRun;
   const acceptOnto = spec.onto ?? DEFAULT_SPEC.onto;
   const acceptNoChain = spec.noChain ?? DEFAULT_SPEC.noChain;
+  const acceptSessionId = spec.sessionId ?? DEFAULT_SPEC.sessionId;
 
   const positional: string[] = [];
   const parseErrors: string[] = [];
@@ -236,6 +252,7 @@ export function parseFlags(
   let dryRun = false;
   let onto: string | undefined = undefined;
   let noChain = false;
+  let sessionId: string | undefined = undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -298,6 +315,10 @@ export function parseFlags(
       i += consumed.advance;
     } else if (acceptNoChain && arg === "--no-chain") {
       noChain = true;
+    } else if (acceptSessionId && arg === "--session-id") {
+      const consumed = consumeStringValue(argv, i, "--session-id", parseErrors);
+      if (consumed.value !== undefined) sessionId = consumed.value;
+      i += consumed.advance;
     } else {
       positional.push(arg);
     }
@@ -325,6 +346,7 @@ export function parseFlags(
       dryRun,
       onto,
       noChain,
+      sessionId,
     },
     parseErrors,
   };
@@ -332,7 +354,7 @@ export function parseFlags(
 
 /**
  * Extract a value-consuming string flag from `argv` at position `i`. Used
- * by `--as`, `--role`, and `--from-session` per plan giggly-bouncing-spark.md
+ * by `--as`, `--role`, `--from-session`, and `--session-id` per plan giggly-bouncing-spark.md
  * §change-list #1. The parser is value-extraction-only — domain validation
  * (NATO letter for `--as`, ChannelRole for `--role`, session-id shape for
  * `--from-session`) happens at verb-level dispatch.
