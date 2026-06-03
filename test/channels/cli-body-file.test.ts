@@ -51,6 +51,7 @@ import {
 } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir, homedir } from "node:os";
+import { readMessages } from "../../src/channels/index.ts";
 
 const CLI_PATH = resolvePath(import.meta.dir, "../../src/channels/cli.ts");
 const TEST_SESSION_ID = "ad41f287-c7d2-4b01-a3ad-3aec8eb25d29";
@@ -177,6 +178,30 @@ describe("send: universal provenance (#3a)", () => {
     );
     expect(result.status).toBe(0);
     expect(readLastMessage()["provenance"]).toEqual({ source: "stdin" });
+  });
+
+  it("provenance round-trips through readMessages (reader symmetry — locks the field-explicit read-path)", () => {
+    const bodyPath = join(tmpRoot, "roundtrip.txt");
+    writeFileSync(bodyPath, "round-trip body");
+    expect(runSend(bodyPath).status).toBe(0);
+    // Read back through the REAL reader (readMessages -> isChannelMessage guard
+    // -> push), not raw JSONL. Locks the read-path against a future strict
+    // validator that might strip unknown fields — the symmetric risk to the
+    // serializeLine writer fix (a field written but not read-preserved). Both
+    // Alpha + Golf's #192 lens independently flagged this as the read-side guard.
+    const prev = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = channelsDir;
+    try {
+      const last = readMessages(channelId).at(-1);
+      expect(last?.provenance).toEqual({
+        source: "file",
+        ref: "roundtrip.txt",
+      });
+    } finally {
+      if (prev === undefined)
+        delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+      else process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prev;
+    }
   });
 });
 

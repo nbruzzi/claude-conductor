@@ -303,4 +303,103 @@ describe("dotfiles-worktree-gc hook", () => {
     ).toBeUndefined();
     expect(existsSync(wtPath)).toBe(false);
   });
+
+  /* ─── Dirty-tree --force data-loss guard (L1049 slice 2a) ───────── */
+
+  it("dirty worktree (uncommitted WIP) → NOT reaped + guard breadcrumb (--force would destroy WIP)", async () => {
+    const sidPrefix = "ff00ff00";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    // Uncommitted in-flight work a `git worktree remove --force` reap destroys.
+    // This orphan has no live anchor, so it is otherwise reap-eligible — the
+    // dirty-tree guard is the only thing that should preserve it.
+    writeFileSync(join(wtPath, "wip-uncommitted.ts"), "// in-flight work\n");
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // Preserved — the dirty-tree guard refused the reap.
+    expect(existsSync(wtPath)).toBe(true);
+
+    const events = readPresenceFailures();
+    const guard = events.find(
+      (e) =>
+        e.kind === "worktree-cleanup-failed" &&
+        e.detail.includes("dirty working tree"),
+    );
+    expect(guard).toBeDefined();
+    // Reap must NOT have fired for this worktree.
+    expect(events.find((e) => e.kind === "worktree-gc-reaped")).toBeUndefined();
+  });
+
+  it("orphan with only an untracked node_modules (no WIP) → still reaped (dirty-guard ignores node_modules)", async () => {
+    const sidPrefix = "ab00ba00";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    // node_modules (a symlink in prod) shows as untracked but is NOT WIP — the
+    // dirty-guard must ignore it so a clean worktree still reaps. An untracked
+    // file named node_modules reproduces the same `?? node_modules` porcelain
+    // line the prod symlink yields.
+    writeFileSync(join(wtPath, "node_modules"), "");
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // Reaped — node_modules-only is "clean" for reap purposes.
+    expect(existsSync(wtPath)).toBe(false);
+    expect(
+      readPresenceFailures().find((e) => e.kind === "worktree-gc-reaped"),
+    ).toBeDefined();
+  });
+
+  it("dirty TRACKED file (modified-unstaged, porcelain leading-space) → NOT reaped + path not corrupted", async () => {
+    // Finding-1 regression: a worktree-side change (" M tracked.txt") carries a
+    // LOAD-BEARING leading space. The old decodeStdio-blob-trim ate it →
+    // slice(3) dropped the path's first char ("racked.txt"). Raw-decode keeps
+    // the path intact + the guard still fires.
+    const sidPrefix = "1100aa11";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    writeFileSync(join(wtPath, "tracked.txt"), "v1\n");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: wtPath, env: gitEnv() });
+    execFileSync(
+      "git",
+      ["commit", "-q", "-m", "add tracked", "--no-gpg-sign"],
+      {
+        cwd: wtPath,
+        env: gitEnv(),
+      },
+    );
+    writeFileSync(join(wtPath, "tracked.txt"), "v2-uncommitted\n");
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(true); // preserved — WIP guard fired
+    const guard = readPresenceFailures().find(
+      (e) =>
+        e.kind === "worktree-cleanup-failed" &&
+        e.detail.includes("dirty working tree"),
+    );
+    expect(guard).toBeDefined();
+    // Path must NOT be corrupted to "racked.txt" by a blob-trim.
+    expect(guard?.detail).toContain("tracked.txt");
+  });
+
+  it("DATA-LOSS regression: modified-unstaged file colliding with node_modules after trim-corruption (qnode_modules) → still NOT reaped", async () => {
+    // The adversarial Finding-1 case the subagent lens caught: a tracked file
+    // `qnode_modules`, modified unstaged → " M qnode_modules". The trim bug ate
+    // the leading space → "node_modules" → filtered out → empty → REAPED
+    // (silent --force data-loss). Raw-decode keeps "qnode_modules" → preserved.
+    const sidPrefix = "2200bb22";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    writeFileSync(join(wtPath, "qnode_modules"), "v1\n");
+    execFileSync("git", ["add", "qnode_modules"], {
+      cwd: wtPath,
+      env: gitEnv(),
+    });
+    execFileSync("git", ["commit", "-q", "-m", "add q", "--no-gpg-sign"], {
+      cwd: wtPath,
+      env: gitEnv(),
+    });
+    writeFileSync(join(wtPath, "qnode_modules"), "v2-uncommitted\n");
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(true); // preserved (was reaped on the trim bug)
+  });
 });

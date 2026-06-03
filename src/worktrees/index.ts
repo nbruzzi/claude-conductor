@@ -220,6 +220,53 @@ export function removeWorktree(
 }
 
 /**
+ * Paths in a worktree that carry uncommitted work a `--force` removal would
+ * destroy. Runs `git status --porcelain` in the worktree and ignores the
+ * provisioner-created `node_modules` symlink (which always shows as untracked
+ * because it is not git-ignored). Any remaining entry — staged, modified,
+ * renamed, or other untracked — is WIP.
+ *
+ * Best-effort + fail-open: a git error (broken/missing worktree, git absent)
+ * returns `[]` so a probe failure does not permanently block reaping (a
+ * worktree whose git is broken would otherwise never be reapable). The
+ * reaper's liveness gate + forensic-marker escape hatch remain the other
+ * safety layers.
+ *
+ * RE-2 caller-side guard (see `removeWorktree`'s JSDoc): `removeWorktree` uses
+ * `--force` and trusts the caller to refuse on WIP. This is that refusal probe;
+ * `dotfiles-worktree-gc`'s `guardReason` consults it before reaping.
+ */
+export function worktreeUncommittedPaths(
+  worktreePath: string,
+): readonly string[] {
+  const result = runGit(worktreePath, ["status", "--porcelain"]);
+  if (result.status !== 0) return [];
+  // Decode RAW — do NOT route porcelain through `decodeStdio`: it `.trim()`s,
+  // and porcelain's worktree-side change lines carry a LOAD-BEARING leading
+  // space (" M path"). Trimming the blob eats the first line's leading space,
+  // so the `.slice(3)` below would drop the path's FIRST char — and a modified
+  // file like `qnode_modules` could mangle to exactly `node_modules`, get
+  // filtered out, and make a DIRTY tree read clean → a `--force` reap that
+  // destroys WIP (the exact catastrophe this guard prevents). git C-quotes
+  // embedded newlines, so splitting the untrimmed output on "\n" is safe.
+  return (
+    result.stdout
+      .toString("utf-8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      // Porcelain line is "XY <path>" (2 status columns + a space); slice the
+      // fixed 3-char prefix off the RAW (untrimmed) line so the leading status
+      // space is intact.
+      .map((line) => line.slice(3))
+      // The provisioner's node_modules symlink is always untracked but never
+      // WIP — exclude it so a clean provisioned worktree still reaps.
+      .filter(
+        (path) => path !== "node_modules" && !path.startsWith("node_modules/"),
+      )
+  );
+}
+
+/**
  * Enumerate per-session worktrees registered with git for the given
  * canonical. Excludes the canonical itself and any operator-created
  * worktrees that don't follow the `<canonical>-<sid-prefix-8>` naming
