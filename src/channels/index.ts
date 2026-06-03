@@ -1702,11 +1702,13 @@ function messageArchivePath(channelId: string, seq: number): string {
   return join(channelDir(channelId), `messages.${seq}.archive.jsonl`);
 }
 
-/** Sequence numbers of all sealed archives for a channel (unsorted). */
-function listMessageArchiveSeqs(channelId: string): number[] {
+/** Sealed-archive sequence numbers found directly in a channel directory
+ *  (unsorted). Operates on an explicit dir path so both resolveChannelsDir-
+ *  based and explicit-channelsDir callers share one scan. */
+function archiveSeqsInDir(channelDirPath: string): number[] {
   let entries: string[];
   try {
-    entries = readdirSync(channelDir(channelId));
+    entries = readdirSync(channelDirPath);
   } catch {
     return [];
   }
@@ -1718,6 +1720,24 @@ function listMessageArchiveSeqs(channelId: string): number[] {
     if (Number.isInteger(n) && n >= 0) seqs.push(n);
   }
   return seqs;
+}
+
+/** Sequence numbers of all sealed archives for a channel (unsorted). */
+function listMessageArchiveSeqs(channelId: string): number[] {
+  return archiveSeqsInDir(channelDir(channelId));
+}
+
+/** Sealed-archive file paths for a channel directory, seq-ASCENDING (oldest
+ *  first). `channelDirPath` is the channel's own directory
+ *  (`join(channelsDir, channelId)`). Exposed so readers that scan
+ *  `messages.jsonl` via a RAW path (not `readMessages`) can span the rotation
+ *  archives in the same append-order the live file continues — the verdict-
+ *  chain CONSTRUCTOR + the analytics / cursor / tail readers that a
+ *  `readMessages`-caller audit does not surface. */
+export function listChannelArchiveFilePaths(channelDirPath: string): string[] {
+  return archiveSeqsInDir(channelDirPath)
+    .sort((a, b) => a - b)
+    .map((seq) => join(channelDirPath, `messages.${seq}.archive.jsonl`));
 }
 
 /** Parse one JSONL message file. Tolerant: a corrupt line is skipped, never

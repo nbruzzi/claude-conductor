@@ -26,6 +26,7 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { listChannelArchiveFilePaths } from "../channels/index.ts";
 
 import {
   aggregateGraph,
@@ -314,13 +315,22 @@ function gatherChannelEvents(symbol: string): RawEvent[] {
       continue;
     }
     if (!stat.isDirectory()) continue;
-    const messagesPath = join(channelPath, "messages.jsonl");
-    let raw: string;
-    try {
-      raw = readFileSync(messagesPath, "utf8");
-    } catch {
-      continue;
+    // Span sealed rotation archives (oldest-seq first) + the live file so
+    // full-history pattern analytics is not silently truncated post-rotation.
+    let raw = "";
+    let anyRead = false;
+    for (const messagesPath of [
+      ...listChannelArchiveFilePaths(channelPath),
+      join(channelPath, "messages.jsonl"),
+    ]) {
+      try {
+        raw += readFileSync(messagesPath, "utf8");
+        anyRead = true;
+      } catch {
+        /* missing file in the set — skip */
+      }
     }
+    if (!anyRead) continue;
     for (const line of raw.split("\n")) {
       if (line.length === 0) continue;
       let msg: unknown;

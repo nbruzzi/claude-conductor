@@ -42,12 +42,15 @@ import { join } from "node:path";
 
 import {
   isChannelRotationAutoEnabled,
+  listChannelArchiveFilePaths,
   readMessages,
   readMessagesAfter,
   readMessagesTail,
   rotateChannelMessages,
   type RotateMessagesResult,
 } from "../../src/channels/index.ts";
+import { lookupPriorAuditVerdictPayload } from "../../src/channels/audit-verdict-auto-wrap.ts";
+import { getMostRecentPeerKind } from "../../src/channels/peer-recent-message.ts";
 import { verifyChannelAuditChain } from "../../src/audit/verify.ts";
 import { runBootstrap } from "../../src/audit/cli.ts";
 import { importPrivateKey } from "../../src/channels/key-surface.ts";
@@ -379,5 +382,97 @@ describe("isChannelRotationAutoEnabled — opt-in gate (default OFF)", () => {
     mkdirSync(channelsDirAbs, { recursive: true });
     writeFileSync(join(channelsDirAbs, ".rotation-enabled"), "", "utf-8");
     expect(isChannelRotationAutoEnabled()).toBe(true);
+  });
+});
+
+describe("listChannelArchiveFilePaths — sealed archive paths (seq-ascending)", () => {
+  it("returns [] when there are no archives", () => {
+    setup("arc-none");
+    expect(listChannelArchiveFilePaths(channelDirAbs("arc-none"))).toEqual([]);
+    appendStatus("arc-none", 0); // live file only — still no archives
+    expect(listChannelArchiveFilePaths(channelDirAbs("arc-none"))).toEqual([]);
+  });
+
+  it("lists multiple archives oldest-seq first", async () => {
+    setup("arc-multi");
+    appendStatus("arc-multi", 0);
+    await rotateChannelMessages("arc-multi", { thresholdBytes: 1 }); // seq 1
+    appendStatus("arc-multi", 1);
+    await rotateChannelMessages("arc-multi", { thresholdBytes: 1 }); // seq 2
+    expect(listChannelArchiveFilePaths(channelDirAbs("arc-multi"))).toEqual([
+      archiveFileAbs("arc-multi", 1),
+      archiveFileAbs("arc-multi", 2),
+    ]);
+  });
+});
+
+describe("lookupPriorAuditVerdictPayload — write-path spans the boundary (CRITICAL)", () => {
+  it("finds the prior verdict in the archive after rotation (no false bootstrap)", async () => {
+    const channelId = "lookup-rot";
+    setup(channelId);
+    appendRaw(channelId, {
+      ts: tsAt(0),
+      from: SESSION_ID,
+      kind: "audit-verdict",
+      body: "prior-verdict-body",
+    });
+    await rotateChannelMessages(channelId, { thresholdBytes: 1 });
+    // live file reset → a live-only lookup would return null → the next verdict
+    // would bootstrap with prev_audit_body_ref:null → a chain break at the seam.
+    expect(readMessages(channelId)).toEqual([]);
+    expect(lookupPriorAuditVerdictPayload(channelsDirAbs, channelId)).toBe(
+      "prior-verdict-body",
+    );
+  });
+
+  it("prefers the most-recent verdict (live over archive)", async () => {
+    const channelId = "lookup-recent";
+    setup(channelId);
+    appendRaw(channelId, {
+      ts: tsAt(0),
+      from: SESSION_ID,
+      kind: "audit-verdict",
+      body: "old-verdict",
+    });
+    await rotateChannelMessages(channelId, { thresholdBytes: 1 }); // old → archive
+    appendRaw(channelId, {
+      ts: tsAt(1),
+      from: SESSION_ID,
+      kind: "audit-verdict",
+      body: "new-verdict",
+    }); // live
+    expect(lookupPriorAuditVerdictPayload(channelsDirAbs, channelId)).toBe(
+      "new-verdict",
+    );
+  });
+
+  it("returns null when no verdict exists in live or any archive", async () => {
+    const channelId = "lookup-none";
+    setup(channelId);
+    appendStatus(channelId, 0); // non-verdict message
+    await rotateChannelMessages(channelId, { thresholdBytes: 1 });
+    expect(lookupPriorAuditVerdictPayload(channelsDirAbs, channelId)).toBe(
+      null,
+    );
+  });
+});
+
+describe("getMostRecentPeerKind — tail-scan spans the rotation boundary", () => {
+  it("still finds a peer's most-recent kind after it was archived", async () => {
+    const channelId = "peerkind-rot";
+    const PEER = "11111111-2222-4333-8444-555555555555";
+    setup(channelId);
+    appendRaw(channelId, {
+      ts: tsAt(0),
+      from: PEER,
+      kind: "standby",
+      body: "holding",
+    });
+    await rotateChannelMessages(channelId, { thresholdBytes: 1 }); // → archive; live reset
+    // a live-only scan would return null (the peer's message is archived); the
+    // boundary-spanning tail-scan must still surface it.
+    const recent = getMostRecentPeerKind(channelId, PEER);
+    expect(recent).not.toBeNull();
+    expect(recent?.kind).toBe("standby");
   });
 });
