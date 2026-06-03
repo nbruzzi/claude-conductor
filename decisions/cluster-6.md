@@ -174,3 +174,26 @@ affects:
 **Merge-gate fold (CRITICAL — raw-path reader class):** the merge-gate's layer-spanning lens caught what BOTH `readMessages`-caller audits (build + consumer-lens) missed — a SHARED BLIND SPOT: both grepped the `readMessages` family, so 5 readers that touch `messages.jsonl` via a RAW `readFileSync` were invisible. The CRITICAL was the verdict-chain CONSTRUCTOR (`audit-verdict-auto-wrap.ts lookupPriorAuditVerdictPayload`): reader-only archive-awareness left a reader/WRITER asymmetry — post-rotation the writer would find no prior in the reset live file and bootstrap `prev_audit_body_ref:null`, manufacturing the exact chain break this slice prevents. Fixed by routing all 5 raw readers (the chain constructor + the pattern-trace/lexicon analytics + the peer-message-deliverer cursor + the peer-recent-message tail-scan) through a new `listChannelArchiveFilePaths` helper / `readMessagesAfter`. Lesson: audit the DATA (every `messages.jsonl` toucher) not one API family — and a verdict chain has a WRITER, not just a reader. (Generalized into Alpha's §2 "lenses must span layers" proposal, same cycle.)
 
 **Supersedes / superseded_by:** Additive — extends this cluster's eternal-channel substrate; supersedes nothing. The `messages.<seq>.archive.jsonl` convention is new on-disk state.
+
+---
+
+## 2026-06-03 — Decision F: `check-import-failed` telemetry PresenceFailureKind (#8b per-check isolation observability)
+
+```yaml
+---
+ts: 2026-06-03T16:00:00Z
+kind: api-shape
+severity: minor
+phase: cluster-6
+affects:
+  - src/shared/presence-failure-log.ts
+---
+```
+
+**Context:** #8b per-check import-isolation (`registerCrossEdge`, dotfiles `bundled-registrations.ts`) emits a LOUD R4 stderr breadcrumb when a DIRECT-cross-edge check's dynamic import fails and the check is skipped — the operator-facing "DISARMED" safety notice. That breadcrumb lives only in transient stderr; it is not queryable in the presence-failure log alongside the other coordination fail-soft events.
+
+**Chosen:** Add `"check-import-failed"` to the `PresenceFailureKind` union + the `isPresenceFailureKind` runtime validator. The dotfiles `registerCrossEdge` catch emits it (source `"dispatcher"`, null sessionId at registry-build) ALONGSIDE the unchanged R4 stderr — the dotfiles-side emit is a separate cross-edge follow-up PR.
+
+**Reason:** Telemetry-only + purely additive — no behavior change. The R4 stderr breadcrumb REMAINS the safety control; this structured kind only makes the per-check skip queryable in the presence-failure log rather than living solely in stderr. It instruments already-decided #8b isolation behavior (the isolation + R4 breadcrumb-tiering were the decisions, prior cycle); this is observability, not a new architectural call. Mirrors the established telemetry-kind growth pattern (Phase-3 worktree-lifecycle + Slice-7 provisioner-telemetry kinds).
+
+**Supersedes / superseded_by:** Additive — extends the `PresenceFailureKind` union; supersedes nothing.
