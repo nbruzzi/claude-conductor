@@ -63,6 +63,7 @@ async function generateTestKeypair(): Promise<CryptoKeyPair> {
  */
 const CANONICAL_AUDIT_VERDICT_BODY: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "conductor", number: 99 },
   target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE", "Architecture"],
@@ -92,6 +93,7 @@ const CANONICAL_AUDIT_VERDICT_BODY: AuditVerdictBody = {
  */
 const SHIP_CLEAN_BODY: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "conductor", number: 99 },
   target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
@@ -1075,6 +1077,11 @@ describe("Section 15: lineage field extension (PR-A2)", () => {
     const c2 = canonicalJson(SHIP_CLEAN_BODY);
     expect(c1).toBe(c2);
     // Re-ordered keys produce same canonical bytes (key-sort recursion)
+    // target_pr is transitional-optional post-#3(b); SHIP_CLEAN_BODY sets it,
+    // narrow away `undefined` for the exactOptionalPropertyTypes assignment.
+    const shipCleanTargetPr = SHIP_CLEAN_BODY.target_pr;
+    if (shipCleanTargetPr === undefined)
+      throw new Error("SHIP_CLEAN_BODY.target_pr must be defined");
     const reordered: AuditVerdictBody = {
       findings: SHIP_CLEAN_BODY.findings,
       three_option_ask: SHIP_CLEAN_BODY.three_option_ask,
@@ -1084,7 +1091,8 @@ describe("Section 15: lineage field extension (PR-A2)", () => {
       audit_class: SHIP_CLEAN_BODY.audit_class,
       lens_set_applied: SHIP_CLEAN_BODY.lens_set_applied,
       target_peer: SHIP_CLEAN_BODY.target_peer,
-      target_pr: SHIP_CLEAN_BODY.target_pr,
+      target: SHIP_CLEAN_BODY.target,
+      target_pr: shipCleanTargetPr,
       kind_version: 1,
     };
     expect(canonicalJson(reordered)).toBe(c1);

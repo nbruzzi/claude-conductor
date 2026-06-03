@@ -188,8 +188,13 @@ export function renderAuditVerdictSummary(body: string): string | null {
   if (v === null) return null;
   const c = v.counts;
   const isWrapped = wrapped !== null;
+  // b2 audit-target: render the cohort-visible one-liner for either target
+  // kind — `PR#<n>` for a PR, `plan:<ref>` for a plan (DEPTH-1 — the summary
+  // the whole cohort sees on every audit-verdict).
+  const targetLabel =
+    v.target.kind === "pr" ? `PR#${v.target.number}` : `plan:${v.target.ref}`;
   return (
-    `audit-verdict ${v.verdict} PR#${v.target_pr.number} → ${v.target_peer} ` +
+    `audit-verdict ${v.verdict} ${targetLabel} → ${v.target_peer} ` +
     `[${v.audit_class}] B${c.blocker}/F${c.fold}/N${c.nit} ` +
     `lenses=${v.lens_set_applied.join("+")} ${isWrapped ? "(wrapped)" : "(raw)"}`
   );

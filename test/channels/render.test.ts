@@ -319,6 +319,7 @@ describe("renderMessage — warn-once dedup", () => {
 
 const SAMPLE_VERDICT: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "claude-conductor", number: 165 },
   target_pr: { repo: "claude-conductor", number: 165 },
   target_peer: "Charlie",
   lens_set_applied: ["Contract", "Architecture"],

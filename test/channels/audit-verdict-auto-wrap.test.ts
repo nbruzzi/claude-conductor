@@ -69,6 +69,7 @@ function appendChannelMessage(msg: Record<string, unknown>): void {
 
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "conductor", number: 999 },
   target_pr: { repo: "conductor", number: 999 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
@@ -317,7 +318,7 @@ describe("autoWrapAuditVerdict — Section 4: round-trip envelope shape verifica
     const inner = JSON.parse(decoded) as AuditVerdictBody;
     expect(inner.kind_version).toBe(1);
     expect(inner.verdict).toBe("SHIP-CLEAN");
-    expect(inner.target_pr.repo).toBe("conductor");
+    expect(inner.target_pr?.repo).toBe("conductor");
     expect(inner.prev_audit_body_ref).toBeNull();
   });
 });
@@ -444,7 +445,7 @@ describe("autoWrapAuditVerdict — Section 5: Mode B operator-supplied SHA-256 c
     const inner = JSON.parse(decoded) as AuditVerdictBody;
     expect(inner.kind_version).toBe(1);
     expect(inner.verdict).toBe("SHIP-CLEAN");
-    expect(inner.target_pr.repo).toBe("conductor");
+    expect(inner.target_pr?.repo).toBe("conductor");
     expect(inner.prev_audit_body_ref).toBe(OPERATOR_SHA256_HEX);
     // Verify the signature is a base64-encoded non-empty string (signature
     // bytes; not the payload).

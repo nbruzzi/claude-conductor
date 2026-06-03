@@ -23,6 +23,8 @@
  * dashboards, lint rules).
  */
 
+import type { AuditTarget } from "./audit-types.ts";
+
 /**
  * Repos whose PRs are treated as substrate-class for cross-edge-
  * consumer-verification enforcement. Single-source-of-truth: extend
@@ -80,4 +82,14 @@ export function isSubstrateClassPR(target_pr: {
   const slashIdx = target_pr.repo.indexOf("/");
   if (slashIdx === -1) return false;
   return SUBSTRATE_CLASS_REPOS.has(target_pr.repo.slice(slashIdx + 1));
+}
+
+/**
+ * D5: substrate-class gate over a polymorphic {@link AuditTarget}. A PLAN
+ * target is NEVER substrate-class (a design doc is not a code PR), so a plan
+ * audit-verdict does not require `cross_edge_consumers_verified`. A PR target
+ * defers to {@link isSubstrateClassPR}. (b2 audit-target generalization.)
+ */
+export function isSubstrateClassTarget(target: AuditTarget): boolean {
+  return target.kind === "pr" ? isSubstrateClassPR(target) : false;
 }

@@ -104,6 +104,7 @@ function appendChannelMessage(msg: Record<string, unknown>): void {
  */
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "conductor", number: 99 },
   target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],

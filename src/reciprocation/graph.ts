@@ -125,12 +125,16 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
     if (bodyRaw === null) continue;
     const body = parseAuditVerdictBodyAnyVersion(bodyRaw);
     if (body === null) continue;
+    // b2: the reciprocation graph is PR-only for now; plan-target verdicts are
+    // deferred to the full-migration fast-follow (Golf's b2 map) — skip them
+    // (not dropped from the channel, only from the auto-reciprocation graph).
+    if (body.target.kind !== "pr") continue;
     edges.push({
       ts: m.ts,
       auditor_identity: m.identity,
       auditor_session: m.from,
       target_peer: body.target_peer,
-      target_pr: { repo: body.target_pr.repo, number: body.target_pr.number },
+      target_pr: { repo: body.target.repo, number: body.target.number },
       verdict: body.verdict,
       audit_class: body.audit_class,
       ...(body.cross_edge_consumers_verified !== undefined

@@ -176,11 +176,17 @@ export function queryPendingAuditAsks(
   const pending: PendingAsk[] = [];
 
   for (const ask of asks) {
+    // b2: the pending-audit queue auto-pairs PR-target asks only; plan-target
+    // asks are deferred to the full-migration fast-follow (Golf's b2 map) —
+    // skip (not dropped from the channel, only from the pending-digest auto).
+    const askTarget = ask.body.target;
+    if (askTarget.kind !== "pr") continue;
     const matched = verdicts.some(
       (v) =>
+        v.body.target.kind === "pr" &&
         v.identity === ask.body.target_peer &&
-        v.body.target_pr.repo === ask.body.target_pr.repo &&
-        v.body.target_pr.number === ask.body.target_pr.number &&
+        v.body.target.repo === askTarget.repo &&
+        v.body.target.number === askTarget.number &&
         v.ts_ms >= ask.ts_ms,
     );
     if (matched) continue;
@@ -189,8 +195,8 @@ export function queryPendingAuditAsks(
     if (fromIdentity.length === 0) continue; // skip legacy asks without identity stamp
 
     pending.push({
-      pr_repo: ask.body.target_pr.repo,
-      pr_number: ask.body.target_pr.number,
+      pr_repo: askTarget.repo,
+      pr_number: askTarget.number,
       ask_ts: ask.msg.ts,
       waited_minutes: Math.max(0, Math.floor((now_ms - ask.ts_ms) / 60_000)),
       audit_class: ask.body.audit_class,

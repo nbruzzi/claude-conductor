@@ -38,6 +38,7 @@ import {
  */
 const CANONICAL_AUDIT_ASK_BODY: AuditAskBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "conductor", number: 95 },
   target_pr: { repo: "conductor", number: 95 },
   target_peer: "Bravo",
   tier: "light-touch",
