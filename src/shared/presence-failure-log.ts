@@ -126,7 +126,15 @@ export type PresenceFailureKind =
   | "heartbeat-no-dotfilesroot-on-existing"
   | "heartbeat-reaped"
   | "heartbeat-removed"
-  | "artifact-reset";
+  | "artifact-reset"
+  // #8b dispatcher per-check import-isolation telemetry. Emitted by
+  // registerCrossEdge (dotfiles bundled-registrations.ts) when a DIRECT-cross-
+  // edge check's dynamic import fails and the check is skipped. Telemetry-only:
+  // the LOUD R4 stderr breadcrumb (the operator-facing "DISARMED" notice) remains
+  // the safety control; this structured kind makes the skip queryable in the
+  // presence-failure log rather than living only in transient stderr. Source:
+  // "dispatcher".
+  | "check-import-failed";
 
 export type PresenceFailureEvent = {
   timestamp: string;
@@ -426,7 +434,9 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "heartbeat-no-dotfilesroot-on-existing" ||
     k === "heartbeat-reaped" ||
     k === "heartbeat-removed" ||
-    k === "artifact-reset"
+    k === "artifact-reset" ||
+    // #8b per-check import-isolation telemetry (dotfiles registerCrossEdge).
+    k === "check-import-failed"
   );
 }
 

@@ -94,6 +94,22 @@ describe("presence-failure-log", () => {
     expect(events[0]?.artifactPath).toBeNull();
   });
 
+  it("round-trips the #8b check-import-failed telemetry kind (source=dispatcher, null sessionId at registry-build)", () => {
+    const ev = sampleEvent({
+      sessionId: null,
+      source: "dispatcher",
+      kind: "check-import-failed",
+      artifactPath: null,
+      detail:
+        "check 'task-coordinator' import failed (cross-edge): module not found",
+    });
+    appendPresenceFailure(ev);
+
+    const events = readPresenceFailures();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(ev);
+  });
+
   it("returns [] when the log file does not exist", () => {
     expect(existsSync(failureLogPath())).toBe(false);
     expect(readPresenceFailures()).toEqual([]);
