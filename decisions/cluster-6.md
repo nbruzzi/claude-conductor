@@ -127,3 +127,48 @@ affects:
 **Reason:** Reusing `getIdentityForSession` (already on the curated surface) means zero new exports → zero shim-mirror obligation → smallest correct change. The double metadata read (`listChannels` + per-channel `getIdentityForSession`) is acceptable for the small-N statusline use (~10–50ms/tick per the item's perf note); `listChannels`'s split try/catch already skips malformed channels, so a bad metadata.json never breaks the scan. The verb is the canonical sibling of `whoami`.
 
 **Operationalized:** `whoami-active [--session-id <uuid>] [--json]` in `src/channels/cli.ts`; `sessionId` added to `FlagSpec` / `FlagValues` / `DEFAULT_SPEC` + a `--session-id` value-flag branch in `parseFlags` (mirrors `--from-session` via `consumeStringValue`). **Deterministic multi-channel tiebreak:** most-recent by `lastMessageTs`, fallback `joined_at`, then `channel_id` — never filesystem-enumeration-order-dependent (documented at the call site + pinned by a test). **Clean-null contract:** no resolvable session-id OR no claim → `null` (`--json`) / empty (bare) + exit 0 (a statusline must never see an error). 7 subprocess tests + a docs page (`docs/conventions/statusline.md`). The dotfiles `statusline-command.sh` swap is an atomic-paired sibling DEFERRED until this verb is GA on origin/main (don't deprecate the inline before the plugin verb lands).
+
+---
+
+## 2026-06-03 — Decision E: `messages.jsonl` rotation — mode-A full-rename (concurrency-safety inversion)
+
+```yaml
+---
+ts: 2026-06-03T14:35:00Z
+kind: architectural
+severity: major
+phase: cluster-6
+affects:
+  - src/channels/index.ts
+  - src/audit/verify.ts
+  - src/channels/cli.ts
+  - src/bandwidth/cli.ts
+  - src/audits/cli.ts
+  - src/audit/cli.ts
+  - src/reciprocation/cli.ts
+  - src/hooks/checks/channels-gc-reaper.ts
+---
+```
+
+**Context:** The fixed-eternal `coordination` channel's `messages.jsonl` grows unbounded (this cluster's archival-exemption removed the per-cycle whole-channel archival that used to bound it), degrading every full-scan reader. The design (`plans/messages-jsonl-rotation-design.md`, Delta) left the verdict-chain handling as a build-time mode-2 decision: (A) archive everything incl. verdicts + teach the verifier to read archives, vs (B) keep verdicts live + archive only the non-verdict prefix.
+
+**Options considered:**
+
+1. **Mode-A — whole-file atomic rename; the verifier (+ all full-history readers) span the boundary (CHOSEN).** `rotateChannelMessages` seals the live file into `messages.<seq>.archive.jsonl` via one `renameSync`; readers opt in via `readMessages({ includeArchive })`.
+2. Mode-B — keep verdicts live, archive only the non-verdict prefix (the design's density-preferred option — verdicts are only ~2.3% of messages). Rejected: it requires a scatter-gather REWRITE of `messages.jsonl`, which races the lockless O_APPEND hot path and drops concurrent cross-process appends (a dropped verdict breaks the signature chain; a dropped claim breaks coordination). `withMetadataLock` guards metadata only — it cannot serialize appends.
+3. `tail`-truncate (destructive). Rejected upstream in the design: loses the verdict chain + history.
+
+**Chosen:** Option 1 (mode-A).
+
+**Reason:** Appends are lockless O_APPEND (`appendLineAtomically` opens by path per call). A whole-file `renameSync` is the ONLY mutation that is zero-loss under that hot path — a racing appender either lands its write in the just-sealed archive inode (in append-order) or O_CREATs a fresh live file. A partial rewrite (mode-B) cannot be made safe without putting a lock on the append hot path. The concurrency constraint INVERTS the design's verdict-density preference: density (2.3%) favored B, but only A is concurrency-safe. Ratified on the cohort `coordination` channel (Alpha merge-gate); Delta (design author) absent this cohort.
+
+**Operationalized:**
+
+- `rotateChannelMessages(id, { thresholdBytes? })` — O(1) `statSync` pre-check, then a re-check INSIDE `withMetadataLock` (TOCTOU; serializes concurrent rotations) before the `renameSync`. `seq` = max-existing + 1.
+- `readMessages(id, { includeArchive? })` — default live-only (bounded → the perf win for hot full-scan readers); `includeArchive` spans `messages.*.archive.jsonl` (seq-asc) + live in append-order. `readMessagesTail` / `readMessagesAfter` / `lastMessageTs` span the boundary.
+- All 6 full-history readers opt into `includeArchive` (audit verifier, channels `read` verb, bandwidth/audits/audit/reciprocation analytics), preserving whole-history semantics — a no-op until a rotation exists.
+- The SessionStart gc-reaper trigger is OPT-IN via a `.rotation-enabled` flag, default OFF (live-substrate sequencing: a `tail -f` Monitor follows by descriptor and would go silent after the rename; enable only once cohort Monitors follow by name with `tail -F`). Flag-absence doubles as the kill-switch. Tunable threshold (default 4 MB).
+
+**Audit cadence:** mode-2 design audit on-channel (the concurrency finding was its output) → Alpha merge-gate ratify → 2 pre-squash pressure-tests addressed: (1) full `readMessages` caller-set audit + per-caller classify; (2) no glob collision with the whole-channel `.archive/` mechanism (`messages.<seq>.archive.jsonl` is matched only by `MESSAGE_ARCHIVE_RE`). PR #189.
+
+**Supersedes / superseded_by:** Additive — extends this cluster's eternal-channel substrate; supersedes nothing. The `messages.<seq>.archive.jsonl` convention is new on-disk state.
