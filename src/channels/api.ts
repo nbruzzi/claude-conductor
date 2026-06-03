@@ -86,13 +86,24 @@ export type {
   FindingSeverity,
 } from "./audit-types.ts";
 
+// Item #3(b) 2026-06-03 — audit-target generalization: discriminated
+// `AuditTarget = {kind:"pr"} | {kind:"plan"}` lifts audit-ask/-verdict off
+// PR-only targeting so plan-gates stop abusing `kind=note`. Consumers
+// (dotfiles shim, audit tooling reading `body.target.kind`) import the type
+// from `claude-conductor/channels/api`.
+export type { AuditTarget } from "./audit-types.ts";
+
 // Cycle 2026-05-25 substrate-evolution slice (Bravo-pen) — substrate-class
 // PR detection helper for the kind=audit-verdict
 // cross_edge_consumers_verified send-time validator gate. Consumers
 // (audit tooling, dashboards, future lint rules) import alongside the
 // canonical SUBSTRATE_CLASS_REPOS set for caller-side enumeration.
+// Item #3(b) 2026-06-03 — `isSubstrateClassTarget(target)` is the
+// AuditTarget-level entry (plan targets are never substrate-class);
+// re-exported for the dotfiles shim mirror.
 export {
   isSubstrateClassPR,
+  isSubstrateClassTarget,
   SUBSTRATE_CLASS_REPOS,
 } from "./substrate-class.ts";
 
@@ -243,6 +254,18 @@ export {
   isAuditAxisArray,
   isAuditVerdict,
   isFindingSeverity,
+} from "./audit-types.ts";
+
+// Item #3(b) 2026-06-03 — audit-target generalization runtime helpers:
+// `parseAuditTarget` (exactly-one target_pr/target_plan wire → union),
+// `auditTargetToWire` (union → wire fields), `sameTarget` + `auditTargetKey`
+// (pairing / dedup by target identity). Cross-edge consumers (dotfiles shim,
+// audit-queue pairing) import the value bindings for runtime use.
+export {
+  parseAuditTarget,
+  auditTargetToWire,
+  sameTarget,
+  auditTargetKey,
 } from "./audit-types.ts";
 
 // Cycle 1 substrate-core PR-A5 2026-05-26 — `audit-verdict` v0.3 DSSE

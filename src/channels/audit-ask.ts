@@ -34,11 +34,14 @@
  */
 
 import {
+  auditTargetToWire,
   isAuditAskTier,
   isAuditClass,
   isLensClassArray,
+  parseAuditTarget,
   type AuditAskTier,
   type AuditClass,
+  type AuditTarget,
   type LensClass,
 } from "./audit-types.ts";
 
@@ -54,14 +57,21 @@ export type AuditAskBody = {
   /** Schema version. Bumped on incompatible schema revisions. */
   kind_version: 1;
   /**
-   * The PR being audited. `repo` is free-string (non-empty post-trim);
-   * `number` is a positive integer PR number.
+   * The artifact being audited — a PR or a plan (D2 discriminated union).
+   * Canonical field; new code switches on `target.kind`. The wire carries
+   * exactly one of `target_pr` / `target_plan`; the parser normalizes them.
    *
    * N3 disposition: known-repo enumeration is audit-context-fetch concern
-   * (deferred Tier 3-D pattern-trace), not schema-layer. Free-string
-   * preserves forward-compat for vault + adjacent repos.
+   * (deferred Tier 3-D pattern-trace), not schema-layer.
    */
-  target_pr: { repo: string; number: number };
+  target: AuditTarget;
+  /**
+   * Transitional PR-only mirror — present iff `target.kind === "pr"`. The
+   * deferred automation consumers (queue / quorum / reciprocation) read this
+   * until the full-migration fast-follow removes it; new code uses `target`.
+   * (b2 audit-target generalization — right-sized additive cut.)
+   */
+  target_pr?: { repo: string; number: number };
   /**
    * The peer being asked to audit. Non-empty (post-trim) string;
    * typically a NATO identity name: `Alpha`, `Bravo`, `Charlie`, `Delta`.
@@ -125,29 +135,11 @@ export function parseAuditAskBody(body: string): AuditAskBody | null {
 
   if (obj["kind_version"] !== 1) return null;
 
-  // target_pr — required object with non-empty string repo + positive integer number.
-  // T3.12 footgun: typeof null === "object", so explicit null-check is required.
-  const targetPrRaw = obj["target_pr"];
-  if (
-    targetPrRaw === null ||
-    typeof targetPrRaw !== "object" ||
-    Array.isArray(targetPrRaw)
-  ) {
-    return null;
-  }
-  const targetPr = targetPrRaw as Record<string, unknown>;
-  const repoRaw = targetPr["repo"];
-  if (typeof repoRaw !== "string" || repoRaw.trim().length === 0) {
-    return null;
-  }
-  const numberRaw = targetPr["number"];
-  if (
-    typeof numberRaw !== "number" ||
-    !Number.isInteger(numberRaw) ||
-    numberRaw <= 0
-  ) {
-    return null;
-  }
+  // target — exactly one of target_pr / target_plan (D1 additive). parseAuditTarget
+  // normalizes to the AuditTarget discriminated union; historical target_pr-only
+  // bodies parse unchanged → { kind: "pr" }. Both-absent / both-present → null.
+  const target = parseAuditTarget(obj);
+  if (target === null) return null;
 
   // target_peer — required non-empty (post-trim) string.
   const targetPeer = obj["target_peer"];
@@ -167,15 +159,18 @@ export function parseAuditAskBody(body: string): AuditAskBody | null {
   const auditClass = obj["audit_class"];
   if (!isAuditClass(auditClass)) return null;
 
-  // A1 fold (Bravo post-impl audit 20:27Z): normalize whitespace on output
-  // so `{ repo: " conductor " }` and `{ repo: "conductor" }` produce the
-  // SAME typed body. Discriminator-like fields on cross-pair audit-routing
-  // must be canonicalized; otherwise the same logical PR can read as two
-  // different audit-asks downstream. Validation already rejects empty
-  // post-trim; output trim is symmetric with that gate.
+  // A1 fold (Bravo post-impl audit 20:27Z): string fields are whitespace-
+  // normalized inside parseAuditTarget (+ target_peer below), so the same
+  // logical target reads identically downstream; output trim is symmetric
+  // with the empty-post-trim validation gates.
   return {
     kind_version: 1,
-    target_pr: { repo: repoRaw.trim(), number: numberRaw },
+    target,
+    // Wire target mirror (D1 additive): emit target_pr (pr) OR target_plan
+    // (plan) so the body roundtrips through canonicalJson -> parse. The
+    // deferred automation consumers (queue / quorum / reciprocation) still
+    // read target_pr until the full-migration fast-follow.
+    ...auditTargetToWire(target),
     target_peer: targetPeer.trim(),
     tier,
     lens_set_requested: lensSet,

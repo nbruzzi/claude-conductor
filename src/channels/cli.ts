@@ -93,7 +93,7 @@ import { parseDigestBody } from "./digest.ts";
 import { parseAuditAskBody } from "./audit-ask.ts";
 import { parseAuditVerdictBody } from "./audit-verdict.ts";
 import { autoWrapAuditVerdict } from "./audit-verdict-auto-wrap.ts";
-import { isSubstrateClassPR } from "./substrate-class.ts";
+import { isSubstrateClassTarget } from "./substrate-class.ts";
 import { parseMemoryProposalBody } from "./memory-proposal.ts";
 import { parseWindDownCheckinBody } from "./wind-down-checkin.ts";
 import { parseKeyRevokeBody } from "./key-revoke.ts";
@@ -1103,7 +1103,7 @@ export async function runChannelsCli(
         if (kind === "audit-ask" && parseAuditAskBody(body) === null) {
           die(
             ctx,
-            `[send] audit-ask body failed schema validation — body must be JSON conforming to AuditAskBody (see src/channels/audit-ask.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, target_pr={repo,number}, target_peer (non-empty string), tier (light-touch | 1-lens-substantive | 3-lens-convergence), lens_set_requested (non-empty array of RE | Architecture | TA | Security | Contract), audit_class (inside-pair | outside-pair | cross-pair-shadow).`,
+            `[send] audit-ask body failed schema validation — body must be JSON conforming to AuditAskBody (see src/channels/audit-ask.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}, target_peer (non-empty string), tier (light-touch | 1-lens-substantive | 3-lens-convergence), lens_set_requested (non-empty array of RE | Architecture | TA | Security | Contract), audit_class (inside-pair | outside-pair | cross-pair-shadow).`,
             {
               code: 2,
               category: "VALIDATION",
@@ -1149,7 +1149,7 @@ export async function runChannelsCli(
           if (parsedVerdict === null) {
             die(
               ctx,
-              `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, target_pr={repo,number}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}), cross_edge_consumers_verified[] (optional readonly string[]; required non-empty for substrate-class PRs per isSubstrateClassPR). counts must equal severity-grouped findings length.`,
+              `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}), cross_edge_consumers_verified[] (optional readonly string[]; required non-empty for substrate-class PRs per isSubstrateClassPR). counts must equal severity-grouped findings length.`,
               {
                 code: 2,
                 category: "VALIDATION",
@@ -1158,15 +1158,23 @@ export async function runChannelsCli(
               },
             );
           }
-          // Substrate-class cross-edge-consumer-coverage gate.
+          // Substrate-class cross-edge-consumer-coverage gate. D5 (b2): plan
+          // targets are NOT substrate-class (a design doc is not a code PR),
+          // so the gate applies to PR targets only.
           if (
-            isSubstrateClassPR(parsedVerdict.target_pr) &&
+            isSubstrateClassTarget(parsedVerdict.target) &&
             (parsedVerdict.cross_edge_consumers_verified === undefined ||
               parsedVerdict.cross_edge_consumers_verified.length === 0)
           ) {
+            // isSubstrateClassTarget is true only for PR targets, so this is a PR.
+            const gateTarget = parsedVerdict.target;
+            const prLabel =
+              gateTarget.kind === "pr"
+                ? `${gateTarget.repo}#${gateTarget.number}`
+                : "(plan)";
             die(
               ctx,
-              `[send] audit-verdict body for substrate-class PR (repo: ${parsedVerdict.target_pr.repo}#${parsedVerdict.target_pr.number}) requires non-empty cross_edge_consumers_verified array. Enumerate the consumer-edges your audit verified (e.g., dashboard adapter path, dotfiles shim path). Empty/absent means no cross-edge consumer was verified — surfaces the audit-cohort-gap the schema is designed to prevent.`,
+              `[send] audit-verdict body for substrate-class PR (repo: ${prLabel}) requires non-empty cross_edge_consumers_verified array. Enumerate the consumer-edges your audit verified (e.g., dashboard adapter path, dotfiles shim path). Empty/absent means no cross-edge consumer was verified — surfaces the audit-cohort-gap the schema is designed to prevent.`,
               {
                 code: 2,
                 category: "VALIDATION",

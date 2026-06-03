@@ -179,6 +179,7 @@ function messagesPath(ch: string): string {
  *  B0/F0/N0 lenses=Contract+Architecture". */
 const SAMPLE_VERDICT: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "claude-conductor", number: 165 },
   target_pr: { repo: "claude-conductor", number: 165 },
   target_peer: "Charlie",
   lens_set_applied: ["Contract", "Architecture"],

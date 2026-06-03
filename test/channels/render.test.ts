@@ -319,6 +319,7 @@ describe("renderMessage — warn-once dedup", () => {
 
 const SAMPLE_VERDICT: AuditVerdictBody = {
   kind_version: 1,
+  target: { kind: "pr", repo: "claude-conductor", number: 165 },
   target_pr: { repo: "claude-conductor", number: 165 },
   target_peer: "Charlie",
   lens_set_applied: ["Contract", "Architecture"],
@@ -350,6 +351,38 @@ describe("renderMessage — audit-verdict readability", () => {
     expect(out).toContain("lenses=Contract+Architecture");
     expect(out).toContain("(raw)");
     expect(out).not.toContain("kind_version");
+  });
+
+  it("renders plan:<ref> for a plan-target verdict, not PR# (Item #3b)", () => {
+    const planWire: Record<string, unknown> = {
+      kind_version: 1,
+      target_plan: { ref: "audit-target-plan-2026-06-03.md" },
+      target_peer: "Charlie",
+      lens_set_applied: ["Contract", "Architecture"],
+      audit_class: "cross-pair-shadow",
+      audit_axes: ["depth"],
+      verdict: "SHIP-CLEAN",
+      counts: { blocker: 0, fold: 0, nit: 0 },
+      three_option_ask: {
+        a_ratify: "ship",
+        b_fold_if_applicable: null,
+        c_reframe_if_applicable: null,
+      },
+      findings: [],
+    };
+    const msg: ChannelMessage = {
+      ts: TS,
+      from: FROM,
+      kind: "audit-verdict",
+      identity: "Alpha",
+      role: "pen",
+      body: JSON.stringify(planWire),
+    };
+    const out = renderMessage(msg);
+    expect(out).toContain(
+      "audit-verdict SHIP-CLEAN plan:audit-target-plan-2026-06-03.md → Charlie",
+    );
+    expect(out).not.toContain("PR#");
   });
 
   it("decodes a DSSE-wrapped verdict into the same readable summary (labeled wrapped, not signed)", async () => {

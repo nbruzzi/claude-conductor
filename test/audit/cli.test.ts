@@ -275,6 +275,7 @@ describe("runBootstrap end-to-end — Section 5: full bootstrap → sign → ver
 
     const inputBody: AuditVerdictBody = {
       kind_version: 1,
+      target: { kind: "pr", repo: "conductor", number: 127 },
       target_pr: { repo: "conductor", number: 127 },
       target_peer: "Delta",
       lens_set_applied: ["RE", "Architecture"],

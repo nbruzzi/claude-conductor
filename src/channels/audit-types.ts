@@ -264,3 +264,117 @@ export function isBandwidthState(v: unknown): v is BandwidthState {
     typeof v === "string" && (BANDWIDTH_STATES as readonly string[]).includes(v)
   );
 }
+
+// ─── Audit target (PR | plan) ────────────────────────────────────────
+//
+// b2 audit-target generalization (Golf design `audit-target-generalization-
+// design.md`, right-sized additive cut). `audit-ask` / `audit-verdict` can
+// target a GitHub PR OR a design/plan doc. The discriminated union lets
+// consumers switch on a single `kind` discriminant rather than branch on which
+// optional wire field (`target_pr` / `target_plan`) is set.
+
+/**
+ * The artifact an audit targets. Discriminated union (D2):
+ *   - `pr`   — a GitHub PR: free-string `repo` (non-empty) + positive-integer `number`.
+ *   - `plan` — a plan/design doc, keyed by `ref` = the plan filename BASENAME
+ *              (D3; stable across the cohort's shared `~/.claude/plans/`,
+ *              human-readable, unique — not a machine-coupled full path).
+ */
+export type AuditTarget =
+  | { readonly kind: "pr"; readonly repo: string; readonly number: number }
+  | { readonly kind: "plan"; readonly ref: string };
+
+/**
+ * Parse the wire-level target of an audit body into a normalized
+ * {@link AuditTarget} (D1: additive, backwards-compatible). The caller passes
+ * the already-JSON-parsed body object.
+ *
+ * Exactly ONE of `target_pr` / `target_plan` must be present:
+ *   - `target_pr: { repo, number }` (historical wire shape) → `{ kind: "pr" }`
+ *   - `target_plan: { ref }`                                → `{ kind: "plan" }`
+ *   - both-absent OR both-present                           → `null`
+ *
+ * Historical `target_pr`-only bodies satisfy exactly-one → parse unchanged
+ * (kind_version stays 1; purely additive). Whitespace on string fields is
+ * trimmed on output (A1-fold parity with the prior `target_pr` parser).
+ */
+export function parseAuditTarget(
+  obj: Record<string, unknown>,
+): AuditTarget | null {
+  const prRaw = obj["target_pr"];
+  const planRaw = obj["target_plan"];
+  const hasPr = prRaw !== undefined;
+  const hasPlan = planRaw !== undefined;
+  // Exactly-one: both-absent or both-present is invalid.
+  if (hasPr === hasPlan) return null;
+
+  if (hasPr) {
+    if (prRaw === null || typeof prRaw !== "object" || Array.isArray(prRaw)) {
+      return null;
+    }
+    const pr = prRaw as Record<string, unknown>;
+    const repo = pr["repo"];
+    if (typeof repo !== "string" || repo.trim().length === 0) return null;
+    const number = pr["number"];
+    if (
+      typeof number !== "number" ||
+      !Number.isInteger(number) ||
+      number <= 0
+    ) {
+      return null;
+    }
+    return { kind: "pr", repo: repo.trim(), number };
+  }
+
+  // plan
+  if (
+    planRaw === null ||
+    typeof planRaw !== "object" ||
+    Array.isArray(planRaw)
+  ) {
+    return null;
+  }
+  const plan = planRaw as Record<string, unknown>;
+  const ref = plan["ref"];
+  if (typeof ref !== "string" || ref.trim().length === 0) return null;
+  return { kind: "plan", ref: ref.trim() };
+}
+
+/**
+ * Serialize an {@link AuditTarget} back to its wire field(s) — the inverse of
+ * {@link parseAuditTarget}. Returns an object carrying exactly one of
+ * `target_pr` / `target_plan` to spread into a body at construction time.
+ */
+export function auditTargetToWire(
+  target: AuditTarget,
+): Record<string, unknown> {
+  if (target.kind === "pr") {
+    return { target_pr: { repo: target.repo, number: target.number } };
+  }
+  return { target_plan: { ref: target.ref } };
+}
+
+/**
+ * Pairing predicate (D4): do two targets refer to the same audited artifact?
+ * `pr`↔`pr` match on repo+number; `plan`↔`plan` match on ref; mismatched
+ * kind → never. Replaces the inline `target_pr.repo===… && .number===…`
+ * pairing in the audit-loop consumers.
+ */
+export function sameTarget(a: AuditTarget, b: AuditTarget): boolean {
+  if (a.kind === "pr" && b.kind === "pr") {
+    return a.repo === b.repo && a.number === b.number;
+  }
+  if (a.kind === "plan" && b.kind === "plan") return a.ref === b.ref;
+  return false;
+}
+
+/**
+ * Stable string key for an {@link AuditTarget} (D4): `pr:<repo>#<number>` for a
+ * PR, `plan:<ref>` for a plan. Used to count independent verdicts per target
+ * (quorum) without branching on `kind` at every call site.
+ */
+export function auditTargetKey(target: AuditTarget): string {
+  return target.kind === "pr"
+    ? `pr:${target.repo}#${target.number}`
+    : `plan:${target.ref}`;
+}

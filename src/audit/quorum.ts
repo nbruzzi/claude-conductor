@@ -252,8 +252,12 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
       body = parseAuditVerdictBodyAnyVersion(bodyRaw);
     }
     if (body === null) continue;
-    if (body.target_pr.number !== args.target_pr.number) continue;
-    if (!repoMatches(body.target_pr.repo, args.target_pr.repo)) continue;
+    // b2: quorum is PR-only for now; a plan-target verdict (no target_pr) cannot
+    // match a PR query — skip it (plan quorum deferred to the full-migration
+    // fast-follow, Golf's b2 map).
+    if (body.target.kind !== "pr") continue;
+    if (body.target.number !== args.target_pr.number) continue;
+    if (!repoMatches(body.target.repo, args.target_pr.repo)) continue;
 
     // Self-audit: the auditor is the verdict's own addressee (the PR's
     // audit-ask author). Not an independent perspective — exclude.

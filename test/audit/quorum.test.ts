@@ -42,6 +42,7 @@ const EMPTY_BODIES: ReadonlyMap<string, string> = new Map();
 function bodyJson(over: Partial<AuditVerdictBody>): string {
   const base: AuditVerdictBody = {
     kind_version: 1,
+    target: { kind: "pr", repo: "claude-conductor", number: 200 },
     target_pr: { repo: "claude-conductor", number: 200 },
     target_peer: "Author",
     lens_set_applied: ["RE"],
@@ -328,6 +329,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
   ): Promise<ChannelMessage> {
     const base: AuditVerdictBody = {
       kind_version: 1,
+      target: { kind: "pr", repo: "claude-conductor", number: 200 },
       target_pr: { repo: "claude-conductor", number: 200 },
       target_peer: "Author",
       lens_set_applied: ["RE"],

@@ -197,3 +197,39 @@ affects:
 **Reason:** Telemetry-only + purely additive — no behavior change. The R4 stderr breadcrumb REMAINS the safety control; this structured kind only makes the per-check skip queryable in the presence-failure log rather than living solely in stderr. It instruments already-decided #8b isolation behavior (the isolation + R4 breadcrumb-tiering were the decisions, prior cycle); this is observability, not a new architectural call. Mirrors the established telemetry-kind growth pattern (Phase-3 worktree-lifecycle + Slice-7 provisioner-telemetry kinds).
 
 **Supersedes / superseded_by:** Additive — extends the `PresenceFailureKind` union; supersedes nothing.
+
+---
+
+## 2026-06-03 — Decision G: audit-target generalization to discriminated `AuditTarget` (#3b)
+
+```yaml
+---
+ts: 2026-06-03T18:50:00Z
+kind: api-shape
+severity: load-bearing
+phase: cluster-6
+affects:
+  - src/channels/audit-types.ts
+  - src/channels/audit-ask.ts
+  - src/channels/audit-verdict.ts
+  - src/channels/api.ts
+  - src/audit/quorum.ts
+  - src/audits/queue.ts
+  - src/reciprocation/graph.ts
+  - src/channels/render.ts
+  - src/channels/substrate-class.ts
+  - src/channels/cli.ts
+---
+```
+
+**Context:** `audit-ask`/`audit-verdict` bodies targeted PRs only (`target_pr: {repo, number}`). Plan-gates (auditing a plan document rather than a PR) had no first-class target, so they abused `kind=note` as a workaround — losing the audit-discipline schema (lens-set, axes, verdict, three-option-ask) for an entire class of audits. #3 (Nick: DONE before wind-down) closes this.
+
+**Chosen:** Generalize the body target to a discriminated union `AuditTarget = {kind:"pr"; repo; number} | {kind:"plan"; ref}` in `audit-types.ts`, with helpers `parseAuditTarget` (wire → union, enforces EXACTLY-ONE of `target_pr`/`target_plan`), `auditTargetToWire`, `sameTarget`, `auditTargetKey` (pairing / dedup by target identity). Migration is ADDITIVE per Alpha's right-size (not a D2 full-replace): bodies gain a REQUIRED `target: AuditTarget` plus a TRANSITIONAL-OPTIONAL `target_pr?` (back-compat for in-flight wire during the cohort migration window). PR-only consumers (quorum, queue, reciprocation pairing, the cli substrate-class gate) narrow-and-skip plans via `if (target.kind !== "pr") continue` — full plan-handling in those analytics is DEFERRED (Golf files the backlog item). `render.ts` labels `plan:<ref>` vs `PR#<n>`. `isSubstrateClassTarget` returns false for plan targets (a plan is never substrate-class).
+
+**Reason:** Additive-over-replace surfaces every consumer through the typechecker the moment `target_pr` becomes optional — the optional-field break IS the migration checklist (10 production consumers, all visited). Deferred consumers MUST read the narrowed `target` (not raw `target_pr?`), because two plan-target bodies would `undefined === undefined` false-match on `target_pr` in pairing — the narrowing guard is load-bearing, not cosmetic. Right-sizing to additive (keep `target_pr?`) over D2 full-replace keeps the wire backwards-compatible for the live cohort per live-substrate-sequencing; the optional field is removed in a later cut once no in-flight `target_pr`-only wire remains. The `kind=note` plan-gate workaround is deprecated in favor of the first-class plan target.
+
+**Audit cadence:** Golf design-authority + ratified spec (`~/.claude/plans/audit-target-generalization-design.md`); Echo build (this PR); Foxtrot + Golf lenses requested on-channel post-push.
+
+**Supersedes / superseded_by:** Additive — extends the audit-discipline body schema (`AuditAskBody` / `AuditVerdictBody`). Deprecates the `kind=note` plan-gate workaround (not yet removed; superseded-in-practice once consumers adopt `target:{kind:"plan"}`). The transitional `target_pr?` optional field is scheduled for removal in a follow-up cut.
+
+**Fold absorption (Alpha + Golf convergent SHIP-WITH-FOLDS, 2026-06-03):** absorbed into this PR before merge. (HIGH-2) the new schema surface is now tested — `parseAuditTarget` exactly-one matrix + `auditTargetToWire` roundtrip + `sameTarget` + `auditTargetKey` (audit-types.test.ts), a plan-kind body through both `parseAuditVerdictBody` + `parseAuditAskBody` (Section 3b each), and a `plan:<ref>` render assertion. **Serialize-side roundtrip fix:** the parser returns now spread `...auditTargetToWire(target)` (emit `target_pr` OR `target_plan`) instead of the prior pr-only conditional — a plan body re-serializes WITH `target_plan`, so it roundtrips through `canonicalJson` → wrap → parse. This independently CONVERGES with Golf's forward-catch (the serialize-wiring gap): the auto-wrap plan-roundtrip test (Section 17) made it non-deferrable, so serialize-correctness is IN this PR, not the deferred fast-follow. The deferred fast-follow now retains ONLY the `--target-plan` CLI flag + the queue/quorum/reciprocation full plan-handling. `isSubstrateClassTarget` added to the api.ts surface (the 6th export) for the Alpha-owned dotfiles shim mirror (HIGH-1, sequenced post-merge + canonical-sync).

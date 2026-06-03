@@ -14,9 +14,11 @@
  *
  * **Schema rationale (sibling to `LiveUpdateBody` + `DigestBody` +
  * `AuditAskBody`):** structured body shape earns the new kind. Verdict
- * binds to the originating audit-ask via `target_pr + target_peer +
- * channel-thread` (read-side join), NOT via duplicating `tier` in this
- * body (per Bravo F1 reframe — avoids dual-source-of-truth drift).
+ * binds to the originating audit-ask via `target + target_peer +
+ * channel-thread` (read-side join; `target` is the canonical pr|plan
+ * union — `target_pr` is its transitional wire mirror), NOT via
+ * duplicating `tier` in this body (per Bravo F1 reframe — avoids
+ * dual-source-of-truth drift).
  *
  * **three_option_ask is ALWAYS REQUIRED.** Sub-fields nullable when
  * unused (b_fold_if_applicable null when no folds; c_reframe_if_applicable
@@ -45,14 +47,17 @@
  */
 
 import {
+  auditTargetToWire,
   isAuditAxisArray,
   isAuditClass,
   isAuditVerdict,
   isFindingSeverity,
   isLensClass,
   isLensClassArray,
+  parseAuditTarget,
   type AuditAxis,
   type AuditClass,
+  type AuditTarget,
   type AuditVerdict,
   type FindingSeverity,
   type LensClass,
@@ -119,10 +124,18 @@ export type AuditVerdictBody = {
   /** Schema version. Bumped on incompatible schema revisions. */
   kind_version: 1;
   /**
-   * The PR being audited. Mirror of audit-ask's `target_pr`.
-   * Whitespace-normalized on output (F3 carry-over from Slice 1 A1).
+   * The artifact being audited — a PR or a plan (D2 discriminated union).
+   * Mirror of audit-ask's `target`. Canonical field; new code switches on
+   * `target.kind`. Whitespace-normalized on output (F3 carry-over).
    */
-  target_pr: { repo: string; number: number };
+  target: AuditTarget;
+  /**
+   * Transitional PR-only mirror — present iff `target.kind === "pr"`. The
+   * deferred automation consumers (queue / quorum / reciprocation) read this
+   * until the full-migration fast-follow removes it; new code uses `target`.
+   * (b2 audit-target generalization — right-sized additive cut.)
+   */
+  target_pr?: { repo: string; number: number };
   /**
    * The peer the verdict is ADDRESSED to (the original audit-ask
    * author). Mirror of audit-ask's `target_peer`. Whitespace-normalized
@@ -180,7 +193,7 @@ export type AuditVerdictBody = {
    * Optional at the type level for backwards-compat (`kind_version: 1`
    * bodies without the field still parse). Send-time validation in
    * `cli.ts` REJECTS substrate-class PRs (per
-   * `isSubstrateClassPR(target_pr)` from `./substrate-class.ts`) whose
+   * `isSubstrateClassTarget(target)` from `./substrate-class.ts`) whose
    * audit-verdict body lacks a non-empty array — operationalizing
    * the discipline from cycle 2026-05-25 PR #119 4-instance audit-
    * cohort gap (see
@@ -286,8 +299,9 @@ export type AuditVerdictBody = {
  * Returns `null` on any shape mismatch including counts-coherence
  * failure.
  *
- * **F3 disposition: target_pr.repo + target_peer are whitespace-
- * normalized on OUTPUT** (mirror of Slice 1 A1 fold) — `" conductor "`
+ * **F3 disposition: target identity (target_pr.repo / target_plan.ref) +
+ * target_peer are whitespace-normalized on OUTPUT** (mirror of Slice 1 A1
+ * fold; target normalization lives in `parseAuditTarget`) — `" conductor "`
  * and `"conductor"` produce the SAME typed body for downstream cross-
  * pair audit-routing canonicalization.
  *
@@ -315,29 +329,11 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
 
   if (obj["kind_version"] !== 1) return null;
 
-  // target_pr — required object with non-empty string repo + positive integer number.
-  // (Footgun: typeof null === "object" — explicit null-check first.)
-  const targetPrRaw = obj["target_pr"];
-  if (
-    targetPrRaw === null ||
-    typeof targetPrRaw !== "object" ||
-    Array.isArray(targetPrRaw)
-  ) {
-    return null;
-  }
-  const targetPr = targetPrRaw as Record<string, unknown>;
-  const repoRaw = targetPr["repo"];
-  if (typeof repoRaw !== "string" || repoRaw.trim().length === 0) {
-    return null;
-  }
-  const numberRaw = targetPr["number"];
-  if (
-    typeof numberRaw !== "number" ||
-    !Number.isInteger(numberRaw) ||
-    numberRaw <= 0
-  ) {
-    return null;
-  }
+  // target — exactly one of target_pr / target_plan (D1 additive). parseAuditTarget
+  // normalizes to the AuditTarget discriminated union; historical target_pr-only
+  // bodies parse unchanged → { kind: "pr" }. Both-absent / both-present → null.
+  const target = parseAuditTarget(obj);
+  if (target === null) return null;
 
   // target_peer — required non-empty (post-trim) string.
   const targetPeer = obj["target_peer"];
@@ -541,7 +537,12 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
 
   return {
     kind_version: 1,
-    target_pr: { repo: repoRaw.trim(), number: numberRaw },
+    target,
+    // Wire target mirror (D1 additive): emit target_pr (pr) OR target_plan
+    // (plan) so the body roundtrips through canonicalJson -> parse. The
+    // deferred automation consumers (queue / quorum / reciprocation) still
+    // read target_pr until the full-migration fast-follow.
+    ...auditTargetToWire(target),
     target_peer: targetPeer.trim(),
     lens_set_applied: lensSet,
     audit_class: auditClass,
