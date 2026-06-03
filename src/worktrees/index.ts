@@ -220,6 +220,44 @@ export function removeWorktree(
 }
 
 /**
+ * Paths in a worktree that carry uncommitted work a `--force` removal would
+ * destroy. Runs `git status --porcelain` in the worktree and ignores the
+ * provisioner-created `node_modules` symlink (which always shows as untracked
+ * because it is not git-ignored). Any remaining entry — staged, modified,
+ * renamed, or other untracked — is WIP.
+ *
+ * Best-effort + fail-open: a git error (broken/missing worktree, git absent)
+ * returns `[]` so a probe failure does not permanently block reaping (a
+ * worktree whose git is broken would otherwise never be reapable). The
+ * reaper's liveness gate + forensic-marker escape hatch remain the other
+ * safety layers.
+ *
+ * RE-2 caller-side guard (see `removeWorktree`'s JSDoc): `removeWorktree` uses
+ * `--force` and trusts the caller to refuse on WIP. This is that refusal probe;
+ * `dotfiles-worktree-gc`'s `guardReason` consults it before reaping.
+ */
+export function worktreeUncommittedPaths(
+  worktreePath: string,
+): readonly string[] {
+  const result = runGit(worktreePath, ["status", "--porcelain"]);
+  if (result.status !== 0) return [];
+  return (
+    decodeStdio(result.stdout)
+      .split("\n")
+      .map((line) => line.replace(/\s+$/, ""))
+      .filter((line) => line.length > 0)
+      // Porcelain line is "XY <path>" (2 status columns + a space); drop that
+      // 3-char prefix to get the path.
+      .map((line) => line.slice(3))
+      // The provisioner's node_modules symlink is always untracked but never
+      // WIP — exclude it so a clean provisioned worktree still reaps.
+      .filter(
+        (path) => path !== "node_modules" && !path.startsWith("node_modules/"),
+      )
+  );
+}
+
+/**
  * Enumerate per-session worktrees registered with git for the given
  * canonical. Excludes the canonical itself and any operator-created
  * worktrees that don't follow the `<canonical>-<sid-prefix-8>` naming

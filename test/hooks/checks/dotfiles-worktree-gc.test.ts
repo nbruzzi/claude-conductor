@@ -303,4 +303,48 @@ describe("dotfiles-worktree-gc hook", () => {
     ).toBeUndefined();
     expect(existsSync(wtPath)).toBe(false);
   });
+
+  /* ─── Dirty-tree --force data-loss guard (L1049 slice 2a) ───────── */
+
+  it("dirty worktree (uncommitted WIP) → NOT reaped + guard breadcrumb (--force would destroy WIP)", async () => {
+    const sidPrefix = "ff00ff00";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    // Uncommitted in-flight work a `git worktree remove --force` reap destroys.
+    // This orphan has no live anchor, so it is otherwise reap-eligible — the
+    // dirty-tree guard is the only thing that should preserve it.
+    writeFileSync(join(wtPath, "wip-uncommitted.ts"), "// in-flight work\n");
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // Preserved — the dirty-tree guard refused the reap.
+    expect(existsSync(wtPath)).toBe(true);
+
+    const events = readPresenceFailures();
+    const guard = events.find(
+      (e) =>
+        e.kind === "worktree-cleanup-failed" &&
+        e.detail.includes("dirty working tree"),
+    );
+    expect(guard).toBeDefined();
+    // Reap must NOT have fired for this worktree.
+    expect(events.find((e) => e.kind === "worktree-gc-reaped")).toBeUndefined();
+  });
+
+  it("orphan with only an untracked node_modules (no WIP) → still reaped (dirty-guard ignores node_modules)", async () => {
+    const sidPrefix = "ab00ba00";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    // node_modules (a symlink in prod) shows as untracked but is NOT WIP — the
+    // dirty-guard must ignore it so a clean worktree still reaps. An untracked
+    // file named node_modules reproduces the same `?? node_modules` porcelain
+    // line the prod symlink yields.
+    writeFileSync(join(wtPath, "node_modules"), "");
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // Reaped — node_modules-only is "clean" for reap purposes.
+    expect(existsSync(wtPath)).toBe(false);
+    expect(
+      readPresenceFailures().find((e) => e.kind === "worktree-gc-reaped"),
+    ).toBeDefined();
+  });
 });
