@@ -1102,7 +1102,7 @@ export async function runChannelsCli(
         if (kind === "audit-ask" && parseAuditAskBody(body) === null) {
           die(
             ctx,
-            `[send] audit-ask body failed schema validation — body must be JSON conforming to AuditAskBody (see src/channels/audit-ask.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, target_pr={repo,number}, target_peer (non-empty string), tier (light-touch | 1-lens-substantive | 3-lens-convergence), lens_set_requested (non-empty array of RE | Architecture | TA | Security | Contract), audit_class (inside-pair | outside-pair | cross-pair-shadow).`,
+            `[send] audit-ask body failed schema validation — body must be JSON conforming to AuditAskBody (see src/channels/audit-ask.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}, target_peer (non-empty string), tier (light-touch | 1-lens-substantive | 3-lens-convergence), lens_set_requested (non-empty array of RE | Architecture | TA | Security | Contract), audit_class (inside-pair | outside-pair | cross-pair-shadow).`,
             {
               code: 2,
               category: "VALIDATION",

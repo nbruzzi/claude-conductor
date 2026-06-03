@@ -14,9 +14,11 @@
  *
  * **Schema rationale (sibling to `LiveUpdateBody` + `DigestBody` +
  * `AuditAskBody`):** structured body shape earns the new kind. Verdict
- * binds to the originating audit-ask via `target_pr + target_peer +
- * channel-thread` (read-side join), NOT via duplicating `tier` in this
- * body (per Bravo F1 reframe — avoids dual-source-of-truth drift).
+ * binds to the originating audit-ask via `target + target_peer +
+ * channel-thread` (read-side join; `target` is the canonical pr|plan
+ * union — `target_pr` is its transitional wire mirror), NOT via
+ * duplicating `tier` in this body (per Bravo F1 reframe — avoids
+ * dual-source-of-truth drift).
  *
  * **three_option_ask is ALWAYS REQUIRED.** Sub-fields nullable when
  * unused (b_fold_if_applicable null when no folds; c_reframe_if_applicable
@@ -45,6 +47,7 @@
  */
 
 import {
+  auditTargetToWire,
   isAuditAxisArray,
   isAuditClass,
   isAuditVerdict,
@@ -190,7 +193,7 @@ export type AuditVerdictBody = {
    * Optional at the type level for backwards-compat (`kind_version: 1`
    * bodies without the field still parse). Send-time validation in
    * `cli.ts` REJECTS substrate-class PRs (per
-   * `isSubstrateClassPR(target_pr)` from `./substrate-class.ts`) whose
+   * `isSubstrateClassTarget(target)` from `./substrate-class.ts`) whose
    * audit-verdict body lacks a non-empty array — operationalizing
    * the discipline from cycle 2026-05-25 PR #119 4-instance audit-
    * cohort gap (see
@@ -296,8 +299,9 @@ export type AuditVerdictBody = {
  * Returns `null` on any shape mismatch including counts-coherence
  * failure.
  *
- * **F3 disposition: target_pr.repo + target_peer are whitespace-
- * normalized on OUTPUT** (mirror of Slice 1 A1 fold) — `" conductor "`
+ * **F3 disposition: target identity (target_pr.repo / target_plan.ref) +
+ * target_peer are whitespace-normalized on OUTPUT** (mirror of Slice 1 A1
+ * fold; target normalization lives in `parseAuditTarget`) — `" conductor "`
  * and `"conductor"` produce the SAME typed body for downstream cross-
  * pair audit-routing canonicalization.
  *
@@ -534,11 +538,11 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
   return {
     kind_version: 1,
     target,
-    // Transitional PR-only mirror for the deferred automation consumers
-    // (queue / quorum / reciprocation) until the full-migration fast-follow.
-    ...(target.kind === "pr"
-      ? { target_pr: { repo: target.repo, number: target.number } }
-      : {}),
+    // Wire target mirror (D1 additive): emit target_pr (pr) OR target_plan
+    // (plan) so the body roundtrips through canonicalJson -> parse. The
+    // deferred automation consumers (queue / quorum / reciprocation) still
+    // read target_pr until the full-migration fast-follow.
+    ...auditTargetToWire(target),
     target_peer: targetPeer.trim(),
     lens_set_applied: lensSet,
     audit_class: auditClass,

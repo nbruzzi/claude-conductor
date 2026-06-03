@@ -98,8 +98,12 @@ export type { AuditTarget } from "./audit-types.ts";
 // cross_edge_consumers_verified send-time validator gate. Consumers
 // (audit tooling, dashboards, future lint rules) import alongside the
 // canonical SUBSTRATE_CLASS_REPOS set for caller-side enumeration.
+// Item #3(b) 2026-06-03 — `isSubstrateClassTarget(target)` is the
+// AuditTarget-level entry (plan targets are never substrate-class);
+// re-exported for the dotfiles shim mirror.
 export {
   isSubstrateClassPR,
+  isSubstrateClassTarget,
   SUBSTRATE_CLASS_REPOS,
 } from "./substrate-class.ts";
 

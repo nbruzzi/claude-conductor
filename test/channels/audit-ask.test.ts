@@ -338,3 +338,39 @@ describe("parseAuditAskBody — Section 11: JSON-root failures", () => {
     expect(parseAuditAskBody("null")).toBeNull();
   });
 });
+
+describe("parseAuditAskBody — Section 3b: target_plan plan-target (Item #3b)", () => {
+  const PLAN_ASK_WIRE: Record<string, unknown> = {
+    kind_version: 1,
+    target_plan: { ref: "my-plan-2026-06-03.md" },
+    target_peer: "Bravo",
+    tier: "light-touch",
+    lens_set_requested: ["RE"],
+    audit_class: "inside-pair",
+  };
+  it("T3b.1: plan-only wire parses -> target.kind='plan' + target_pr undefined", () => {
+    const parsed = parseAuditAskBody(JSON.stringify(PLAN_ASK_WIRE));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.target).toEqual({
+      kind: "plan",
+      ref: "my-plan-2026-06-03.md",
+    });
+    expect(parsed?.target_pr).toBeUndefined();
+  });
+  it("T3b.2: BOTH target_pr + target_plan present rejected (exactly-one)", () => {
+    const both = {
+      ...PLAN_ASK_WIRE,
+      target_pr: { repo: "conductor", number: 95 },
+    };
+    expect(parseAuditAskBody(JSON.stringify(both))).toBeNull();
+  });
+  it("T3b.3: parsed plan body re-serializes WITH target_plan -> roundtrips", () => {
+    const parsed = parseAuditAskBody(JSON.stringify(PLAN_ASK_WIRE));
+    expect(parsed).not.toBeNull();
+    const reparsed = parseAuditAskBody(JSON.stringify(parsed));
+    expect(reparsed?.target).toEqual({
+      kind: "plan",
+      ref: "my-plan-2026-06-03.md",
+    });
+  });
+});

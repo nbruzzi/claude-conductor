@@ -119,6 +119,28 @@ function bodyWithout(field: keyof AuditVerdictBody): string {
   return JSON.stringify(copy);
 }
 
+/**
+ * Item #3(b) — a clean plan-target verdict wire (target_plan, NO target_pr /
+ * NO in-memory `target` field — the operator-authored shape). Used by the
+ * Section 3b plan-parse + Section 17 wrap-roundtrip tests.
+ */
+const PLAN_VERDICT_WIRE: Record<string, unknown> = {
+  kind_version: 1,
+  target_plan: { ref: "my-plan-2026-06-03.md" },
+  target_peer: "Alpha",
+  lens_set_applied: ["RE"],
+  audit_class: "inside-pair",
+  audit_axes: ["depth"],
+  verdict: "SHIP-CLEAN",
+  counts: { blocker: 0, fold: 0, nit: 0 },
+  three_option_ask: {
+    a_ratify: "ship",
+    b_fold_if_applicable: null,
+    c_reframe_if_applicable: null,
+  },
+  findings: [],
+};
+
 describe("parseAuditVerdictBody — Section 1: happy path", () => {
   it("T1.1: canonical SHIP-WITH-FOLDS body parses cleanly", () => {
     const parsed = parseAuditVerdictBody(
@@ -204,6 +226,37 @@ describe("parseAuditVerdictBody — Section 3: target_pr (F3 whitespace-normaliz
     );
     expect(parsed).not.toBeNull();
     expect(parsed?.target_pr).toEqual({ repo: "conductor", number: 99 });
+  });
+});
+
+describe("parseAuditVerdictBody — Section 3b: target_plan plan-target (Item #3b)", () => {
+  it("T3b.1: plan-only wire parses -> target.kind='plan' + target_pr undefined", () => {
+    const parsed = parseAuditVerdictBody(JSON.stringify(PLAN_VERDICT_WIRE));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.target).toEqual({
+      kind: "plan",
+      ref: "my-plan-2026-06-03.md",
+    });
+    expect(parsed?.target_pr).toBeUndefined();
+  });
+  it("T3b.2: BOTH target_pr + target_plan present rejected (exactly-one)", () => {
+    const both = {
+      ...PLAN_VERDICT_WIRE,
+      target_pr: { repo: "conductor", number: 99 },
+    };
+    expect(parseAuditVerdictBody(JSON.stringify(both))).toBeNull();
+  });
+  it("T3b.3: parsed plan body re-serializes WITH target_plan -> roundtrips (serialize-side wiring)", () => {
+    const parsed = parseAuditVerdictBody(JSON.stringify(PLAN_VERDICT_WIRE));
+    expect(parsed).not.toBeNull();
+    // The wire SoT is target_pr/target_plan; the parser must emit target_plan
+    // (via auditTargetToWire), not just the in-memory `target`, or a re-parse
+    // loses the plan. Guards the serialize-side gap from Golf's forward-catch.
+    const reparsed = parseAuditVerdictBody(JSON.stringify(parsed));
+    expect(reparsed?.target).toEqual({
+      kind: "plan",
+      ref: "my-plan-2026-06-03.md",
+    });
   });
 });
 
@@ -992,6 +1045,25 @@ describe("parseAuditVerdictV0_3Wrapped — Section 17: v0.3 DSSE wrapper", () =>
     const env1 = JSON.parse(envelopeJson1) as { payload: string };
     const env2 = JSON.parse(envelopeJson2) as { payload: string };
     expect(env1.payload).toBe(env2.payload);
+  });
+
+  it("T17 (Item #3b): plan-target verdict roundtrips through wrap -> parse", async () => {
+    const kp = await generateTestKeypair();
+    const planBody = parseAuditVerdictBody(JSON.stringify(PLAN_VERDICT_WIRE));
+    expect(planBody).not.toBeNull();
+    if (planBody === null) return;
+    const envelopeJson = await wrapAuditVerdictBody(
+      planBody,
+      kp.privateKey,
+      "echo",
+    );
+    const result = parseAuditVerdictV0_3Wrapped(envelopeJson);
+    expect(result).not.toBeNull();
+    expect(result?.body.target).toEqual({
+      kind: "plan",
+      ref: "my-plan-2026-06-03.md",
+    });
+    expect(result?.body.target_pr).toBeUndefined();
   });
 });
 

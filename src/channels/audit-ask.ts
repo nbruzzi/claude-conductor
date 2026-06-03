@@ -34,6 +34,7 @@
  */
 
 import {
+  auditTargetToWire,
   isAuditAskTier,
   isAuditClass,
   isLensClassArray,
@@ -165,11 +166,11 @@ export function parseAuditAskBody(body: string): AuditAskBody | null {
   return {
     kind_version: 1,
     target,
-    // Transitional PR-only mirror for the deferred automation consumers
-    // (queue / quorum / reciprocation) until the full-migration fast-follow.
-    ...(target.kind === "pr"
-      ? { target_pr: { repo: target.repo, number: target.number } }
-      : {}),
+    // Wire target mirror (D1 additive): emit target_pr (pr) OR target_plan
+    // (plan) so the body roundtrips through canonicalJson -> parse. The
+    // deferred automation consumers (queue / quorum / reciprocation) still
+    // read target_pr until the full-migration fast-follow.
+    ...auditTargetToWire(target),
     target_peer: targetPeer.trim(),
     tier,
     lens_set_requested: lensSet,

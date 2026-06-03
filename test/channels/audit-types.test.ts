@@ -23,6 +23,8 @@ import {
   BANDWIDTH_STATES,
   FINDING_SEVERITIES,
   LENS_CLASSES,
+  auditTargetKey,
+  auditTargetToWire,
   isAuditAskTier,
   isAuditAxis,
   isAuditAxisArray,
@@ -32,6 +34,9 @@ import {
   isFindingSeverity,
   isLensClass,
   isLensClassArray,
+  parseAuditTarget,
+  sameTarget,
+  type AuditTarget,
   type BandwidthInputs,
 } from "../../src/channels/audit-types.ts";
 
@@ -206,5 +211,119 @@ describe("audit-types — BandwidthInputs shape (Slice 3)", () => {
       "open_audit_asks",
     ]);
     expect(inputs.heartbeat_age_ms).toBeNull();
+  });
+});
+
+// Item #3(b) 2026-06-03 — audit-target generalization (discriminated
+// AuditTarget = pr | plan). HIGH-2 from Alpha+Golf's convergent
+// SHIP-WITH-FOLDS lens on #193: the right-size cut's load-bearing
+// invariants (exactly-one wire matrix, back-compat target_pr-only -> pr,
+// roundtrip, pairing identity) are correct-by-inspection but were UNPROVEN.
+describe("audit-types — parseAuditTarget exactly-one matrix (Item #3b)", () => {
+  it("pr-only wire -> {kind:'pr'} (historical back-compat, unchanged)", () => {
+    expect(
+      parseAuditTarget({ target_pr: { repo: "conductor", number: 99 } }),
+    ).toEqual({ kind: "pr", repo: "conductor", number: 99 });
+  });
+  it("plan-only wire -> {kind:'plan'}", () => {
+    expect(parseAuditTarget({ target_plan: { ref: "my-plan.md" } })).toEqual({
+      kind: "plan",
+      ref: "my-plan.md",
+    });
+  });
+  it("BOTH present -> null (exactly-one violated)", () => {
+    expect(
+      parseAuditTarget({
+        target_pr: { repo: "conductor", number: 99 },
+        target_plan: { ref: "my-plan.md" },
+      }),
+    ).toBeNull();
+  });
+  it("NEITHER present -> null (exactly-one violated)", () => {
+    expect(parseAuditTarget({})).toBeNull();
+  });
+  it("trims whitespace on repo + ref (A1-fold parity)", () => {
+    expect(
+      parseAuditTarget({ target_pr: { repo: "  conductor ", number: 1 } }),
+    ).toEqual({ kind: "pr", repo: "conductor", number: 1 });
+    expect(parseAuditTarget({ target_plan: { ref: "  p.md " } })).toEqual({
+      kind: "plan",
+      ref: "p.md",
+    });
+  });
+  it("rejects malformed pr (empty/missing repo, non-positive/non-integer number)", () => {
+    expect(parseAuditTarget({ target_pr: { repo: "", number: 1 } })).toBeNull();
+    expect(
+      parseAuditTarget({ target_pr: { repo: "conductor", number: 0 } }),
+    ).toBeNull();
+    expect(
+      parseAuditTarget({ target_pr: { repo: "conductor", number: 1.5 } }),
+    ).toBeNull();
+    expect(parseAuditTarget({ target_pr: { number: 1 } })).toBeNull();
+    expect(parseAuditTarget({ target_pr: null })).toBeNull();
+  });
+  it("rejects malformed plan (empty/missing ref, non-object)", () => {
+    expect(parseAuditTarget({ target_plan: { ref: "" } })).toBeNull();
+    expect(parseAuditTarget({ target_plan: {} })).toBeNull();
+    expect(parseAuditTarget({ target_plan: "p.md" })).toBeNull();
+  });
+});
+
+describe("audit-types — auditTargetToWire + roundtrip (Item #3b)", () => {
+  it("pr -> {target_pr}", () => {
+    expect(
+      auditTargetToWire({ kind: "pr", repo: "conductor", number: 99 }),
+    ).toEqual({ target_pr: { repo: "conductor", number: 99 } });
+  });
+  it("plan -> {target_plan}", () => {
+    expect(auditTargetToWire({ kind: "plan", ref: "my-plan.md" })).toEqual({
+      target_plan: { ref: "my-plan.md" },
+    });
+  });
+  it("parseAuditTarget(auditTargetToWire(t)) === t for BOTH kinds", () => {
+    const pr: AuditTarget = { kind: "pr", repo: "conductor", number: 99 };
+    const plan: AuditTarget = { kind: "plan", ref: "my-plan.md" };
+    expect(parseAuditTarget(auditTargetToWire(pr))).toEqual(pr);
+    expect(parseAuditTarget(auditTargetToWire(plan))).toEqual(plan);
+  });
+});
+
+describe("audit-types — sameTarget (Item #3b)", () => {
+  it("pr<->pr matches on repo+number; mismatches on either", () => {
+    const base: AuditTarget = { kind: "pr", repo: "c", number: 1 };
+    expect(sameTarget(base, { kind: "pr", repo: "c", number: 1 })).toBe(true);
+    expect(sameTarget(base, { kind: "pr", repo: "c", number: 2 })).toBe(false);
+    expect(sameTarget(base, { kind: "pr", repo: "d", number: 1 })).toBe(false);
+  });
+  it("plan<->plan matches on ref", () => {
+    const base: AuditTarget = { kind: "plan", ref: "a.md" };
+    expect(sameTarget(base, { kind: "plan", ref: "a.md" })).toBe(true);
+    expect(sameTarget(base, { kind: "plan", ref: "b.md" })).toBe(false);
+  });
+  it("cross-kind never matches", () => {
+    expect(
+      sameTarget(
+        { kind: "pr", repo: "c", number: 1 },
+        { kind: "plan", ref: "a.md" },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("audit-types — auditTargetKey (Item #3b)", () => {
+  it("pr -> 'pr:<repo>#<number>'", () => {
+    expect(auditTargetKey({ kind: "pr", repo: "conductor", number: 99 })).toBe(
+      "pr:conductor#99",
+    );
+  });
+  it("plan -> 'plan:<ref>'", () => {
+    expect(auditTargetKey({ kind: "plan", ref: "my-plan.md" })).toBe(
+      "plan:my-plan.md",
+    );
+  });
+  it("kind-prefix prevents a pr/plan key collision on a textual ref", () => {
+    expect(auditTargetKey({ kind: "pr", repo: "c", number: 1 })).not.toBe(
+      auditTargetKey({ kind: "plan", ref: "c#1" }),
+    );
   });
 });
