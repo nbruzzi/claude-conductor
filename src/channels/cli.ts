@@ -40,6 +40,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import { basename } from "node:path";
 
 import {
   isValidArtifactId,
@@ -1345,6 +1346,14 @@ export async function runChannelsCli(
           from: sid(),
           kind: kind as ChannelKind,
           body,
+          // #3a universal provenance: record HOW this body was composed (the
+          // audit value --body-file lacks). File-sourced -> basename ref (not
+          // full path — no machine-coupling, mirrors the audit-target ref
+          // convention); otherwise stdin. Set for EVERY send.
+          provenance:
+            bodyFilePath !== null
+              ? { source: "file", ref: basename(bodyFilePath) }
+              : { source: "stdin" },
         };
 
         // Phase 4 Step A Layer 3 (plan v5 RE-3 fold): manual `send out`

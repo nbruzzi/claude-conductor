@@ -43,6 +43,7 @@ import {
   mkdtempSync,
   rmSync,
   writeFileSync,
+  readFileSync,
   symlinkSync,
   realpathSync,
   existsSync,
@@ -50,6 +51,7 @@ import {
 } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir, homedir } from "node:os";
+import { readMessages } from "../../src/channels/index.ts";
 
 const CLI_PATH = resolvePath(import.meta.dir, "../../src/channels/cli.ts");
 const TEST_SESSION_ID = "ad41f287-c7d2-4b01-a3ad-3aec8eb25d29";
@@ -126,6 +128,82 @@ function runSend(
     },
   );
 }
+
+function readLastMessage(): Record<string, unknown> {
+  const path = join(channelsDir, channelId, "messages.jsonl");
+  const lines = readFileSync(path, "utf-8").trim().split("\n").filter(Boolean);
+  const last = lines.at(-1);
+  if (last === undefined) throw new Error("no message in messages.jsonl");
+  return JSON.parse(last) as Record<string, unknown>;
+}
+
+// ─── #3a universal provenance stamp ────────────────────────────────
+
+describe("send: universal provenance (#3a)", () => {
+  it("file-sourced send stamps provenance {source:'file', ref:<basename>}", () => {
+    const bodyPath = join(tmpRoot, "my-body.txt");
+    writeFileSync(bodyPath, "hello from a file");
+    const result = runSend(bodyPath);
+    expect(result.status).toBe(0);
+    expect(readLastMessage()["provenance"]).toEqual({
+      source: "file",
+      ref: "my-body.txt",
+    });
+  });
+
+  it("provenance ref is the BASENAME, not the full path (no machine-coupling)", () => {
+    const bodyPath = join(tmpRoot, "nested-name.txt");
+    writeFileSync(bodyPath, "x");
+    runSend(bodyPath);
+    expect(JSON.stringify(readLastMessage()["provenance"])).not.toContain(
+      tmpRoot,
+    );
+  });
+
+  it("stdin-sourced send stamps provenance {source:'stdin'} (no ref)", () => {
+    const result = spawnSync(
+      "bun",
+      ["run", CLI_PATH, "send", channelId, "status"],
+      {
+        env: {
+          ...process.env,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDir,
+        },
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+        input: "hello from stdin",
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(readLastMessage()["provenance"]).toEqual({ source: "stdin" });
+  });
+
+  it("provenance round-trips through readMessages (reader symmetry — locks the field-explicit read-path)", () => {
+    const bodyPath = join(tmpRoot, "roundtrip.txt");
+    writeFileSync(bodyPath, "round-trip body");
+    expect(runSend(bodyPath).status).toBe(0);
+    // Read back through the REAL reader (readMessages -> isChannelMessage guard
+    // -> push), not raw JSONL. Locks the read-path against a future strict
+    // validator that might strip unknown fields — the symmetric risk to the
+    // serializeLine writer fix (a field written but not read-preserved). Both
+    // Alpha + Golf's #192 lens independently flagged this as the read-side guard.
+    const prev = process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+    process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = channelsDir;
+    try {
+      const last = readMessages(channelId).at(-1);
+      expect(last?.provenance).toEqual({
+        source: "file",
+        ref: "roundtrip.txt",
+      });
+    } finally {
+      if (prev === undefined)
+        delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
+      else process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = prev;
+    }
+  });
+});
 
 // ─── Symlink rejection ─────────────────────────────────────────────
 
