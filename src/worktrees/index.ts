@@ -241,13 +241,22 @@ export function worktreeUncommittedPaths(
 ): readonly string[] {
   const result = runGit(worktreePath, ["status", "--porcelain"]);
   if (result.status !== 0) return [];
+  // Decode RAW — do NOT route porcelain through `decodeStdio`: it `.trim()`s,
+  // and porcelain's worktree-side change lines carry a LOAD-BEARING leading
+  // space (" M path"). Trimming the blob eats the first line's leading space,
+  // so the `.slice(3)` below would drop the path's FIRST char — and a modified
+  // file like `qnode_modules` could mangle to exactly `node_modules`, get
+  // filtered out, and make a DIRTY tree read clean → a `--force` reap that
+  // destroys WIP (the exact catastrophe this guard prevents). git C-quotes
+  // embedded newlines, so splitting the untrimmed output on "\n" is safe.
   return (
-    decodeStdio(result.stdout)
+    result.stdout
+      .toString("utf-8")
       .split("\n")
-      .map((line) => line.replace(/\s+$/, ""))
       .filter((line) => line.length > 0)
-      // Porcelain line is "XY <path>" (2 status columns + a space); drop that
-      // 3-char prefix to get the path.
+      // Porcelain line is "XY <path>" (2 status columns + a space); slice the
+      // fixed 3-char prefix off the RAW (untrimmed) line so the leading status
+      // space is intact.
       .map((line) => line.slice(3))
       // The provisioner's node_modules symlink is always untracked but never
       // WIP — exclude it so a clean provisioned worktree still reaps.
