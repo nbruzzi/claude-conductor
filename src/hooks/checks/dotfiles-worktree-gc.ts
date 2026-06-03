@@ -65,7 +65,11 @@ import {
 } from "../../active-sessions/index.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
-import { listWorktrees, removeWorktree } from "../../worktrees/index.ts";
+import {
+  listWorktrees,
+  removeWorktree,
+  worktreeUncommittedPaths,
+} from "../../worktrees/index.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
 import type { HookInput, HookResult } from "../types.ts";
 import { pass } from "../types.ts";
@@ -314,6 +318,19 @@ function forensicMarkerActive(sidPrefix: string): boolean {
 }
 
 function guardReason(worktreePath: string, now: number): string | null {
+  // RE-2 data-loss guard (L1049 2a): removeWorktree uses `git worktree remove
+  // --force`, which destroys uncommitted work; its JSDoc defers this refusal to
+  // the caller. A worktree carrying WIP (staged/modified/untracked, excluding
+  // the provisioner node_modules symlink) must NOT be reaped — the 3/3 live
+  // reap of 2026-06-03 hit ALIVE sessions, which are exactly the ones likely to
+  // hold WIP. Orthogonal to the liveness gate above: even a correctly
+  // reap-eligible (no-live-heartbeat) worktree is preserved if it holds WIP.
+  const dirty = worktreeUncommittedPaths(worktreePath);
+  if (dirty.length > 0) {
+    const sample = dirty.slice(0, 3).join(", ");
+    return `dirty working tree — ${String(dirty.length)} uncommitted/untracked path(s) (e.g. ${sample}); --force removal would destroy WIP`;
+  }
+
   const indexLock = join(worktreePath, ".git", "index.lock");
   if (existsSync(indexLock)) {
     try {

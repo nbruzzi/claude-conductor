@@ -1782,3 +1782,38 @@ affects:
 **Supersedes / superseded_by:** Additive — extends the worktree-GC liveness model (Phase 3 Slice 2) + the reconcile-boot cross-artifact enumeration pattern (Cycle 2) to the reaper's reap-decision. Partial-realizes backlog L1049 / agetor-P0-1 (the full boot-reconciliation contract remains open).
 
 ---
+
+## 2026-06-03 — Decision: dirty-working-tree --force guard — reaper refuses to destroy uncommitted WIP (L1049 slice-2a)
+
+```yaml
+---
+ts: 2026-06-03T17:40:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/worktrees/index.ts,
+    src/hooks/checks/dotfiles-worktree-gc.ts,
+    test/hooks/checks/dotfiles-worktree-gc.test.ts,
+  ]
+---
+```
+
+**Context:** `removeWorktree` uses `git worktree remove --force` (`src/worktrees/index.ts`), which destroys uncommitted work; its JSDoc explicitly defers the RE-2 safety guards to the caller (the reaper). But `dotfiles-worktree-gc`'s `guardReason` guarded only mid-commit (`.git/index.lock`) + mid-install (`node_modules/.bun-tmp-*`) — NOT a dirty working tree. So a reap-eligible worktree carrying uncommitted edits would be force-removed and the WIP lost. This is orthogonal to (and more urgent after) the slice-1 liveness gate: 2026-06-03 saw a 2nd cohort-wide live-reap (3/3 — Alpha's `SessionStart:compact` reaped Echo+Foxtrot+Golf; primary-source-verified in `.presence-gate-failures.log`), confirming the reaper hits ALIVE sessions — exactly the ones likely to hold uncommitted WIP. Today's 3/3 survived only because their trees were clean (luck, not safety).
+
+**Options considered + chosen:**
+
+1. **Caller-side dirty-tree guard — CHOSEN.** New `worktreeUncommittedPaths(worktreePath)` primitive (`src/worktrees/index.ts`, next to `removeWorktree`): runs `git status --porcelain`, ignores the provisioner `node_modules` symlink (always untracked, never WIP), returns the remaining (staged/modified/untracked) paths. `guardReason` consults it FIRST and refuses the reap (skip + breadcrumb) when non-empty. Exactly the RE-2 caller-side guard `removeWorktree`'s JSDoc defers to the caller — previously missing for the dirty case.
+2. **Drop `--force` in removeWorktree — REJECTED.** Non-force `git worktree remove` fails on ANY untracked entry (incl. the node_modules symlink the provisioner always leaves), so it would block ALL reaps — defeats GC. The dirty discrimination must be caller-side + node_modules-aware.
+3. **Probe-error fail-direction — CHOSEN: fail-open (treat as not-dirty).** A `git status` error (broken/missing worktree, git absent) returns `[]` so a probe failure does not permanently block reaping (a broken worktree would otherwise never be reapable); the liveness gate + forensic-marker remain the other layers. "git-status errors AND has recoverable WIP" is low-probability; the fail-safe alternative would accrete un-reapable worktrees.
+
+**Scope (slice-2a):** `worktreeUncommittedPaths` primitive + the `guardReason` dirty branch + 2 tests (dirty orphan → preserved + breadcrumb; node_modules-only orphan → still reaped). Reuses the existing `worktree-cleanup-failed` guard-skip breadcrumb kind (consistent with the index.lock / bun-tmp skips; a dedicated `worktree-gc-dirty-skip` kind is a possible telemetry follow-up).
+
+**Deferred (L1049 stays OPEN):** slice-2b — the liveness-signal fix for the live-reap itself. Verified root cause (2026-06-03, primary-source): a touch-vs-CHECK heartbeat-store mismatch — `isSessionLiveByPrefix` scans the active-sessions store; channel-sends touch the SEPARATE channel store (the 3 reaped siblings had fresh channel heartbeats but zero active-sessions heartbeats). Candidate fix: have the GC liveness gate also consult the channel heartbeat store (a fresh channel heartbeat is ground-truth liveness; no pid, no behavior change). 2b is higher-blast-radius (shared by both reapers + reconcile-boot) → scoped design + cohort lens BEFORE build.
+
+**Reason:** The reaper's force-removal trusted a caller-side WIP guard that didn't exist for the dirty case. 2a adds it — making a (mis-)reap non-catastrophic (never destroys uncommitted work) regardless of whether the liveness signal (2b) mis-classifies a live session. Defense-in-depth: 2b prevents the wrong-reap; 2a ensures even a wrong-reap is recoverable.
+
+**Supersedes / superseded_by:** Additive — extends the Phase 3 Slice 2 reaper guard chain (`guardReason`) + the worktree primitives. Partial-realizes backlog L1049 / agetor-P0-1 alongside slice-1 (#187); the full boot-reconciliation contract + the 2b liveness fix remain open.
+
+---
