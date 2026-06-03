@@ -74,6 +74,8 @@ import {
   resolveLegacyLastSeenDir,
   withMetadataLock,
   readMetadata,
+  rotateChannelMessages,
+  isChannelRotationAutoEnabled,
   type ChannelSummary,
   type IdentityClaim,
   type UnreachableChannelSummary,
@@ -348,6 +350,31 @@ async function reapChannel(channelId: string): Promise<string[]> {
   if (!shouldReap(channelId)) return lines;
 
   sweepStaleTmpFiles(channelId);
+
+  // messages.jsonl rotation — opt-in via the `.rotation-enabled` flag (default
+  // OFF: a `tail -f` Monitor follows by descriptor and would go silent after
+  // the rename; enable only once cohort Monitors follow by name with `tail -F`).
+  // Bounded + zero-loss (atomic rename); a failure is breadcrumbed and never
+  // breaks the SessionStart chain.
+  if (isChannelRotationAutoEnabled()) {
+    try {
+      const rotated = await rotateChannelMessages(channelId);
+      if (rotated.kind === "rotated") {
+        lines.push(
+          `  rotated messages channel=${channelId} -> messages.${rotated.seq}.archive.jsonl (${rotated.archivedBytes} bytes archived)`,
+        );
+      }
+    } catch (err: unknown) {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        source: "channels-identity",
+        kind: "unhandled",
+        sessionId: null,
+        artifactPath: channelId,
+        detail: `gc-reaper messages rotation failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
 
   let markResult: MarkResult;
   try {

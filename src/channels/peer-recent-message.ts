@@ -55,6 +55,7 @@ import { join } from "node:path";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
 import {
   isChannelMessage,
+  listChannelArchiveFilePaths,
   readBodyFile,
   resolveChannelsDir,
   type ChannelMessage,
@@ -227,9 +228,30 @@ function tailScanForPeer(
   kindFilter: string | null,
 ): ChannelMessage | null {
   if (!channelId || !peerSessionId) return null;
+  const channelDirPath = join(resolveChannelsDir(), channelId);
+  // Live file first (newest), then sealed rotation archives newest-seq →
+  // oldest-seq, so a most-recent-peer-message lookup is not silently null/stale
+  // right after a rotation reset the live file. Each file's scan stays bounded
+  // (MAX_TAIL_BYTES + MAX_TAIL_LINES); the common case matches in the live file.
+  for (const messagesPath of [
+    join(channelDirPath, "messages.jsonl"),
+    ...listChannelArchiveFilePaths(channelDirPath).reverse(),
+  ]) {
+    const match = tailScanFileForPeer(messagesPath, peerSessionId, kindFilter);
+    if (match !== null) return match;
+  }
+  return null;
+}
 
-  const messagesPath = join(resolveChannelsDir(), channelId, "messages.jsonl");
-
+/** Bounded tail-scan of ONE messages file: the most-recent message whose `from`
+ *  matches `peerSessionId` and whose `kind` matches `kindFilter` (any kind when
+ *  null). Reads at most MAX_TAIL_BYTES from EOF + scans at most MAX_TAIL_LINES
+ *  bottom-up. Returns null on no match / absent file. */
+function tailScanFileForPeer(
+  messagesPath: string,
+  peerSessionId: string,
+  kindFilter: string | null,
+): ChannelMessage | null {
   let size: number;
   try {
     size = statSync(messagesPath).size;

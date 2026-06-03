@@ -43,6 +43,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { listChannelArchiveFilePaths } from "./index.ts";
 import {
   COHORT_KEYS_DEFAULT_DIR,
   importPrivateKey,
@@ -143,14 +144,23 @@ function isSha256Hex(value: unknown): boolean {
  *   - Inline `body` field on the JSONL line → use directly
  *   - `body_ref` UUID → read `bodies/<uuid>.txt` in the channel directory
  *
- * Per slice plan body §3.1 step 2: cheapest = walk back N entries find first
- * `kind=audit-verdict`. For channels with ~1-10 audit-verdicts (typical
- * Cycle 2 cohort use), linear-walk is acceptable; index optimization
- * deferred to Cycle 3 per slice plan §9 Q4.
+ * Per slice plan body §3.1 step 2: cheapest = walk back to find the most-recent
+ * `kind=audit-verdict`. Walks the live `messages.jsonl` first, then sealed
+ * rotation archives newest-seq → oldest-seq. For channels with ~1-10
+ * audit-verdicts (typical cohort use), linear-walk is acceptable; index
+ * optimization deferred to Cycle 3 per slice plan §9 Q4.
+ *
+ * **Archive-spanning (rotation correctness).** This is the verdict-chain
+ * WRITE-path: the returned payload becomes the next verdict's
+ * `prev_audit_body_ref`. After a rotation seals the live file, the prior
+ * verdict lives in an archive — a live-only lookup would return null, the next
+ * verdict would bootstrap with `prev_audit_body_ref: null`, and the archive-
+ * aware verifier (`verifyChannelAuditChain`, includeArchive) would see a CHAIN
+ * BREAK at the rotation seam. The writer must span the boundary symmetric to
+ * `readMessages({ includeArchive })`.
  *
  * Returns `null` for:
- *   - Channel JSONL absent
- *   - No audit-verdict kind message present
+ *   - No live file AND no archive contains an audit-verdict
  *   - Most-recent audit-verdict body unparseable
  *   - Most-recent audit-verdict body_ref file missing
  *
@@ -161,9 +171,35 @@ export function lookupPriorAuditVerdictPayload(
   channelsDir: string,
   channelId: string,
 ): string | null {
-  const messagesPath = join(channelsDir, channelId, "messages.jsonl");
-  if (!existsSync(messagesPath)) return null;
-  const raw = readFileSync(messagesPath, "utf-8");
+  const channelDirPath = join(channelsDir, channelId);
+  // Live file first (newest appends), then sealed archives newest-seq →
+  // oldest-seq. The FIRST audit-verdict found (each file walked bottom-up) is
+  // the most-recent overall.
+  const scanOrder = [
+    join(channelDirPath, "messages.jsonl"),
+    ...listChannelArchiveFilePaths(channelDirPath).reverse(),
+  ];
+  for (const filePath of scanOrder) {
+    const payload = scanFileForPriorVerdictPayload(
+      filePath,
+      channelsDir,
+      channelId,
+    );
+    if (payload !== null) return payload;
+  }
+  return null;
+}
+
+/** Walk one JSONL file bottom-up; return the most-recent audit-verdict's
+ *  payload (DSSE envelope payload, or the raw body if not DSSE-wrapped), or
+ *  null when the file is absent / has no resolvable audit-verdict. */
+function scanFileForPriorVerdictPayload(
+  filePath: string,
+  channelsDir: string,
+  channelId: string,
+): string | null {
+  if (!existsSync(filePath)) return null;
+  const raw = readFileSync(filePath, "utf-8");
   const lines = raw.split("\n").filter((l) => l.length > 0);
   for (let i = lines.length - 1; i >= 0; i--) {
     const lineStr = lines[i];

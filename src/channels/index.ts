@@ -1676,19 +1676,80 @@ export function makeSendOutMutator(
   };
 }
 
-/** Read all messages in order. Skips corrupt lines with a single warning. */
-export function readMessages(channelId: string): ChannelMessage[] {
-  // RE-3 boundary guard (slice 6 / A3).
-  if (!isValidArtifactId(channelId)) {
-    throw new Error(
-      `[channels] readMessages: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
-    );
-  }
-  const path = messagesPath(channelId);
-  if (!existsSync(path)) return [];
+// ─── messages.jsonl rotation (intra-channel archive) ────────────────
+//
+// An eternal channel's `messages.jsonl` grows unbounded. `rotateChannelMessages`
+// seals the live file into a numbered archive (`messages.<seq>.archive.jsonl`)
+// via a single atomic `renameSync`, after which the next append O_CREATs a
+// fresh live file. The rename is the ONLY mutation that is zero-loss against
+// the lockless O_APPEND hot path (`appendLineAtomically` opens by path per
+// call): a racing append either lands in the just-sealed archive inode
+// (preserved, in append-order) or O_CREATs the new live file — never dropped.
+// A partial rewrite (truncate-prefix-keep-tail) would NOT be safe, because
+// `withMetadataLock` guards metadata only and does not serialize appends.
+//
+// Archive files are siblings of `messages.jsonl` inside the channel dir
+// (distinct from `archiveChannel`/`.archive/`, which moves a WHOLE channel).
+// Readers opt into the archive via `readMessages(id, { includeArchive: true })`;
+// the verdict-signature-chain verifier MUST opt in so the chain stays fully
+// verifiable across the rotation boundary.
 
+/** Matches a sealed message archive: `messages.<seq>.archive.jsonl`. */
+const MESSAGE_ARCHIVE_RE = /^messages\.(\d+)\.archive\.jsonl$/;
+
+/** Path of the sealed archive for sequence `seq` (sibling of messages.jsonl). */
+function messageArchivePath(channelId: string, seq: number): string {
+  return join(channelDir(channelId), `messages.${seq}.archive.jsonl`);
+}
+
+/** Sealed-archive sequence numbers found directly in a channel directory
+ *  (unsorted). Operates on an explicit dir path so both resolveChannelsDir-
+ *  based and explicit-channelsDir callers share one scan. */
+function archiveSeqsInDir(channelDirPath: string): number[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(channelDirPath);
+  } catch {
+    return [];
+  }
+  const seqs: number[] = [];
+  for (const name of entries) {
+    const m = name.match(MESSAGE_ARCHIVE_RE);
+    if (m?.[1] === undefined) continue;
+    const n = Number.parseInt(m[1], 10);
+    if (Number.isInteger(n) && n >= 0) seqs.push(n);
+  }
+  return seqs;
+}
+
+/** Sequence numbers of all sealed archives for a channel (unsorted). */
+function listMessageArchiveSeqs(channelId: string): number[] {
+  return archiveSeqsInDir(channelDir(channelId));
+}
+
+/** Sealed-archive file paths for a channel directory, seq-ASCENDING (oldest
+ *  first). `channelDirPath` is the channel's own directory
+ *  (`join(channelsDir, channelId)`). Exposed so readers that scan
+ *  `messages.jsonl` via a RAW path (not `readMessages`) can span the rotation
+ *  archives in the same append-order the live file continues — the verdict-
+ *  chain CONSTRUCTOR + the analytics / cursor / tail readers that a
+ *  `readMessages`-caller audit does not surface. */
+export function listChannelArchiveFilePaths(channelDirPath: string): string[] {
+  return archiveSeqsInDir(channelDirPath)
+    .sort((a, b) => a - b)
+    .map((seq) => join(channelDirPath, `messages.${seq}.archive.jsonl`));
+}
+
+/** Parse one JSONL message file. Tolerant: a corrupt line is skipped, never
+ *  thrown upward. Returns the parsed messages plus a skipped-count so callers
+ *  can aggregate a single warning across multiple files. Missing file → empty. */
+function parseJsonlMessages(path: string): {
+  messages: ChannelMessage[];
+  skipped: number;
+} {
+  if (!existsSync(path)) return { messages: [], skipped: 0 };
   const text = readFileSync(path, "utf-8");
-  const out: ChannelMessage[] = [];
+  const messages: ChannelMessage[] = [];
   let skipped = 0;
   for (const raw of text.split("\n")) {
     if (raw.length === 0) continue;
@@ -1698,10 +1759,53 @@ export function readMessages(channelId: string): ChannelMessage[] {
         skipped++;
         continue;
       }
-      out.push(parsed);
+      messages.push(parsed);
     } catch {
       skipped++;
     }
+  }
+  return { messages, skipped };
+}
+
+/** Options for {@link readMessages}. */
+export type ReadMessagesOptions = {
+  /** When true, also read sealed archive files (`messages.<seq>.archive.jsonl`)
+   *  in ascending `seq` order BEFORE the live `messages.jsonl`. This preserves
+   *  global append-order (archives hold older appends; live holds the newest)
+   *  — the same order the verdict-signature chain was constructed in. Default
+   *  false (live file only — bounded, the fast path for hot full-scan readers).
+   *  NOTE: distinct from `listChannels`' `includeArchived` (whole-channel
+   *  archive listing). */
+  includeArchive?: boolean;
+};
+
+/** Read all messages in order. Skips corrupt lines with a single warning.
+ *  By default reads only the live `messages.jsonl`; pass `{ includeArchive:
+ *  true }` to span sealed rotation archives + live in append-order. */
+export function readMessages(
+  channelId: string,
+  opts: ReadMessagesOptions = {},
+): ChannelMessage[] {
+  // RE-3 boundary guard (slice 6 / A3).
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] readMessages: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  const paths: string[] = [];
+  if (opts.includeArchive) {
+    for (const seq of listMessageArchiveSeqs(channelId).sort((a, b) => a - b)) {
+      paths.push(messageArchivePath(channelId, seq));
+    }
+  }
+  paths.push(messagesPath(channelId)); // live file last (newest appends)
+
+  const out: ChannelMessage[] = [];
+  let skipped = 0;
+  for (const path of paths) {
+    const parsed = parseJsonlMessages(path);
+    out.push(...parsed.messages);
+    skipped += parsed.skipped;
   }
   if (skipped > 0) {
     console.error(
@@ -1735,8 +1839,21 @@ export function readMessagesTail(
     );
   }
   if (limit <= 0) return [];
-  const all = readMessages(channelId);
-  return all.slice(-limit);
+  // Live file first; if it holds fewer than `limit` (e.g., just after a
+  // rotation reset it), pull sealed archives newest-first until we have
+  // enough — or run out — preserving global append-order. Bounded: stops as
+  // soon as `limit` is reached.
+  let acc = parseJsonlMessages(messagesPath(channelId)).messages;
+  if (acc.length < limit) {
+    for (const seq of listMessageArchiveSeqs(channelId).sort((a, b) => b - a)) {
+      const older = parseJsonlMessages(
+        messageArchivePath(channelId, seq),
+      ).messages;
+      acc = older.concat(acc);
+      if (acc.length >= limit) break;
+    }
+  }
+  return acc.slice(-limit);
 }
 
 /** Read messages with `ts > afterTs` (strict-greater, ISO-8601 lexicographic
@@ -1760,7 +1877,132 @@ export function readMessagesAfter(
       `[channels] readMessagesAfter: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
     );
   }
-  return readMessages(channelId).filter((m) => m.ts > afterTs);
+  // New messages (ts > afterTs) always land in the live file, so a near-live
+  // cursor reads live only. If the live file's earliest message still
+  // postdates `afterTs` (or live is empty after a rotation reset), a
+  // far-behind cursor may have matching messages in a sealed archive — span
+  // archives newest-first until one starts at/before `afterTs`.
+  const live = parseJsonlMessages(messagesPath(channelId)).messages;
+  const out = live.filter((m) => m.ts > afterTs);
+  const liveEarliest = live[0]?.ts;
+  if (liveEarliest === undefined || liveEarliest > afterTs) {
+    for (const seq of listMessageArchiveSeqs(channelId).sort((a, b) => b - a)) {
+      const older = parseJsonlMessages(
+        messageArchivePath(channelId, seq),
+      ).messages;
+      out.unshift(...older.filter((m) => m.ts > afterTs));
+      const archEarliest = older[0]?.ts;
+      if (archEarliest !== undefined && archEarliest <= afterTs) break;
+    }
+  }
+  return out;
+}
+
+/** Default rotation threshold (bytes). `rotateChannelMessages` seals the live
+ *  `messages.jsonl` into a numbered archive once it reaches this size. ~4 MB is
+ *  high enough that rotation does not fire during a normal cohort cycle (the
+ *  live full-scan stays bounded without churn) yet bounds an eternal channel's
+ *  growth. Tunable per call via {@link RotateMessagesOptions.thresholdBytes}.
+ *  Anti-default: rotation never fires without a documented threshold — this
+ *  constant IS that documentation. */
+export const ROTATION_THRESHOLD_BYTES = 4 * 1024 * 1024;
+
+/** Control file gating the AUTOMATIC (SessionStart gc-reaper) rotation trigger:
+ *  a bare flag file in the channels root. ABSENT by default → no automatic
+ *  rotation (the `rotateChannelMessages` primitive stays directly callable for
+ *  tests + manual ops regardless of this flag). Default-off is deliberate
+ *  live-substrate sequencing: a `tail -f` Monitor follows the file by
+ *  DESCRIPTOR, so a rename would leave live Monitors silently tailing the
+ *  sealed archive. Enable only once the cohort's Monitors follow by NAME
+ *  (`tail -F`); removing the flag is the emergency kill-switch. */
+function channelRotationEnabledFlagPath(): string {
+  return join(resolveChannelsDir(), ".rotation-enabled");
+}
+
+/** True when the automatic rotation trigger is opted-in (flag file present).
+ *  Consulted by the SessionStart gc-reaper trigger, NOT by the primitive. */
+export function isChannelRotationAutoEnabled(): boolean {
+  try {
+    return existsSync(channelRotationEnabledFlagPath());
+  } catch {
+    return false;
+  }
+}
+
+/** Options for {@link rotateChannelMessages}. */
+export type RotateMessagesOptions = {
+  /** Seal the live file only when its byte size is at least this. Default
+   *  {@link ROTATION_THRESHOLD_BYTES}. */
+  thresholdBytes?: number;
+};
+
+/** Outcome of a {@link rotateChannelMessages} call. */
+export type RotateMessagesResult =
+  | { readonly kind: "skipped"; readonly reason: "below-threshold" | "absent" }
+  | {
+      readonly kind: "rotated";
+      readonly seq: number;
+      readonly archivePath: string;
+      readonly archivedBytes: number;
+    };
+
+/** Seal the live `messages.jsonl` into the next sealed archive
+ *  (`messages.<seq>.archive.jsonl`) via a single atomic `renameSync` when it
+ *  has reached the threshold. Zero-loss against the lockless O_APPEND hot path
+ *  (see the rotation note above {@link readMessages}). Serialized against
+ *  concurrent rotations via `withMetadataLock`, with a re-check INSIDE the lock
+ *  (TOCTOU: another session may have rotated since the pre-check).
+ *
+ *  Does NOT consult the auto-enable flag — that gate lives at the SessionStart
+ *  trigger (channels-gc-reaper). Directly callable for tests + manual ops. */
+export async function rotateChannelMessages(
+  channelId: string,
+  opts: RotateMessagesOptions = {},
+): Promise<RotateMessagesResult> {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] rotateChannelMessages: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  const threshold = opts.thresholdBytes ?? ROTATION_THRESHOLD_BYTES;
+  const path = messagesPath(channelId);
+  // Cheap O(1) pre-check OUTSIDE the lock — the common case is no-op, and we
+  // must not churn the metadata lock every SessionStart on every channel.
+  let preSize: number;
+  try {
+    preSize = statSync(path).size;
+  } catch {
+    return { kind: "skipped", reason: "absent" };
+  }
+  if (preSize < threshold) {
+    return { kind: "skipped", reason: "below-threshold" };
+  }
+
+  return await withMetadataLock(channelId, () => {
+    // Re-check under the lock: another session may have rotated between the
+    // pre-check and here (TOCTOU), shrinking the live file below threshold.
+    let size: number;
+    try {
+      size = statSync(path).size;
+    } catch {
+      return { kind: "skipped", reason: "absent" } as RotateMessagesResult;
+    }
+    if (size < threshold) {
+      return { kind: "skipped", reason: "below-threshold" };
+    }
+    // Fresh sequence (max existing + 1) computed under the lock, so dest cannot
+    // pre-exist and two concurrent rotations cannot collide on a seq.
+    const seq =
+      listMessageArchiveSeqs(channelId).reduce((mx, n) => Math.max(mx, n), 0) +
+      1;
+    const dest = messageArchivePath(channelId, seq);
+    // Atomic rename: a concurrent appender either lands its write in this
+    // just-sealed inode (preserved, in append-order) or O_CREATs the fresh
+    // live file — never dropped. The live file resets to absent until the
+    // next append re-creates it.
+    renameSync(path, dest);
+    return { kind: "rotated", seq, archivePath: dest, archivedBytes: size };
+  });
 }
 
 /** Count of complete (newline-terminated) JSONL records in the channel's
@@ -2080,9 +2322,11 @@ export function listChannels(opts?: {
 }
 
 function lastMessageTs(id: string): string | null {
-  const msgs = readMessages(id);
-  if (msgs.length === 0) return null;
-  return msgs[msgs.length - 1]?.ts ?? null;
+  // readMessagesTail spans the rotation boundary (it pulls the newest archive
+  // when the live file is short), so a just-rotated channel still reports its
+  // true last-message ts instead of null.
+  const tail = readMessagesTail(id, 1);
+  return tail[0]?.ts ?? null;
 }
 
 /** Move a channel dir into .archive/. Used by channel-gc. */

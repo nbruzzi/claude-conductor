@@ -17,6 +17,7 @@
 
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { listChannelArchiveFilePaths } from "../channels/index.ts";
 
 import { channelsDir, handoffsDir, memoriesDir } from "../shared/paths.ts";
 import {
@@ -212,13 +213,22 @@ function scanChannelSource(): AggregateInput[] {
       continue;
     }
     if (!stats.isDirectory()) continue;
-    const jsonlPath = join(channelPath, "messages.jsonl");
+    // Span sealed rotation archives (oldest-seq first) + the live file so the
+    // lexicon aggregation is not silently truncated post-rotation.
     let raw = "";
-    try {
-      raw = readFileSync(jsonlPath, "utf8");
-    } catch {
-      continue;
+    let anyRead = false;
+    for (const jsonlPath of [
+      ...listChannelArchiveFilePaths(channelPath),
+      join(channelPath, "messages.jsonl"),
+    ]) {
+      try {
+        raw += readFileSync(jsonlPath, "utf8");
+        anyRead = true;
+      } catch {
+        /* missing file in the set — skip */
+      }
     }
+    if (!anyRead) continue;
     for (const line of raw.split("\n")) {
       if (line.length === 0) continue;
       let parsed: unknown;

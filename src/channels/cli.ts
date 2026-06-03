@@ -1385,7 +1385,9 @@ export async function runChannelsCli(
             bootstrap = true;
           }
         }
-        const allMessages = readMessages(channelId);
+        // includeArchive: operator `read` returns the full channel history,
+        // spanning rotation archives (the since-cursor filter still applies).
+        const allMessages = readMessages(channelId, { includeArchive: true });
         // RE-1 closure: filter + maxTs both gate via Number.isFinite to
         // prevent NaN poisoning a cursor. Malformed msg.ts → silently
         // dropped from filter result + breadcrumb (one-per-channel-per-read).

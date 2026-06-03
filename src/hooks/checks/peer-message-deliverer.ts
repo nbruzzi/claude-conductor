@@ -48,6 +48,7 @@ import { join } from "node:path";
 import {
   isChannelMessage,
   readBodyFile,
+  readMessagesAfter,
   resolveChannelsDir,
   type ChannelMessage,
 } from "../../channels/index.ts";
@@ -258,7 +259,16 @@ export async function check(input: HookInput): Promise<HookResult> {
       }
 
       const cursor = readPeerMessageCursor(channelId, sessionId);
-      const messages = readChannelMessages(channelId);
+      // Bootstrap needs the full live tail (newestMtime); the normal path needs
+      // messages strictly after the cursor — readMessagesAfter spans the
+      // rotation boundary (live + the archive when the cursor predates live), so
+      // a peer message archived before this session's cursor advanced is still
+      // delivered (no coordination silent-loss), while a near-live cursor stays
+      // live-only + bounded.
+      const messages =
+        cursor === null
+          ? readChannelMessages(channelId)
+          : readMessagesAfter(channelId, cursor.ts);
 
       // Bootstrap path — no prior cursor. Set committed-via-pending to
       // newest mtime silently; do NOT emit (matches CLI --since-cursor
