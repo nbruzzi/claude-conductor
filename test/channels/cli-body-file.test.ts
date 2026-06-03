@@ -43,6 +43,7 @@ import {
   mkdtempSync,
   rmSync,
   writeFileSync,
+  readFileSync,
   symlinkSync,
   realpathSync,
   existsSync,
@@ -126,6 +127,58 @@ function runSend(
     },
   );
 }
+
+function readLastMessage(): Record<string, unknown> {
+  const path = join(channelsDir, channelId, "messages.jsonl");
+  const lines = readFileSync(path, "utf-8").trim().split("\n").filter(Boolean);
+  const last = lines.at(-1);
+  if (last === undefined) throw new Error("no message in messages.jsonl");
+  return JSON.parse(last) as Record<string, unknown>;
+}
+
+// ─── #3a universal provenance stamp ────────────────────────────────
+
+describe("send: universal provenance (#3a)", () => {
+  it("file-sourced send stamps provenance {source:'file', ref:<basename>}", () => {
+    const bodyPath = join(tmpRoot, "my-body.txt");
+    writeFileSync(bodyPath, "hello from a file");
+    const result = runSend(bodyPath);
+    expect(result.status).toBe(0);
+    expect(readLastMessage()["provenance"]).toEqual({
+      source: "file",
+      ref: "my-body.txt",
+    });
+  });
+
+  it("provenance ref is the BASENAME, not the full path (no machine-coupling)", () => {
+    const bodyPath = join(tmpRoot, "nested-name.txt");
+    writeFileSync(bodyPath, "x");
+    runSend(bodyPath);
+    expect(JSON.stringify(readLastMessage()["provenance"])).not.toContain(
+      tmpRoot,
+    );
+  });
+
+  it("stdin-sourced send stamps provenance {source:'stdin'} (no ref)", () => {
+    const result = spawnSync(
+      "bun",
+      ["run", CLI_PATH, "send", channelId, "status"],
+      {
+        env: {
+          ...process.env,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDir,
+        },
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+        input: "hello from stdin",
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(readLastMessage()["provenance"]).toEqual({ source: "stdin" });
+  });
+});
 
 // ─── Symlink rejection ─────────────────────────────────────────────
 

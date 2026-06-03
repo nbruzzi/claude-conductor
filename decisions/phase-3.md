@@ -1782,3 +1782,23 @@ affects:
 **Supersedes / superseded_by:** Additive — extends the worktree-GC liveness model (Phase 3 Slice 2) + the reconcile-boot cross-artifact enumeration pattern (Cycle 2) to the reaper's reap-decision. Partial-realizes backlog L1049 / agetor-P0-1 (the full boot-reconciliation contract remains open).
 
 ---
+
+ts: 2026-06-03T18:40:00Z
+kind: api-shape
+severity: minor
+
+---
+
+**#3a — universal message provenance on the `ChannelMessage` envelope.**
+
+**Context:** A channel `send` composes its body from a file (`--body-file`) or stdin, but the persisted message recorded nothing about HOW the body was composed — an audit/traceability gap (`--body-file` reads the file but stamps no provenance). #3 (Bravo Lane-D follow-up b, light-CLI Arc A).
+
+**Decision:** Add optional `provenance: { source: "file" | "stdin" | "inline"; ref?: string }` to `ChannelMessage`, set UNIVERSALLY by the CLI `send` verb after body-resolution: `source` = `"file"` (when `--body-file` is used) | `"stdin"` (piped); `ref` = the source-file BASENAME for file-sourced bodies only (basename, NOT full path — no machine-coupling; mirrors the audit-target `ref` D3 basename convention). Additive + backwards-compat: legacy messages omit it; `serializeLine` writes it conditionally (like identity/role/version); `readMessages`/`isChannelMessage` preserve it as an optional field; no `version` bump.
+
+**Design-authority:** Golf (refined file-sourced-only → universal source-tag; basename `ref`). Alpha confirmed the shape. Foxtrot built; TDD caught that `serializeLine` is field-explicit and had to add the provenance write — the "audit the WRITER, not just the type" lesson applied to the build itself.
+
+**Deferred (flagged, not silent):** the `--from-stdin-file` UNGATED escape-hatch flag (formalize the `cat /tmp/x | send` stdin-bypass as a flag) — Nick's A/B call (Golf leans skip; marginal + a footgun). Universal provenance ships without it.
+
+**Reason:** The channel now records the provenance of every message body (file-source + basename, or stdin) — the audit value `--body-file` lacked — additively, at zero backwards-compat cost.
+
+---

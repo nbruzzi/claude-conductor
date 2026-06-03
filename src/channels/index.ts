@@ -244,6 +244,12 @@ export type ChannelMessage = {
   /** Forward-compat marker. Phase 1 messages omit this; future schema
    *  evolutions may set explicit version values. */
   version?: 1;
+  /** How the message body was composed at send time — provenance/audit of
+   *  the body SOURCE, set universally by the CLI `send` verb (#3a). Additive:
+   *  legacy messages omit it. `ref` is the source-file BASENAME for
+   *  file-sourced bodies only (basename, not full path — no machine-coupling,
+   *  mirrors the audit-target ref convention). */
+  provenance?: { source: "file" | "stdin" | "inline"; ref?: string };
 };
 
 /** Per-identity claim record stored under metadata.identities[<letter>]. */
@@ -854,6 +860,7 @@ function serializeLine(msg: ChannelMessage): string {
   if (msg.identity !== undefined) obj["identity"] = msg.identity;
   if (msg.role !== undefined) obj["role"] = msg.role;
   if (msg.version !== undefined) obj["version"] = msg.version;
+  if (msg.provenance !== undefined) obj["provenance"] = msg.provenance;
   return `${JSON.stringify(obj)}\n`;
 }
 
