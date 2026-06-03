@@ -108,7 +108,8 @@ function resolveIdentitySessionId(
 function showCommand(argv: readonly string[]): void {
   const { target_identity, channel_id } = parseShowFlags(argv);
 
-  const messages = readMessages(channel_id);
+  // includeArchive: full-history analytics must span rotation archives.
+  const messages = readMessages(channel_id, { includeArchive: true });
 
   const bodies_by_ref = new Map<string, string>();
   for (const m of messages) {

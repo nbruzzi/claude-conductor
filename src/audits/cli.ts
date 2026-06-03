@@ -90,7 +90,8 @@ function parseQueueFlags(argv: readonly string[]): {
 function queueCommand(argv: readonly string[]): void {
   const { target_identity, channel_id } = parseQueueFlags(argv);
 
-  const messages = readMessages(channel_id);
+  // includeArchive: full-history audit must span rotation archives.
+  const messages = readMessages(channel_id, { includeArchive: true });
 
   // Prepopulate bodies_by_ref for body_ref-only messages so the pure
   // logic doesn't need filesystem access. Inline `body` skips lookup.

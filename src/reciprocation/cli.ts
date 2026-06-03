@@ -165,7 +165,9 @@ function recipCommand(argv: readonly string[]): void {
   const { channel_id, window_spec } = parseRecipFlags(argv);
   const window = resolveWindow(window_spec);
 
-  const messages = readMessages(channel_id);
+  // includeArchive: a reciprocation window can reach back across a rotation
+  // boundary, so analytics must span the archives, not just the live tail.
+  const messages = readMessages(channel_id, { includeArchive: true });
 
   const bodies_by_ref = new Map<string, string>();
   for (const m of messages) {

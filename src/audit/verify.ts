@@ -215,7 +215,11 @@ export async function verifyChannelAuditChain(
 ): Promise<AuditVerifyResult> {
   const pubkeyDir = options.pubkeyDir ?? cohortKeysDir();
 
-  const messages = readMessages(channelId);
+  // includeArchive: the verdict-signature chain spans rotation archives in
+  // construction (append) order — the verifier must walk the FULL chain, not
+  // just the live tail, or a rotated channel would falsely verify a truncated
+  // chain (treating the first live verdict as a new bootstrap).
+  const messages = readMessages(channelId, { includeArchive: true });
   const breaks: AuditVerifyBreak[] = [];
   const keyIdsUsed: string[] = [];
   let totalAuditVerdicts = 0;

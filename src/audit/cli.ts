@@ -465,7 +465,8 @@ export async function runAuditCli(argv: readonly string[]): Promise<void> {
     if (flags.targetPr === null) {
       die("audit quorum requires --target-pr <repo>#<number>");
     }
-    const messages = readMessages(flags.channelId);
+    // includeArchive: quorum audit must span the full channel history.
+    const messages = readMessages(flags.channelId, { includeArchive: true });
     // Hydrate body_ref-only messages so the pure logic needs no filesystem
     // (mirrors audits/cli.ts). Inline `body` skips the lookup.
     const bodies_by_ref = new Map<string, string>();
