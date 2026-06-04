@@ -626,4 +626,23 @@ describe("channels-gc-reaper channelHB-GC (M3 — prune stale heartbeat markers)
 
     expect(existsSync(heartbeatPathFor("hb-gc-ch", sid))).toBe(true);
   });
+
+  it("prunes a >24h-stale heartbeat in the LEGACY `heartbeat/` dir (dual-read transition)", async () => {
+    // The dual-read prune also sweeps pre-rename peers' legacy `heartbeat/<sid>`
+    // markers — the transition feature's entire purpose. Plant DIRECTLY in the
+    // legacy dir (touchHeartbeat writes the NEW `heartbeats/` dir) + age past TTL.
+    await makeChannel("hb-gc-ch");
+    const sid = "dead0004-0000-4000-8000-000000000004";
+    const legacyHbDir = join(channelDir("hb-gc-ch"), "heartbeat");
+    mkdirSync(legacyHbDir, { recursive: true });
+    const legacyPath = join(legacyHbDir, sid);
+    writeFileSync(legacyPath, "", { mode: 0o600 });
+    const mtime = Date.now() / 1000 - HB_STALE_S;
+    utimesSync(legacyPath, mtime, mtime);
+    expect(existsSync(legacyPath)).toBe(true);
+
+    await check(inputFor());
+
+    expect(existsSync(legacyPath)).toBe(false);
+  });
 });
