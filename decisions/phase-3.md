@@ -1915,3 +1915,43 @@ affects:
 **Supersedes / superseded_by:** Realizes the KNOWN-REMAINING reconcile-boot follow-on from the slice-2b entry (above) + the backlog Presence-section item. Sibling to Slice 2 (teammate-idle — the mirror: a channel-only gate adds active-sessions) + Charlie's contract-with-qualifier codification. Completes the presence-GC arm of the false-dead liveness-gate class (cohort A1).
 
 ---
+
+## 2026-06-04 — Decision: teammate-idle consults the active-sessions store (L1049 slice-2)
+
+```yaml
+---
+ts: 2026-06-04T15:07:07Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/hooks/checks/teammate-idle-reminder.ts,
+    src/shared/presence-failure-log.ts,
+    test/hooks/checks/teammate-idle-reminder.test.ts,
+  ]
+---
+```
+
+**Context:** `teammate-idle-reminder`'s idle gate read the CHANNEL store ONLY (`heartbeat_mtime_ms`), so a peer that is tool-active (active-sessions HB fresh) but channel-quiet (no recent send) was false-flagged idle — the build-busy profile that false-fired ~6× this cohort session. The MIRROR of the L1049 reaper / reconcile-boot fix (Slice 1): those gates read active-sessions-only and OR-in the channel; teammate-idle reads channel-only and ORs-in active-sessions. Cohort A1; builds to the contract-v2 (#195).
+
+**Options considered + chosen:**
+
+1. **OR-in `isSessionLiveByPrefix` (active-sessions) after the channel-idle determination — CHOSEN.** teammate-idle is an ALIVE-ANYWHERE gate ("is this peer doing ANY work?"), so it consults every store that proves that liveness: a channel-idle peer that is active-sessions-live is WORKING → suppress the idle warning + breadcrumb. NON-mutating gate → SINGLE decision point (no apply-time CAS-recheck, unlike the mutating Slice 1).
+2. **Fold the L283 compaction-marker consult — DROPPED (Alpha-confirmed).** The shipped `compaction-notify` PreCompact hook sends a `status` → touches the channel HB teammate-idle reads, so normal-length compaction already does not false-fire; the >5min-compaction edge is a filed Sev-4 known-gap, not bundled here.
+
+**Fail-direction (contract-v2 axis):** the helper fail-softs to not-live, and teammate-idle is ADVISORY (a warn), so a rare double-fault (channel-stale + active-sessions-read-error) yields a NOISE false-positive, not a destructive action — acceptable for an advisory gate (contrast the mutating Slice 1, which fails-toward-not-acting).
+
+**Window:** channel branch = the 5-min idle threshold (unchanged); active-sessions branch = `GC_WINDOW_MS` (the helper default; consistent with Slice 1 + the reaper).
+
+**New telemetry:** a `PresenceFailureKind` `active-sessions-live-suppressed` (union + runtime guard, mirroring `standby-suppressed`) — the breadcrumb when an idle-by-channel peer is suppressed by active-sessions liveness.
+
+**Reason:** A fresh heartbeat in EITHER store is ground-truth liveness; OR-consulting active-sessions stops the build-busy false-positive additively (no change to the channel-idle path; subtract-only on the warn). Backward-compatible.
+
+**Cross-edge:** `presence-failure-log` is shimmed to dotfiles (`export *`); the new kind is an ADDITIVE union member (back-compat — no dotfiles consumer asserts the exact kind-set); the B#3 CI-pin insulates dotfiles CI until a deliberate bump.
+
+**Supersedes / superseded_by:** Sibling to slice-1 (the reconcile-boot/reaper channel-consult — the inverse mirror) + the contract-v2 (#195). Completes the ADVISORY arm of the false-dead liveness-gate class (cohort A1). KNOWN-REMAINING: the >5min-compaction idle edge (filed Sev-4; cross-ref L283).
+
+— Slice-2 CODE authored by Bravo (Charlie-shadowed SHIP-CLEAN); this decision entry + the rebase-onto-#196 + the land were a capacity-take by Delta (Bravo paused mid-fix by an external interrupt; Alpha stall-break; Bravo async-bless).
+
+---

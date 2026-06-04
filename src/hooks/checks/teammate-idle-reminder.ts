@@ -52,6 +52,7 @@ import {
 } from "../../channels/identity-context.ts";
 import { readHeartbeatBody, resolveChannelsDir } from "../../channels/index.ts";
 import { getMostRecentPeerKind } from "../../channels/peer-recent-message.ts";
+import { isSessionLiveByPrefix } from "../../active-sessions/index.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { extractValidSessionId } from "../session-id.ts";
@@ -280,6 +281,30 @@ export async function check(input: HookInput): Promise<HookResult> {
         if (peer.heartbeat_mtime_ms === null) continue;
         const idleMs = now - peer.heartbeat_mtime_ms;
         if (idleMs <= idleThreshold) continue;
+
+        // Alive-anywhere consult (A1 Slice 2; the contract-with-qualifier). The
+        // idle gate above is CHANNEL-store-only (heartbeat_mtime_ms). teammate-idle
+        // gates on "is this peer doing ANY work?" — an alive-anywhere question — so
+        // it must OR-in every store that proves that liveness: a peer that is
+        // tool-active (active-sessions heartbeat fresh) but channel-quiet (no recent
+        // send) is WORKING, not idle. This is the MIRROR of the L1049 reaper /
+        // reconcile-boot fixes (those read active-sessions-ONLY and OR-in channel;
+        // this reads channel-ONLY and ORs-in active-sessions). Fail-soft: the helper
+        // returns false on any IO error (never throws). EXACT-prefix match (full
+        // peer.session_id) — no 8-hex-prefix collision risk. Non-mutating gate, so
+        // a single decision point (no apply-time recheck). Breadcrumb mirrors the
+        // standby / clock-skew gates so a mis-suppression stays observable.
+        if (isSessionLiveByPrefix(peer.session_id, now)) {
+          appendPresenceFailure({
+            timestamp: new Date().toISOString(),
+            source: "channels-identity",
+            kind: "active-sessions-live-suppressed",
+            sessionId,
+            artifactPath: ctx.channelId,
+            detail: `${SOURCE}: peer ${peer.identity} suppressed (channel-idle ${formatRelativeTime(idleMs)} but active-sessions-live)`,
+          });
+          continue;
+        }
 
         // Clock-skew gate. Compare body-ts against mtime (REV 2 RE-1 fix —
         // both are set at the SAME write instant by the peer; a divergence

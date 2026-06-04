@@ -21,11 +21,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check } from "../../../src/hooks/checks/teammate-idle-reminder.ts";
@@ -35,6 +37,7 @@ import {
   touchHeartbeat,
 } from "../../../src/channels/index.ts";
 import { claimIdentity } from "../../../src/channels/identity.ts";
+import { GC_WINDOW_MS } from "../../../src/active-sessions/index.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
 const SANDBOX = `/tmp/test-teammate-idle-reminder-${process.pid}`;
@@ -44,17 +47,40 @@ const SESSION_CHARLIE = "33333333-3333-4333-8333-333333333333";
 const SESSION_DELTA = "44444444-4444-4444-8444-444444444444";
 
 const ENV_KEY = "CLAUDE_CONDUCTOR_IDLE_THRESHOLD_MS";
+const ACTIVE_SESSIONS_ENV = "CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR";
+
+// The OTHER store the A1 Slice 2 alive-anywhere consult reads. Sandboxed
+// hermetically (mkdtemp + tmpdir — realpath-stable, unlike the channels
+// /tmp+pid SANDBOX above, which is the pre-existing tmpdir-divergence pattern
+// the cohort is migrating separately) so isSessionLiveByPrefix never reads the
+// real ~/.claude store: existing cases keep channel-only behavior (empty store
+// → no peer reads active-sessions-live), new cases control liveness.
+let activeSessionsSandbox: string | undefined;
+let prevActiveSessionsEnv: string | undefined;
 
 function sandbox(): void {
   cleanup();
   mkdirSync(SANDBOX, { recursive: true });
   process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
+  prevActiveSessionsEnv = process.env[ACTIVE_SESSIONS_ENV];
+  activeSessionsSandbox = mkdtempSync(join(tmpdir(), "teammate-idle-as-"));
+  process.env[ACTIVE_SESSIONS_ENV] = activeSessionsSandbox;
 }
 
 function cleanup(): void {
   delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
   delete process.env[ENV_KEY];
   if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  if (prevActiveSessionsEnv === undefined)
+    delete process.env[ACTIVE_SESSIONS_ENV];
+  else process.env[ACTIVE_SESSIONS_ENV] = prevActiveSessionsEnv;
+  if (
+    activeSessionsSandbox !== undefined &&
+    existsSync(activeSessionsSandbox)
+  ) {
+    rmSync(activeSessionsSandbox, { recursive: true, force: true });
+    activeSessionsSandbox = undefined;
+  }
 }
 
 function inputFor(sessionId: string | undefined): HookInput {
@@ -142,6 +168,34 @@ function cursorPath(channelId: string, sessionId: string): string {
     "idle-emit-cursors",
     `${sessionId}.json`,
   );
+}
+
+/** Write an active-sessions heartbeat under
+ *  `<activeSessionsSandbox>/<artifactId>/heartbeats/<sessionId>` (mirrors
+ *  test/active-sessions/session-live-by-prefix.test.ts). mtime = Date.now() -
+ *  ageMs, since the hook probes isSessionLiveByPrefix against the wall clock. */
+function writeActiveSessionsHeartbeat(
+  artifactId: string,
+  sessionId: string,
+  ageMs: number,
+): void {
+  const dir = join(activeSessionsSandbox as string, artifactId, "heartbeats");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, sessionId);
+  const ts = Date.now() - ageMs;
+  writeFileSync(
+    path,
+    JSON.stringify({
+      sessionId,
+      pid: 4242,
+      host: hostname(),
+      createdAt: ts,
+      touchedAt: ts,
+    }),
+    "utf-8",
+  );
+  const mtimeSec = ts / 1000;
+  utimesSync(path, mtimeSec, mtimeSec);
 }
 
 describe("teammate-idle-reminder hook", () => {
@@ -1009,5 +1063,73 @@ describe("teammate-idle-reminder hook", () => {
     appendPeerMessage("ch-no-cursor-burn", SESSION_BRAVO, "note");
     const r2 = await check(inputFor(SESSION_SELF));
     expect(r2.stdout).toContain("Peer Bravo");
+  });
+
+  // ─── 31–32 A1 Slice 2: alive-anywhere consult (active-sessions store) ──
+  // teammate-idle is an alive-anywhere gate ("is this peer doing ANY work?"),
+  // so a peer that is channel-quiet (stale channel HB) but tool-active (fresh
+  // active-sessions HB) is WORKING, not idle -> suppress. The MIRROR of the
+  // L1049 reaper / reconcile-boot fix. Per-store window = each store's own
+  // freshness boundary (channel = the 5-min idle threshold; active-sessions =
+  // GC_WINDOW_MS).
+
+  it("31. Alive-anywhere: channel-stale but active-sessions-FRESH -> suppressed (the ~6x false-fire fix)", async () => {
+    await createChannel({
+      channelId: "ch-as-live",
+      handoffId: "ch-as-live",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-as-live",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-as-live",
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-as-live", SESSION_SELF);
+    // Channel HB 6 min stale (idle by the channel-only gate)...
+    backdateHeartbeat("ch-as-live", SESSION_BRAVO, 6 * 60 * 1000);
+    // ...but the peer is tool-active: a FRESH active-sessions HB on its cwd
+    // worktree artifact (the build-busy-not-channel-sending profile).
+    writeActiveSessionsHeartbeat("peer-worktree", SESSION_BRAVO, 0);
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    // Suppression must NOT burn the rate-limit cursor (mirrors the standby gate).
+    expect(existsSync(cursorPath("ch-as-live", SESSION_SELF))).toBe(false);
+  });
+
+  it("32. Alive-anywhere: channel-stale AND active-sessions-STALE -> still flagged (no over-suppress)", async () => {
+    await createChannel({
+      channelId: "ch-as-stale",
+      handoffId: "ch-as-stale",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-as-stale",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-as-stale",
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-as-stale", SESSION_SELF);
+    backdateHeartbeat("ch-as-stale", SESSION_BRAVO, 6 * 60 * 1000);
+    // active-sessions HB older than GC_WINDOW_MS -> not-live -> no suppression.
+    writeActiveSessionsHeartbeat(
+      "peer-worktree",
+      SESSION_BRAVO,
+      GC_WINDOW_MS * 2,
+    );
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Peer Bravo");
   });
 });
