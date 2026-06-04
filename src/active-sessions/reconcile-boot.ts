@@ -205,8 +205,9 @@ function failedSignals(
  *     a FRESH coordination-channel heartbeat is alive — cohort `cli.ts send`
  *     refreshes ONLY the channel store, so a channel-active session's presence
  *     HB reads stale-on-active-sessions yet is NOT dead. `channelLive` is a
- *     SESSION-level lookup (isSidPrefixLiveOnChannel) computed in
- *     enumeratePresence; without it, `--apply` deletes a LIVE peer's presence
+ *     SESSION-level lookup (isSidPrefixLiveOnChannel), probed LAZILY (Q2 — the
+ *     scan fires only when the cheaper AND-terms pass); without it, `--apply`
+ *     deletes a LIVE peer's presence
  *     heartbeat — the data-loss class B#2 fixed for the worktree reaper, applied
  *     here to the presence-GC mutation.
  *   - pid-alive (§10 Q2, reserved): a same-host `kill(pid, 0)` probe — a
@@ -216,13 +217,18 @@ function isGcEligible(
   classification: Liveness,
   ageMs: number,
   paused: boolean,
-  channelLive: boolean,
+  channelLiveProbe: () => boolean,
 ): boolean {
+  // Q2 lazy-compute: channelLiveProbe is a THUNK, invoked only here. The
+  // preceding AND-terms (stale && past-window && !paused) short-circuit, so the
+  // channel-dir scan (isSidPrefixLiveOnChannel) runs ONLY for a candidate that
+  // is otherwise gc-eligible — live/fresh/paused candidates skip it entirely.
+  // Semantics-identical to the eager form; subtract-only preserved.
   return (
     classification === "stale" &&
     ageMs > GC_WINDOW_MS &&
     !paused &&
-    !channelLive
+    !channelLiveProbe()
   );
 }
 
@@ -279,12 +285,8 @@ function enumeratePresence(
       // when its active-sessions HB aged out. reconcile-boot holds the FULL sid
       // → exact-match (no prefix-collision). Subtract-only: it can only PROTECT
       // a presence HB from gc_eligible, never make it eligible. Fail-soft.
-      const channelLive = isSidPrefixLiveOnChannel(
-        h.sessionId,
-        COORDINATION_CHANNEL_ID,
-        now,
-        GC_WINDOW_MS,
-      );
+      // Q2 lazy-compute: passed as a THUNK so the channel-dir scan fires only
+      // when the cheaper AND-terms (stale/window/paused) have already passed.
       out.push({
         artifact_class: "presence",
         artifact_id: artifactId,
@@ -292,7 +294,14 @@ function enumeratePresence(
         classification,
         // split-brain is a cross-entry property; computed in a second pass.
         split_brain: false,
-        gc_eligible: isGcEligible(classification, h.ageMs, paused, channelLive),
+        gc_eligible: isGcEligible(classification, h.ageMs, paused, () =>
+          isSidPrefixLiveOnChannel(
+            h.sessionId,
+            COORDINATION_CHANNEL_ID,
+            now,
+            GC_WINDOW_MS,
+          ),
+        ),
         paused,
         failed_signals: failedSignals(h, currentHost),
         age_ms: h.ageMs,

@@ -555,3 +555,94 @@ describe("channels-gc-reaper coordination stale-identity reclaim", () => {
     );
   });
 });
+
+describe("channels-gc-reaper channelHB-GC (M3 — prune stale heartbeat markers)", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  const HB_STALE_S = 25 * 60 * 60; // 25h > 24h HEARTBEAT_GC_TTL_MS → prunable
+  const HB_FRESH_S = 5 * 60; // 5-min heads-down lag → kept (within the TTL)
+
+  function heartbeatPathFor(channelId: string, sessionId: string): string {
+    return join(channelDir(channelId), "heartbeats", sessionId);
+  }
+
+  function plantHeartbeat(
+    channelId: string,
+    sessionId: string,
+    ageSeconds: number,
+  ): void {
+    touchHeartbeat(channelId, sessionId);
+    const mtime = Date.now() / 1000 - ageSeconds;
+    utimesSync(heartbeatPathFor(channelId, sessionId), mtime, mtime);
+  }
+
+  it("prunes a >24h-stale heartbeat whose sid is NOT a current participant", async () => {
+    await makeChannel("hb-gc-ch");
+    const sid = "dead0001-0000-4000-8000-000000000001";
+    plantHeartbeat("hb-gc-ch", sid, HB_STALE_S);
+    expect(existsSync(heartbeatPathFor("hb-gc-ch", sid))).toBe(true);
+
+    await check(inputFor());
+
+    expect(existsSync(heartbeatPathFor("hb-gc-ch", sid))).toBe(false);
+  });
+
+  it("keeps a fresh heartbeat within the 24h TTL (the long-tool-run lag band)", async () => {
+    await makeChannel("hb-gc-ch");
+    const sid = "dead0002-0000-4000-8000-000000000002";
+    plantHeartbeat("hb-gc-ch", sid, HB_FRESH_S);
+
+    await check(inputFor());
+
+    expect(existsSync(heartbeatPathFor("hb-gc-ch", sid))).toBe(true);
+  });
+
+  it("keeps a >24h-stale heartbeat whose sid IS a current participant (never prune a live claim)", async () => {
+    // Non-coordination channel so the coordination-scoped stale-identity reclaim
+    // does not confound: the claim stays in metadata.identities, so the sid is a
+    // live participant and its heartbeat is skipped even when >24h old.
+    await makeChannel("hb-gc-ch");
+    const sid = "dead0003-0000-4000-8000-000000000003";
+    const claim = {
+      session_id: sid,
+      role: "queue" as const,
+      joined_at: new Date().toISOString(),
+    };
+    mkdirSync(identitiesDirOf("hb-gc-ch"), { recursive: true });
+    writeFileSync(
+      sentinelPath("hb-gc-ch", "Alpha"),
+      `${JSON.stringify(claim)}\n`,
+      { mode: 0o600 },
+    );
+    await commitIdentityClaim({
+      channelId: "hb-gc-ch",
+      identity: "Alpha",
+      claim,
+    });
+    plantHeartbeat("hb-gc-ch", sid, HB_STALE_S);
+
+    await check(inputFor());
+
+    expect(existsSync(heartbeatPathFor("hb-gc-ch", sid))).toBe(true);
+  });
+
+  it("prunes a >24h-stale heartbeat in the LEGACY `heartbeat/` dir (dual-read transition)", async () => {
+    // The dual-read prune also sweeps pre-rename peers' legacy `heartbeat/<sid>`
+    // markers — the transition feature's entire purpose. Plant DIRECTLY in the
+    // legacy dir (touchHeartbeat writes the NEW `heartbeats/` dir) + age past TTL.
+    await makeChannel("hb-gc-ch");
+    const sid = "dead0004-0000-4000-8000-000000000004";
+    const legacyHbDir = join(channelDir("hb-gc-ch"), "heartbeat");
+    mkdirSync(legacyHbDir, { recursive: true });
+    const legacyPath = join(legacyHbDir, sid);
+    writeFileSync(legacyPath, "", { mode: 0o600 });
+    const mtime = Date.now() / 1000 - HB_STALE_S;
+    utimesSync(legacyPath, mtime, mtime);
+    expect(existsSync(legacyPath)).toBe(true);
+
+    await check(inputFor());
+
+    expect(existsSync(legacyPath)).toBe(false);
+  });
+});
