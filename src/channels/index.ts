@@ -2703,6 +2703,33 @@ export function resolveLegacyLastSeenDir(channelId: string): string {
   return legacyLastSeenDir(channelId);
 }
 
+/** Path to the per-channel `heartbeats/` subdirectory. Exported so the GC
+ *  reaper can scan + prune stale heartbeat marker files (channelHB-GC / M3:
+ *  the channel heartbeat store was never GC'd → unbounded growth → an
+ *  ever-slower isSidPrefixLiveOnChannel scan on the reaper/boot hot path).
+ *  Reaper should ALSO consult `resolveLegacyHeartbeatDir` for legacy-named
+ *  entries during the dual-read transition window. */
+export function resolveHeartbeatDir(channelId: string): string {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] resolveHeartbeatDir: invalid channelId "${channelId}"`,
+    );
+  }
+  return heartbeatDir(channelId);
+}
+
+/** Dual-read: path to the LEGACY per-channel `heartbeat/` subdirectory.
+ *  Exported so the GC reaper can enumerate + prune stale heartbeats written
+ *  by pre-rename peers (unlinks from BOTH new + legacy dirs). */
+export function resolveLegacyHeartbeatDir(channelId: string): string {
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] resolveLegacyHeartbeatDir: invalid channelId "${channelId}"`,
+    );
+  }
+  return legacyHeartbeatDir(channelId);
+}
+
 /** Path to a specific session's last-seen cursor file. Exported for the
  *  Slice 4 GC reaper's per-cursor unlink path. */
 export function resolveLastSeenCursorPath(

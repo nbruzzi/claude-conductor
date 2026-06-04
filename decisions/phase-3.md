@@ -1989,3 +1989,42 @@ affects:
 **Supersedes / superseded_by:** First slice of the N1 dashboard-nudge arc (CONVENE-2 next-priority). N1b (dashboard consumer) follows; no supersede.
 
 ---
+
+## 2026-06-04 — Decision: reaper/boot hot-path perf — channelLive lazy-compute + channelHB-GC (CONVENE-2 Q2)
+
+```yaml
+---
+ts: 2026-06-04T19:14:19Z
+kind: architectural
+severity: minor
+phase: 3
+affects:
+  [
+    src/active-sessions/reconcile-boot.ts,
+    src/channels/index.ts,
+    src/hooks/checks/channels-gc-reaper.ts,
+    test/hooks/checks/channels-gc-reaper.test.ts,
+  ]
+---
+```
+
+**Context:** A1 (the false-dead liveness-gate closure) ADDED a channel-store consult (`isSidPrefixLiveOnChannel`, a per-call `heartbeats/` dir scan) to the reaper/boot hot path. Q2 pays down that added I/O without touching correctness — two composing, subtract-only-safe perf changes on the path A1 just hardened. CONVENE-2 Delta-track (Alpha synthesis); enumeration-budget DEFERRED into C1 (the boot-reconciliation-contract arc) per the ratified subsume-flag.
+
+**Changes (both semantics-preserving):**
+
+1. **channelLive lazy-compute (reconcile-boot.ts `isGcEligible`):** the 4th AND-term changed from an eagerly-computed `boolean` to a `channelLiveProbe: () => boolean` THUNK. JS `&&` short-circuits, so the channel-dir scan fires ONLY for a candidate already past `stale && >GC_WINDOW_MS && !paused` — live/fresh/paused candidates (the common case) skip the scan entirely. Identical `gc_eligible` result; subtract-only invariant preserved. The apply-time CAS-recheck (`casRecheckFlip`) keeps its own consult (rare per-apply path, not the enumeration scan).
+2. **channelHB-GC / M3 (channels-gc-reaper.ts `pruneStaleHeartbeats`):** the channel heartbeat store (`heartbeats/<sid>` + legacy `heartbeat/<sid>`) was never GC'd → unbounded growth → an ever-slower `isSidPrefixLiveOnChannel` scan. The new prune MIRRORS the proven `pruneStaleLastSeenCursors` (own `withMetadataLock`, re-read `metadata.identities` for liveSids, skip-live-participant + skip-mtime<TTL, dual-read new+legacy, fail-soft + breadcrumb), wired into `reapChannel` before the orphans early-return so it runs every rate-gated pass. New exported resolvers `resolveHeartbeatDir` / `resolveLegacyHeartbeatDir` (channels/index.ts) mirror the `resolveLastSeenDir` family.
+
+**TTL safety (the load-bearing invariant):** `HEARTBEAT_GC_TTL_MS = 24h` is DELIBERATELY >> any liveness window (callers probe with `GC_WINDOW_MS = 60min`). Pruning only >24h-stale HBs CANNOT remove one a liveness read would still treat as live → a pure growth-bound, never a liveness change. A live participant's HB is additionally skip-guarded (sid in `metadata.identities`) regardless of age.
+
+**Reason:** completes the A1 hardening — the correctness fix added hot-path I/O; Q2 makes that I/O lazy (skip when not needed) + bounds the store it scans. check-existing WIN: channelHB-GC extends the existing reaper's rate-gate + lock + fail-soft discipline, not a new mechanism.
+
+**Cross-edge:** NONE. The new resolvers are internal-relative consumed (the reaper imports `../../channels/index.ts`), NOT a `package.json` subpath export nor a `channels/api` re-export → no dotfiles shim mirror needed. Verified grep-clean for cross-repo consumers of the new symbols.
+
+**Verification:** typecheck clean; reaper 25/0 (3 new HB-GC regression cases: stale-nonparticipant pruned / fresh kept / stale-participant kept); reconcile-boot 5/0. enumeration-budget designed into C1 (#200 §6), not here.
+
+**Supersedes / superseded_by:** builds ON A1 (#194/#196/#197); the channelHB-GC is assumed-by C1's canonical liveness API (#200 §6 — "C1 builds ON it"). P1 (`removeOwnHeartbeat` rename) SPLIT OUT as a separate cross-edge slice (dotfiles `cli.ts` consumer; per the index.ts:955 deferred-rename ratification) — NOT in this PR.
+
+— Q2 authored by Delta (CONVENE-2 Delta-track); peer-shadow at the PR boundary.
+
+---

@@ -72,6 +72,8 @@ import {
   resolveLastSeenDir,
   resolveLatestSymlinkPath,
   resolveLegacyLastSeenDir,
+  resolveHeartbeatDir,
+  resolveLegacyHeartbeatDir,
   withMetadataLock,
   readMetadata,
   rotateChannelMessages,
@@ -129,6 +131,16 @@ const ACKED_MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  *  STALE_THRESHOLD_MS, which is an operator-gated manual escape hatch and
  *  false-positives on Monitor-wake-delayed sessions. */
 const COORDINATION_RECLAIM_STALE_MS = 24 * 60 * 60 * 1000;
+
+/** channelHB-GC (M3): TTL for stale channel heartbeat marker files. A
+ *  `heartbeats/<sid>` file older than this, whose sid is NOT a current
+ *  participant, is pruned — the store was never GC'd, so it grew unbounded and
+ *  the isSidPrefixLiveOnChannel prefix-scan A1 put on the reaper/boot hot path
+ *  read an ever-larger dir. 24h is DELIBERATELY >> any liveness window (the
+ *  reaper/boot callers probe with GC_WINDOW_MS = 60min): pruning only
+ *  >24h-stale HBs CANNOT remove one a liveness read would still treat as live,
+ *  so this is a pure growth-bound, never a liveness change. */
+const HEARTBEAT_GC_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Subdirectory holding the per-channel rate-gate cursor file.
  *  Step G (ARCH-W2-4) renamed from `gc-reap/` to `reap-cursors/` (noun-form
@@ -350,6 +362,23 @@ async function reapChannel(channelId: string): Promise<string[]> {
   if (!shouldReap(channelId)) return lines;
 
   sweepStaleTmpFiles(channelId);
+
+  // channelHB-GC (M3): prune stale heartbeat marker files every rate-gated pass
+  // (NOT gated behind orphans, unlike the last-seen prune which sits after the
+  // orphans early-return). Own lock; fail-soft so a prune error never breaks the
+  // SessionStart chain.
+  try {
+    await pruneStaleHeartbeats(channelId);
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "lock-timeout",
+      sessionId: null,
+      artifactPath: channelId,
+      detail: `gc-reaper heartbeat prune lock-acquire failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 
   // messages.jsonl rotation — opt-in via the `.rotation-enabled` flag (default
   // OFF: a `tail -f` Monitor follows by descriptor and would go silent after
@@ -849,6 +878,84 @@ async function pruneStaleLastSeenCursors(channelId: string): Promise<void> {
             sessionId: sid,
             artifactPath: cursorPath,
             detail: `gc-reaper last-seen prune unlink failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
+    }
+  });
+}
+
+/**
+ * channelHB-GC (M3): prune stale channel heartbeat marker files. The channel
+ * heartbeat store (`heartbeats/<sid>` + legacy `heartbeat/<sid>`) was never
+ * GC'd, so it grew unbounded — every session that ever sent left a marker, and
+ * the isSidPrefixLiveOnChannel prefix-scan A1 put on the reaper/boot hot path
+ * reads the whole dir, getting slower forever. This bounds it.
+ *
+ * Mirrors {@link pruneStaleLastSeenCursors}: own `withMetadataLock` block,
+ * re-reads `metadata.identities` inside the lock for a fresh participant set.
+ * For each `heartbeats/<sid>` (+ legacy `heartbeat/<sid>`, dual-read window):
+ *   1. Validate `sid` (skip `.tmp`/non-sid debris; the bump sentinel is a valid
+ *      UUID but is refreshed every ~5 min so it never reaches the TTL).
+ *   2. Skip if `sid` is a current participant — a live claim's HB is never
+ *      pruned, even when old.
+ *   3. Skip if the file mtime is within HEARTBEAT_GC_TTL_MS (24h).
+ *   4. Else unlink. EACCES/EBUSY → breadcrumb (fail-soft).
+ *
+ * The 24h TTL is DELIBERATELY >> any liveness window (callers probe with
+ * GC_WINDOW_MS = 60min), so pruning a >24h-stale HB CANNOT remove one a
+ * liveness read would still treat as live — a pure growth-bound, never a
+ * liveness change.
+ */
+async function pruneStaleHeartbeats(channelId: string): Promise<void> {
+  await withMetadataLock(channelId, () => {
+    let metaIdentities: Record<string, IdentityClaim> = {};
+    try {
+      const meta = readMetadata(channelId);
+      metaIdentities = meta.identities ?? {};
+    } catch {
+      return; // skip channel if metadata unreadable
+    }
+    const liveSids = new Set<string>();
+    for (const claim of Object.values(metaIdentities)) {
+      liveSids.add(claim.session_id);
+    }
+    const now = getWallClockNow();
+    // Dual-read: prune from BOTH the new `heartbeats/` and legacy `heartbeat/`
+    // dirs during the rename transition window.
+    for (const dir of [
+      resolveHeartbeatDir(channelId),
+      resolveLegacyHeartbeatDir(channelId),
+    ]) {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        continue; // ENOENT — dir doesn't exist yet
+      }
+      for (const sid of entries) {
+        if (!isValidSessionId(sid)) continue; // skip .tmp debris / non-sid names
+        if (liveSids.has(sid)) continue; // live participant — never prune
+        const hbPath = join(dir, sid);
+        let mtimeMs: number;
+        try {
+          mtimeMs = statSync(hbPath).mtimeMs;
+        } catch {
+          continue; // race-cleared
+        }
+        if (now - mtimeMs < HEARTBEAT_GC_TTL_MS) continue;
+        try {
+          unlinkSync(hbPath);
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException | undefined)?.code;
+          if (code === "ENOENT") continue;
+          appendPresenceFailure({
+            timestamp: new Date().toISOString(),
+            source: "channels-identity",
+            kind: "write-failed",
+            sessionId: sid,
+            artifactPath: hbPath,
+            detail: `gc-reaper heartbeat prune unlink failed: ${err instanceof Error ? err.message : String(err)}`,
           });
         }
       }
