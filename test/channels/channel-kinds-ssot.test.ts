@@ -63,6 +63,9 @@ describe("CHANNEL_KINDS (SSOT)", () => {
       // 2026-05-29 — `poll` structured-choice question kind (a NEW kind,
       // not an extension of free-form `question`)
       "poll",
+      // Phase 4.5 dashboard limited-mutation slice (N1) 2026-06-04 —
+      // `nudge` directive wake-signal (dashboard Nudge / Check-comms)
+      "nudge",
     ]);
   });
 
@@ -80,7 +83,9 @@ describe("CHANNEL_KINDS (SSOT)", () => {
     // Cycle 1 substrate-core PR-A7 `key-revoke` per Pair B body §2.5
     // + §4.3 + §8 step 7 LOCKED. 16 → 17 with Cycle 6 item-2 (Sundry-P1;
     // agetor steal-list A-P1-4) `poll` structured-choice kind 2026-05-29.
-    expect(CHANNEL_KINDS.length).toBe(17);
+    // 17 → 18 with Phase 4.5 dashboard limited-mutation slice (N1)
+    // `nudge` directive wake-signal 2026-06-04.
+    expect(CHANNEL_KINDS.length).toBe(18);
   });
 
   it("derives `ChannelKind` from the tuple via `(typeof CHANNEL_KINDS)[number]`", () => {

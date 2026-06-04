@@ -1955,3 +1955,37 @@ affects:
 — Slice-2 CODE authored by Bravo (Charlie-shadowed SHIP-CLEAN); this decision entry + the rebase-onto-#196 + the land were a capacity-take by Delta (Bravo paused mid-fix by an external interrupt; Alpha stall-break; Bravo async-bless).
 
 ---
+
+## 2026-06-04 — Decision: `nudge` channel kind for dashboard limited-mutation (N1a)
+
+```yaml
+---
+ts: 2026-06-04T18:44:09Z
+kind: api-shape
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/index.ts,
+    src/channels/cli.ts,
+    test/channels/channel-kinds-ssot.test.ts,
+    docs/conventions/message-kinds-and-verification.md,
+  ]
+---
+```
+
+**Context:** CONVENE-2 next-priority arc. N1 (dashboard Phase 4.5 — Nudge + Check-comms write actions) layers over a `kind:"nudge"` channel message wrapping `appendMessage`. The synthesis framed N1 as "dashboard-only, zero-conductor-conflict," but primary-source caught the premise error PRE-BUILD: `nudge` was NOT a member of `CHANNEL_KINDS` (`ChannelKind = (typeof CHANNEL_KINDS)[number]`, so a `kind:"nudge"` message is a TYPE error + `isChannelMessage` runtime-rejects it). N1 therefore needs a conductor substrate slice first. Alpha ratified; split into N1a (this — the substrate kind) → N1b (the dashboard consumer), substrate-precedes-consumer (dashboard CLAUDE.md §9).
+
+**Decision (A vs B — A chosen, Alpha-ratified):** Add `"nudge"` to `CHANNEL_KINDS` as a real, distinct kind — NOT reuse `question`/`status` (option B). Semantic correctness is load-bearing: a nudge is a directive (wake / check-comms), not informational (`status`) and not expecting an answer (`question`); reusing those would make a dashboard-nudge indistinguishable from a genuine peer message in every renderer/filter and pollute those kinds' semantics. Additive + low-risk + spec-explicit (dashboard spec v2.1 §17.13).
+
+**Surface touched (all enforced by same-repo drift-tests):** the `CHANNEL_KINDS` tuple (`index.ts`); `KINDS_HELP` + `VERB_HELP.send` kind enumeration (`cli.ts` — the SSOT-iteration drift-catch tests in `cli-send-merged.test.ts` require every member to appear in both); the `channel-kinds-ssot.test.ts` exact-tuple + length pins (17 → 18). `renderKindPrefix` is generic (`[${kind}]`) → NO per-kind case. No body schema (free-form, like `note`); send is role-gated like every non-`out` kind (auto-covered by the role-out drift-test).
+
+**Reason:** Gives the dashboard's requested wake / check-comms actions a semantically-distinct, filter-addressable substrate primitive — additively, at zero backwards-compat cost.
+
+**Cross-edge:** The dotfiles shim (`src/channels/index.ts`) re-exports the `ChannelKind` TYPE (auto-widens at source) but does NOT re-export the `CHANNEL_KINDS` value array, and no hardcoded kind-list copy exists in dotfiles → widening the tuple has ZERO dotfiles impact (no shim-mirror per [[feedback-substrate-shim-mirror-on-plugin-export-changes]]). The wake-filter integration (`nudge` ∈ the urgent-kinds set sibling Monitors honor) is convention-level — there is NO code urgent-kinds set today; a session arming a Monitor includes `nudge` in its wake-filter regex. Downstream consumer: claude-conductor-dashboard Phase 4.5 (N1b) via `sendChannelMessage` → `appendMessage`.
+
+**Coordination:** N1a lands as a tiny standalone conductor PR FIRST (cohort coordination option (i), Delta-picked); zero file-overlap with Delta's P1 rename — `removeOwnHeartbeat` lives in `src/active-sessions/index.ts`, a DIFFERENT file from this `src/channels/index.ts` (Delta primary-source-confirmed). N1b (dashboard) consumes after N1a merges + canonical-syncs.
+
+**Supersedes / superseded_by:** First slice of the N1 dashboard-nudge arc (CONVENE-2 next-priority). N1b (dashboard consumer) follows; no supersede.
+
+---
