@@ -113,6 +113,12 @@ export type PresenceFailureKind =
   // operators have no way to distinguish "reminder correctly suppressed"
   // from "reminder mistakenly suppressed." Source: `channels-identity`.
   | "standby-suppressed"
+  // A1 Slice 2 (Bravo) — forensic signal when `teammate-idle-reminder`
+  // suppresses a reminder because the peer is alive in the active-sessions store
+  // (tool-active) though channel-quiet (the alive-anywhere consult). The mirror
+  // of `standby-suppressed`: the only forensic record if the active-sessions
+  // liveness mis-reads fresh. Source: `channels-identity`.
+  | "active-sessions-live-suppressed"
   // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan
   // v1.4 = v1.3's 6 instrumentation points + new Point 7 for
   // `resetArtifactRegistry` rmSync-bypass). Consumed exclusively by
@@ -427,6 +433,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "takeover-audit-failed" ||
     // sibling-coord-gate-awareness Lane C FIND-6 (Bravo).
     k === "standby-suppressed" ||
+    // A1 Slice 2 (Bravo) — teammate-idle active-sessions-live suppression.
+    k === "active-sessions-live-suppressed" ||
     // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan v1.4).
     k === "sentinel-dotfilesroot-set" ||
     k === "sentinel-dotfilesroot-cleared" ||
