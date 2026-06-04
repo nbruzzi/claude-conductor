@@ -38,6 +38,8 @@ Record the SESSION's real OS pid at session-INIT (net-new — `OwnerRecord.pid` 
 - **protect fires on `kill(pid,0)=success`** but is **staleness-ceiling-bounded**: pid-alive forces `gc_eligible=false` ONLY while within a ceiling (e.g. ≤ `GC_WINDOW_MS`); beyond it, mtime-staleness wins regardless of pid. So a **reused-pid false-protect cannot leak forever** (the protect-lane false-LIVE-protect risk Alpha flagged — bounded by the ceiling, degrading to today's proxy behavior).
 - **start-time-match is an OPTIONAL refinement** (tighten the protect where a platform's start-time is cheaply readable) — never on the load-bearing path. This is HOW the design avoids the cross-platform divergence: by not making reuse-disambiguation load-bearing.
 
+**The ceiling cuts both ways (surfaced for Nick's buy-in — Alpha):** bounding the protect at the ceiling bounds the reuse-false-protect (good) but ALSO un-protects a genuinely-pid-ALIVE-but-HB-silent-beyond-ceiling session → it is reaped = a **bounded false-DEAD residual** (rare — needs ~`GC_WINDOW_MS` (~60min) of zero-HB while pid-alive — and no-worse-than-A1). So C1 root-closes false-DEAD **within the staleness window, not unconditionally**; the COMPLETE closure is promoting the optional start-time refinement (which distinguishes a live pid from a reused/zombie one) on platforms that allow it. **Bounded-within-window vs complete** is an explicit buy-in trade.
+
 **Same-host-only**: `kill(pid,0)` works only same-host; cross-host sessions fall back to the proxy + host-match. pid-liveness is a same-host refinement, not a universal replacement. **Paired macOS+Linux tests** for the probe + the ceiling-bounded protect.
 
 ### 3.3 The pid-role `[DECISION D1 — folds Alpha; S3b gated on ratify]`
