@@ -102,15 +102,26 @@ fi
 
 # --- Summary ---
 printf '\n=== ci-local summary ===\n'
+SKIPPED=0
 i=0
 while [ "$i" -lt "${#NAMES[@]}" ]; do
   printf '  %-40s %s\n' "${NAMES[$i]}" "${STATUSES[$i]}"
+  [ "${STATUSES[$i]}" = "SKIP" ] && SKIPPED=$((SKIPPED + 1))
   i=$((i + 1))
 done
 
 if [ "$FAILED" -ne 0 ]; then
   printf '\nci-local: FAIL — fix the above before pushing (CI will reject otherwise).\n' >&2
   exit 1
+fi
+# Only assert "== CI-green" when NO gate was SKIPPED locally. A SKIPPED gate
+# (e.g. actionlint absent) still runs in CI, so local-green does NOT prove
+# CI-green for it — caveat rather than over-assert. Asserting it unconditionally
+# would be the exact false-confidence class this tool exists to kill
+# (Charlie #199 F1, Contract lens).
+if [ "$SKIPPED" -ne 0 ]; then
+  printf '\nci-local: all RUN gates passed; %d gate(s) SKIPPED locally — CI still enforces those, so this does NOT assert local-green == CI-green for them. Install the skipped tooling for full parity.\n' "$SKIPPED"
+  exit 0
 fi
 printf '\nci-local: all gates passed — local-green == CI-green.\n'
 exit 0

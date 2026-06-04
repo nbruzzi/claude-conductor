@@ -22,6 +22,11 @@ const ciLocalSrc = readFileSync(CI_LOCAL, "utf8");
 const workflowSrc = readFileSync(WORKFLOW, "utf8");
 
 // Every `bun run <gate>` invocation in the CI workflow.
+// SCOPE (Charlie #199 N1): this pins only `bun run <gate>` steps. A future CI
+// step that is neither a `bun run <gate>` nor the bun-test + coverage-floor pair
+// (covered by the second test below) — e.g. a direct binary/script call — would
+// slip this parity assertion and must be added to the test consciously. Today
+// every CI gate is a `bun run <gate>`.
 function ciWorkflowGates(): string[] {
   const gates = new Set<string>();
   const re = /bun run ([A-Za-z0-9:_-]+)/g;
