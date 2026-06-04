@@ -246,9 +246,9 @@ describe("selectFoldGates", () => {
     const manifest = parseVerifyManifest(manifestRaw);
     if (manifest === null) throw new Error("real manifest failed to parse");
     const foldNames = selectFoldGates(manifest).map((g) => g.name);
-    // The 8 local-fold gates. `test` (run separately by `verify`) and
+    // The 9 local-fold gates. `test` (run separately by `verify`) and
     // `check-coverage-floor` (CI-only) are deliberately excluded. Adding a
-    // 9th fold gate must consciously update this pin — that is the
+    // 10th fold gate must consciously update this pin — that is the
     // anti-drift property.
     expect(foldNames).toEqual([
       "typecheck",
@@ -259,6 +259,7 @@ describe("selectFoldGates", () => {
       "check-dep-rationale",
       "check-spdx-headers",
       "check-decision-log",
+      "check-liveness-gate-store-contract",
     ]);
     expect(foldNames).not.toContain("test");
     expect(foldNames).not.toContain("check-coverage-floor");

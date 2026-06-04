@@ -26,10 +26,11 @@ the use case.
 
 ## Detector prefixes
 
-| Prefix | Detector                | Script                               |
-| ------ | ----------------------- | ------------------------------------ |
-| `CGP`  | check-generic-paths     | `scripts/check-generic-paths.sh`     |
-| `CIE`  | check-import-extensions | `scripts/check-import-extensions.sh` |
+| Prefix | Detector                           | Script                                          |
+| ------ | ---------------------------------- | ----------------------------------------------- |
+| `CGP`  | check-generic-paths                | `scripts/check-generic-paths.sh`                |
+| `CIE`  | check-import-extensions            | `scripts/check-import-extensions.sh`            |
+| `LGC`  | check-liveness-gate-store-contract | `scripts/check-liveness-gate-store-contract.sh` |
 
 ## Active codes
 
@@ -43,6 +44,10 @@ the use case.
 ### `CIE` — check-import-extensions
 
 - `CIE-001` — relative import missing `.ts` extension. Remediation: add the explicit `.ts` (or `.json`) extension to the import path. Covers both statement-form (static) imports and call-site-form (dynamic) imports — same root cause.
+
+### `LGC` — check-liveness-gate-store-contract
+
+- `LGC-001` — a `src/` file calls a liveness prefix-helper (`isSessionLiveByPrefix` / `isSidPrefixLiveOnChannel`) but is not on the gate `ALLOWLIST`. Remediation: classify the new gate per `docs/conventions/liveness-gate-store-contract.md` (alive-anywhere → consult ALL stores at every decision point it acts on liveness; store-specific → the one store that defines that participation), then add the file to `ALLOWLIST` in the detector with the classification; or route the liveness decision through an allow-listed gate.
 
 ## Adding a new code
 

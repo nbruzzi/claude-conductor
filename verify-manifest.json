@@ -50,6 +50,12 @@
       "fold": true
     },
     {
+      "name": "check-liveness-gate-store-contract",
+      "local_cmd": "bun run check-liveness-gate-store-contract",
+      "ci_step_name": "Check liveness-gate store contract",
+      "fold": true
+    },
+    {
       "name": "test",
       "local_cmd": "bun test",
       "ci_step_name": "Test",
