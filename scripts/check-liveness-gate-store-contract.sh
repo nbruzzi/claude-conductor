@@ -122,10 +122,14 @@ VIOLATIONS=$(printf '%s\n' "$RAW_HITS" | awk -v allow="$ALLOW_STR" '
     content = substr($0, RLENGTH + 1)
     split(prefix, p, ":")
     file = p[1]
-    # Comment-narration (JSDoc * , line // , bash #) is a mention, not a call.
+    # Comment-narration (a mention, not a call): JSDoc continuation ` * `, a
+    # block-comment opener ` /* `, and a line comment ` // `. There is deliberately
+    # NO bash `#` rule: the scan set is .ts-only, where a leading `#` is a PRIVATE
+    # FIELD (e.g. `#live = isSessionLiveByPrefix(...)`), not a comment — stripping
+    # it would hide a real call (false-negative).
     if (content ~ /^[[:space:]]*\*/) next
+    if (content ~ /^[[:space:]]*\/\*/) next
     if (content ~ /^[[:space:]]*\/\//) next
-    if (content ~ /^[[:space:]]*#/) next
     # Allow-listed files may reference the helpers.
     if (file in m) next
     print

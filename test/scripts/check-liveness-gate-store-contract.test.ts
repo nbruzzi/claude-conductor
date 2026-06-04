@@ -141,4 +141,30 @@ describe("scripts/check-liveness-gate-store-contract.sh", () => {
     const { exitCode } = run();
     expect(exitCode).toBe(0);
   });
+
+  // Delta's N1 (#198): the awk comment-strip must not mis-handle .ts syntax.
+  it("flags a TS #private-field call — a leading # is a private field, NOT a comment (LGC-001)", () => {
+    // Pre-fix the bash-`#` strip dropped this line as a comment -> false-negative.
+    write(
+      "src/private-field-gate.ts",
+      `export class Gate {\n  #live = ${FN_ACTIVE}("aa", 0);\n}\n`,
+    );
+    commit();
+    const { exitCode, stderr } = run();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("error[LGC-001]");
+    expect(stderr).toContain("src/private-field-gate.ts");
+  });
+
+  it("does NOT flag a single-line /* */ block-comment mention", () => {
+    // Pre-fix a `/*`-opener line was not stripped (^* matches ` * `, not `/*`)
+    // -> false-positive; the added `/*` rule strips it.
+    write(
+      "src/block-comment.ts",
+      `/* see ${FN_ACTIVE} for the active-sessions probe */\nexport const x = 1;\n`,
+    );
+    commit();
+    const { exitCode } = run();
+    expect(exitCode).toBe(0);
+  });
 });
