@@ -32,6 +32,7 @@ import {
   closeChannel,
   createChannel,
   heartbeatMtime,
+  isSidPrefixLiveOnChannel,
   joinChannel,
   newestHeartbeatMtime,
   readBodyFile,
@@ -159,6 +160,11 @@ describe("RE-3 boundary guards on channels module API (slice 6 / A3)", () => {
     it("newestHeartbeatMtime", async () => {
       await expectGuardThrows("newestHeartbeatMtime", badId, () =>
         newestHeartbeatMtime(badId),
+      );
+    });
+    it("isSidPrefixLiveOnChannel", async () => {
+      await expectGuardThrows("isSidPrefixLiveOnChannel", badId, () =>
+        isSidPrefixLiveOnChannel("prefix", badId, 0, 60_000),
       );
     });
     it("archiveChannel", async () => {

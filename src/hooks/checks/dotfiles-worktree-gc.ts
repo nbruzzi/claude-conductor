@@ -63,6 +63,10 @@ import {
   unregisterActiveSession,
   type HeartbeatListing,
 } from "../../active-sessions/index.ts";
+import {
+  COORDINATION_CHANNEL_ID,
+  isSidPrefixLiveOnChannel,
+} from "../../channels/index.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
@@ -139,21 +143,35 @@ export async function check(input: HookInput): Promise<HookResult> {
       // emit a diagnostic breadcrumb instead.
       // Cross-artifact liveness gate (backlog L1049; 2026-06-02 4/4 live-reap
       // fix). byDotfilesRoot above scans ONLY the ~/.claude anchor, which
-      // refreshes just at session-start + channel-send; per-tool heartbeats
+      // refreshes at session-start + per-tool heartbeats on the ~/.claude
+      // artifact — NOT channel-send (that touches the separate CHANNEL store,
+      // the cross-store gap L1049 slice-2b closes below). Per-tool heartbeats
       // land on the session's CWD artifact (its worktree). So a live session
       // editing files is fresh on its cwd artifact while its anchor went
       // stale/absent — the old anchor-only check (`sidPrefixHasLiveAnchor`)
       // mis-read it as dead and reaped a LIVE worktree. `isSessionLiveByPrefix`
-      // scans ALL artifacts: if the owning session is fresh anywhere, do NOT
-      // reap.
-      if (isSessionLiveByPrefix(wt.sessionId, now)) {
+      // scans ALL active-sessions artifacts; `isSidPrefixLiveOnChannel` adds the
+      // coordination CHANNEL store (cohort sends refresh ONLY that store). Live
+      // on EITHER store (OR — adds protection, never removes) → do NOT reap.
+      const liveActiveSessions = isSessionLiveByPrefix(wt.sessionId, now);
+      const liveOnChannel =
+        !liveActiveSessions &&
+        isSidPrefixLiveOnChannel(
+          wt.sessionId,
+          COORDINATION_CHANNEL_ID,
+          now,
+          GC_WINDOW_MS,
+        );
+      if (liveActiveSessions || liveOnChannel) {
         appendPresenceFailure({
           timestamp: new Date().toISOString(),
           sessionId,
           source: "dispatcher",
           kind: "worktree-gc-liveness-fallback-fired",
           artifactPath: wt.path,
-          detail: `sid-prefix ${wt.sessionId} is live cross-artifact (fresh heartbeat on some artifact) but the ~/.claude anchor was stale/missing — skipping reap of a live worktree (L1049)`,
+          detail: liveOnChannel
+            ? `sid-prefix ${wt.sessionId} is live on the coordination channel (fresh channel heartbeat) but the active-sessions store was stale/missing — skipping reap of a live worktree (L1049 slice-2b)`
+            : `sid-prefix ${wt.sessionId} is live cross-artifact (fresh heartbeat on some artifact) but the ~/.claude anchor was stale/missing — skipping reap of a live worktree (L1049)`,
         });
         continue;
       }

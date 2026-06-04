@@ -60,7 +60,14 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { isSessionLiveByPrefix } from "../../active-sessions/index.ts";
+import {
+  GC_WINDOW_MS,
+  isSessionLiveByPrefix,
+} from "../../active-sessions/index.ts";
+import {
+  COORDINATION_CHANNEL_ID,
+  isSidPrefixLiveOnChannel,
+} from "../../channels/index.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { effectiveHome } from "../../shared/home.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
@@ -147,10 +154,42 @@ function reapRepo(args: {
 
   for (const wt of worktrees) {
     // Cross-artifact liveness (backlog L1049): isSessionLiveByPrefix scans ALL
-    // artifacts, not just the ~/.claude anchor — a session fresh on its cwd
-    // worktree artifact (per-tool heartbeat) is live even when its anchor aged
-    // out. windowMs is this repo's per-repo threshold.
-    if (isSessionLiveByPrefix(wt.sessionId, now, windowMs)) continue;
+    // active-sessions artifacts, not just the ~/.claude anchor — a session fresh
+    // on its cwd worktree artifact (per-tool heartbeat) is live even when its
+    // anchor aged out. windowMs is this repo's per-repo threshold.
+    // L1049 slice-2b: ALSO consult the coordination CHANNEL store (cohort sends
+    // refresh ONLY that store). The channel branch FLOORS the window at
+    // GC_WINDOW_MS (60min): channel sends are SPARSE, so a short per-repo
+    // cleanupAfterIdleHours would else false-dead a channel-only-fresh session
+    // (the exact 3/3 victim class). Live on EITHER store (OR) → skip the reap.
+    const liveActiveSessions = isSessionLiveByPrefix(
+      wt.sessionId,
+      now,
+      windowMs,
+    );
+    const liveOnChannel =
+      !liveActiveSessions &&
+      isSidPrefixLiveOnChannel(
+        wt.sessionId,
+        COORDINATION_CHANNEL_ID,
+        now,
+        Math.max(windowMs, GC_WINDOW_MS),
+      );
+    if (liveActiveSessions || liveOnChannel) {
+      // m7: breadcrumb the channel-store skip (this site was silent pre-2b) so a
+      // channel-only save is auditable, matching the dotfiles reaper.
+      if (liveOnChannel) {
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          sessionId,
+          source: "dispatcher",
+          kind: "worktree-gc-liveness-fallback-fired",
+          artifactPath: wt.path,
+          detail: `[${source}] sid-prefix ${wt.sessionId} is live on the coordination channel (fresh channel heartbeat; window=max(repo ${windowMs}ms, 60min floor)) but the active-sessions store was stale/missing — skipping reap of a live worktree (L1049 slice-2b)`,
+        });
+      }
+      continue;
+    }
 
     if (forensicMarkerActive(wt.sessionId)) {
       appendPresenceFailure({

@@ -165,6 +165,7 @@ export {
    *  to the full `./channels` flat root. Sibling pattern: `parseDigestBody`
    *  for kind-aware body validation. Per `feedback-cross-edge-contract-via-paired-tests`. */
   isChannelMessage,
+  isSidPrefixLiveOnChannel,
   joinChannel,
   joinOrCreateChannel,
   listChannels,

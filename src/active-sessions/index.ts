@@ -886,7 +886,9 @@ export function listAllHeartbeats(args: {
  * (`sidPrefixHasLiveAnchor`, hook-local) scanned ONLY the `~/.claude` ANCHOR
  * artifact's heartbeats. But per-tool heartbeat refresh lands on the session's
  * CWD artifact (its worktree dir), NOT the anchor — the anchor refreshes only
- * at session-start + channel-send. So a session actively editing files is FRESH
+ * at session-start + per-tool heartbeats on the ~/.claude artifact (NOT
+ * channel-send: that touches the separate CHANNEL store — the cross-store gap
+ * L1049 slice-2b closes). So a session actively editing files is FRESH
  * on its cwd artifact while its anchor heartbeat has aged out, and an anchor-only
  * scan mis-reads it as dead → reaps a LIVE worktree (the 4/4 live-reap of
  * 2026-06-02; backlog L1049). This probe scans ALL artifacts and returns true if
@@ -942,7 +944,8 @@ export function isSessionLiveByPrefix(
  * MULTI-CALLER (the "Own" in the name is a misnomer — DEFERRED-RENAME, below):
  *   1. Stop-hook SELF-removal (session-presence-unregister.ts) — own heartbeat,
  *      no `opts` → forensic detail records "self-stop".
- *   2. reconcile-boot `--apply` GC (Cycle-2 increment-2 2b) — removes a DEAD
+ *   2. reconcile-boot `--apply` GC (Cycle-2 increment-2; the reconcile-boot
+ *      "2b", distinct from L1049 slice-2b reaper channel-liveness) — removes a DEAD
  *      PEER's heartbeat (NOT own); passes `{reason:"reconcile-gc", actorPid}` so
  *      the forensic record is HONEST — never "self-stop pid=<operator>" for a
  *      peer's removal (F1 honest-telemetry; the never-auto-kill mutation's

@@ -2205,6 +2205,80 @@ export function newestHeartbeatMtime(channelId: string): number | null {
   return newest;
 }
 
+/** The cohort-bump cron's pinned sender sid (source of truth: scratch
+ *  `cohort-bump.sh`). It heartbeats on the coordination channel WITHOUT owning a
+ *  worktree, so worktree-liveness scans must exclude it — otherwise a (vanishing)
+ *  8-hex prefix collision could let the bump's heartbeat false-protect a reap.
+ *  Backtick-quoted (template literal) so check-generic-paths CGP-004 reads the
+ *  UUID as an intentional documented constant, not an anonymization leak — do
+ *  NOT "simplify" to a double-quoted string (that re-trips the gate). */
+const COHORT_BUMP_SENTINEL_SID = `c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0`;
+
+/**
+ * True iff some session whose full sid starts with `sidPrefix` has a FRESH
+ * heartbeat (mtime age `< windowMs`) on `channelId`'s heartbeat store.
+ *
+ * Cross-store companion to active-sessions `isSessionLiveByPrefix` (L1049
+ * slice-2b). A worktree reaper holds only the 8-hex sid PREFIX (the worktree
+ * path encodes the prefix, not the full sid), and cohort activity (`cli.ts
+ * send`) refreshes ONLY the channel store — so a channel-active session reads
+ * dead by the active-sessions gate and its worktree gets reaped. The reapers
+ * OR this in to close that gap.
+ *
+ * Mirrors `isSessionLiveByPrefix` prefix-scan + `ageMs >= 0 && ageMs < windowMs`
+ * but reads the CHANNEL store, UNIONing NEW `heartbeats/` + LEGACY `heartbeat/`
+ * (same as {@link newestHeartbeatMtime}) so a pre-rename peer mid-transition is
+ * not missed. First match short-circuits. Excludes the bump-cron sentinel.
+ *
+ * Boundary: THROWS on an invalid `channelId` (parity with `touchHeartbeat` /
+ * `heartbeatMtime` / `newestHeartbeatMtime`). I/O is fail-soft — a
+ * missing/unreadable dir or a per-file stat error yields not-live, never throws.
+ *
+ * UNSAFE as a SOLE reap-gate: fail-soft-to-`false` biases toward reap, so a
+ * caller treating `false` as "dead" fails CLOSED (data loss) on a transient I/O
+ * error. MUST be OR'd with an independent liveness signal. The age guard is
+ * STRICTER than `isSessionLiveByPrefix` (any future mtime → not-live; it does
+ * NOT route through `defensiveAgeMs`'s ≤5min skew tolerance) — safe under OR, a
+ * bug if ever AND'd.
+ */
+export function isSidPrefixLiveOnChannel(
+  sidPrefix: string,
+  channelId: string,
+  now: number,
+  windowMs: number,
+): boolean {
+  // Parity with the sibling channel-store fns: an invalid channelId THROWS.
+  if (!isValidArtifactId(channelId)) {
+    throw new Error(
+      `[channels] isSidPrefixLiveOnChannel: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
+    );
+  }
+  if (sidPrefix.length === 0) return false;
+  for (const dir of [heartbeatDir(channelId), legacyHeartbeatDir(channelId)]) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue; // missing / unreadable dir → fail-soft (not-live)
+    }
+    for (const name of names) {
+      if (!name.startsWith(sidPrefix)) continue;
+      // Defense-in-depth: the bump sentinel heartbeats without owning a
+      // worktree — never let it false-protect a reap.
+      if (name === COHORT_BUMP_SENTINEL_SID) continue;
+      let mtimeMs: number;
+      try {
+        mtimeMs = statSync(join(dir, name)).mtimeMs;
+      } catch {
+        continue; // per-file stat error → skip (fail-soft)
+      }
+      const ageMs = now - mtimeMs;
+      if (ageMs >= 0 && ageMs < windowMs) return true;
+    }
+  }
+  return false;
+}
+
 // ─── Listing / GC ───────────────────────────────────────────────
 
 /** Enumerate all channels.
