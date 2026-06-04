@@ -46,7 +46,11 @@ import {
 // enumerateWorktree, never at module-eval. A future module-EVAL-time use of any
 // of these in this cycle would hit a TDZ on the partially-initialized exports.
 // Keep all cross-module uses call-time. (Bravo+Charlie #179 integration-lens.)
-import { listChannels } from "../channels/index.ts";
+import {
+  COORDINATION_CHANNEL_ID,
+  isSidPrefixLiveOnChannel,
+  listChannels,
+} from "../channels/index.ts";
 import { listClaims } from "../channels/identity.ts";
 import { listWorktrees } from "../worktrees/index.ts";
 import { readRepoConfig } from "../worktrees/repo-config.ts";
@@ -187,7 +191,8 @@ function failedSignals(
 
 /**
  * GC-eligibility predicate (Pair-B §3). Eligible iff in the oldest liveness
- * bucket AND past the safety-floor AND not deliberately paused.
+ * bucket AND past the safety-floor AND not deliberately paused AND not
+ * channel-live.
  *
  * Each AND-term can only SUBTRACT eligibility, never add, so a later signal can
  * never make reconcile-boot MORE aggressive:
@@ -196,6 +201,14 @@ function failedSignals(
  *     lookup (readSessionPausedAt) computed in enumeratePresence — it protects
  *     ALL of a paused session's candidates across every artifact, not just its
  *     canonical anchor heartbeat (Option X, Delta-concurred).
+ *   - channel-live (L1049 slice-1, the alive-anywhere contract): a session with
+ *     a FRESH coordination-channel heartbeat is alive — cohort `cli.ts send`
+ *     refreshes ONLY the channel store, so a channel-active session's presence
+ *     HB reads stale-on-active-sessions yet is NOT dead. `channelLive` is a
+ *     SESSION-level lookup (isSidPrefixLiveOnChannel) computed in
+ *     enumeratePresence; without it, `--apply` deletes a LIVE peer's presence
+ *     heartbeat — the data-loss class B#2 fixed for the worktree reaper, applied
+ *     here to the presence-GC mutation.
  *   - pid-alive (§10 Q2, reserved): a same-host `kill(pid, 0)` probe — a
  *     paused-but-alive process is never GC'd. Deferred; not this slice.
  */
@@ -203,8 +216,14 @@ function isGcEligible(
   classification: Liveness,
   ageMs: number,
   paused: boolean,
+  channelLive: boolean,
 ): boolean {
-  return classification === "stale" && ageMs > GC_WINDOW_MS && !paused;
+  return (
+    classification === "stale" &&
+    ageMs > GC_WINDOW_MS &&
+    !paused &&
+    !channelLive
+  );
 }
 
 /**
@@ -255,6 +274,17 @@ function enumeratePresence(
       // Compute the session-pause lookup ONCE — it feeds both the gc_eligible
       // AND-term and the operator-visible `paused` field (Cycle-6 item-4).
       const paused = isSessionPaused(h.sessionId);
+      // Channel-liveness consult (L1049 slice-1, alive-anywhere contract): a
+      // FRESH coordination-channel heartbeat means the session is alive even
+      // when its active-sessions HB aged out. reconcile-boot holds the FULL sid
+      // → exact-match (no prefix-collision). Subtract-only: it can only PROTECT
+      // a presence HB from gc_eligible, never make it eligible. Fail-soft.
+      const channelLive = isSidPrefixLiveOnChannel(
+        h.sessionId,
+        COORDINATION_CHANNEL_ID,
+        now,
+        GC_WINDOW_MS,
+      );
       out.push({
         artifact_class: "presence",
         artifact_id: artifactId,
@@ -262,7 +292,7 @@ function enumeratePresence(
         classification,
         // split-brain is a cross-entry property; computed in a second pass.
         split_brain: false,
-        gc_eligible: isGcEligible(classification, h.ageMs, paused),
+        gc_eligible: isGcEligible(classification, h.ageMs, paused, channelLive),
         paused,
         failed_signals: failedSignals(h, currentHost),
         age_ms: h.ageMs,
@@ -516,6 +546,22 @@ function casRecheckFlip(
   if (fresh === null) return "file-gone"; // gone / unparseable / future-mtime
   // Pause is a PROTECTION independent of liveness — check first.
   if (readSessionPausedAt(c.session_id) != null) return "now-paused";
+  // L1049 slice-1 (apply-time half of the alive-anywhere contract): a channel
+  // send in the enumeration→apply gap means the session is alive — cohort sends
+  // refresh ONLY the channel store. enumeratePresence already excludes
+  // channel-live candidates, but one that was channel-stale at enumeration can
+  // go channel-live HERE; flip it out of GC (the data-loss-critical TOCTOU
+  // guard — without it, `--apply` deletes a peer that just came back).
+  if (
+    isSidPrefixLiveOnChannel(
+      c.session_id,
+      COORDINATION_CHANNEL_ID,
+      now,
+      GC_WINDOW_MS,
+    )
+  ) {
+    return "now-live";
+  }
   // A touch since enumeration flips it out of the stale bucket ...
   if (classifyLiveness(fresh) !== "stale") return "now-live";
   // ... or refreshes it back under the GC floor (still stale, but no longer

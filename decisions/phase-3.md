@@ -1883,3 +1883,35 @@ affects:
 **Supersedes / superseded_by:** Realizes the slice-2a-deferred slice-2b; completes the worktree-reaper arc of backlog L1049. KNOWN-REMAINING (distinct follow-ons): reconcile-boot's `--apply` presence-GC carries the SAME active-sessions-only false-dead (deletes a channel-active peer's heartbeat; operator-`--apply`-gated, boot-recommended) — fix = compose the helper at its layer; and the channel heartbeat store has no per-file GC (unbounded growth; mtime-gated so reap-correctness holds).
 
 ---
+
+## 2026-06-04 — Decision: reconcile-boot presence-GC consults the channel heartbeat store (L1049 slice-1)
+
+```yaml
+---
+ts: 2026-06-04T14:34:30Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/reconcile-boot.ts,
+    test/active-sessions/reconcile-boot-channel-consult.test.ts,
+  ]
+---
+```
+
+**Context:** The slice-2b entry (above) flagged reconcile-boot's `--apply` presence-GC as KNOWN-REMAINING — it carries the SAME active-sessions-only false-dead 2b fixed for the worktree reaper: a channel-active session (fresh channel heartbeat, stale active-sessions) is classified `stale` + gc_eligible and its presence heartbeat is DELETED by `--apply` (operator-gated, boot-recommended at `session-reconcile-boot.ts:42`). Cohort A1 decision (full-backlog/roadmap breadth-validated): finish the false-dead liveness-gate class. The cohort-ratified contract (Charlie): an ALIVE-ANYWHERE gate reads every store that proves the specific liveness — here, active-sessions OR the coordination channel.
+
+**Options considered + chosen:**
+
+1. **Consult the channel store at BOTH classification AND apply-time recheck — CHOSEN.** `enumeratePresence` computes `channelLive = isSidPrefixLiveOnChannel(h.sessionId, COORDINATION_CHANNEL_ID, now, GC_WINDOW_MS)` once per candidate; `isGcEligible` gains a 4th SUBTRACT-only AND-term `&& !channelLive` (mirrors the `!paused` term + the "each term only subtracts eligibility" invariant). `casRecheckFlip` (the apply-time TOCTOU half) ALSO consults the channel — a candidate channel-stale at enumeration that goes channel-live in the enumeration→apply gap flips out of GC. reconcile-boot holds the FULL sid → exact-match (no prefix-collision). All uses CALL-TIME (the index↔channels import-cycle caveat, `reconcile-boot.ts:42-48`).
+2. **Classification-only consult — REJECTED.** A mutating gate that consults all stores at classification but single-store at apply-time still data-losses on a session that goes live in the TOCTOU gap. Both decision points must consult — the apply-time-recheck rule for mutating gates (generalized into Charlie's contract).
+3. **Push into active-sessions `classifyLiveness` — REJECTED.** Same circular-edge reason as 2b; the consult composes at the reconcile-boot layer (it already imports channels).
+
+**Reason:** A fresh channel heartbeat is ground-truth liveness (cohort `cli.ts send` refreshes ONLY the channel store); OR-consulting it makes the presence-GC never delete a live peer's heartbeat. Subtract-only (cannot make GC more aggressive). Backward-compatible (no channel store → `channelLive=false` → unchanged; verified by the existing presence-only suites still passing).
+
+**Residual (documented, not closed this slice):** `isSidPrefixLiveOnChannel` fail-softs to not-live, so a DOUBLE channel-read-error (enumeration AND apply-recheck) could still delete a channel-live presence HB — the residual Charlie #3 flagged for 2b, narrowed here by the two-point consult; the deeper close is the owed 2-sweep-confirm. Per Bravo's fail-direction note, a mutating gate ideally fails-toward-not-acting; a tri-state (live/not-live/errored) helper is the follow-on for that.
+
+**Supersedes / superseded_by:** Realizes the KNOWN-REMAINING reconcile-boot follow-on from the slice-2b entry (above) + the backlog Presence-section item. Sibling to Slice 2 (teammate-idle — the mirror: a channel-only gate adds active-sessions) + Charlie's contract-with-qualifier codification. Completes the presence-GC arm of the false-dead liveness-gate class (cohort A1).
+
+---
