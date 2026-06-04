@@ -214,6 +214,22 @@ export const CHANNEL_KINDS = [
   // `parsePollBody`; readers trust the SHAPE, the option set is an
   // author-claim.
   "poll",
+  // Phase 4.5 dashboard limited-mutation slice (N1) 2026-06-04 — `nudge`
+  // directive wake-signal. Posted by the dashboard's Nudge / Check-comms
+  // write actions to wake a hung/idle peer (the substrate equivalent of
+  // Nick's manual "type in the sibling's terminal to wake them"). A NEW
+  // kind, NOT free-form `note`/`question`/`status`: a nudge is a distinct
+  // directive (wake / check-comms), not informational and not expecting an
+  // answer — reusing those would make a dashboard-nudge indistinguishable
+  // from a genuine peer message in every renderer/filter. Free-form body
+  // (no schema); the two modes differ only in body prose ("working?" /
+  // "check your channel — directed from dashboard"). Joins the urgent-kinds
+  // set sibling Monitor wake-filters honor (convention-level; there is no
+  // code urgent-kinds set today). See
+  // docs/conventions/message-kinds-and-verification.md + dashboard spec
+  // v2.1 §17.13. Consumer: claude-conductor-dashboard Phase 4.5
+  // (sendChannelMessage → appendMessage).
+  "nudge",
 ] as const;
 
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];
