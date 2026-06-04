@@ -32,7 +32,8 @@
     "verify:fold": "bun run src/verify/cli.ts --fold",
     "verify:drift": "bun run src/verify/cli.ts --check",
     "verify": "bun run verify:fold && bun test --timeout 30000",
-    "check": "bun run verify"
+    "check": "bun run verify",
+    "ci-local": "./scripts/ci-local.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",
