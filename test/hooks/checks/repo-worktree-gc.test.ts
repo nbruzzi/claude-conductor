@@ -33,6 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check as gcCheck } from "../../../src/hooks/checks/repo-worktree-gc.ts";
+import { readPresenceFailures } from "../../../src/shared/presence-failure-log.ts";
 import { DEFAULT_DISPATCH, type HookInput } from "../../../src/hooks/types.ts";
 
 const SID = "b1c2d3e4-f5a6-4789-9abc-def012345678";
@@ -297,6 +298,89 @@ describe("repo-worktree-gc hook", () => {
 
     await gcCheck(makeInput());
     // 90-min-old heartbeat is within 2hr threshold → preserved.
+    expect(existsSync(worktreePath)).toBe(true);
+  });
+
+  /* ─── Channel-store liveness consult (L1049 slice-2b) ───────────── */
+
+  function plantChannelHeartbeat(fullSid: string, ageSeconds: number): void {
+    const dir = join(
+      tmpHome,
+      ".claude",
+      "channels",
+      "coordination",
+      "heartbeats",
+    );
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, fullSid);
+    writeFileSync(p, String(Date.now()));
+    const mtime = Date.now() / 1000 - ageSeconds;
+    utimesSync(p, mtime, mtime);
+  }
+
+  it("REGRESSION (3/3 live-reap): fresh CHANNEL heartbeat + no active-sessions → preserved + channel breadcrumb", async () => {
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const repo = join(tmpHome, "repo-a");
+    initRepo(repo);
+    const sidPrefix = "c0ffee00";
+    const fullSid = "c0ffee00-1111-4567-8abc-def012345678";
+    const worktreePath = addWorktree(repo, sidPrefix);
+    plantChannelHeartbeat(fullSid, 0); // fresh channel HB; no active-sessions HB
+
+    const configPath = join(tmpHome, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        repos: [{ name: "repo-a", canonical: repo, auto: true, gc: true }],
+      }),
+    );
+    process.env[CONFIG_ENV] = configPath;
+
+    await gcCheck(makeInput());
+    expect(existsSync(worktreePath)).toBe(true); // preserved by the channel consult
+
+    const fallback = readPresenceFailures().find(
+      (e) => e.kind === "worktree-gc-liveness-fallback-fired",
+    );
+    expect(fallback).toBeDefined();
+    expect(fallback?.detail).toContain("coordination channel");
+  });
+
+  it("M4 window FLOOR: short per-repo window (15min) + channel HB aged 30min → preserved (max(repo,60min) floor)", async () => {
+    // The channel store is SPARSE (send-driven). A short per-repo
+    // cleanupAfterIdleHours must NOT shorten the channel branch below the 60-min
+    // send-cadence floor — else a channel-only-fresh session (last send 30min
+    // ago, the exact 3/3 victim class) reads false-dead under a 15-min window.
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const repo = join(tmpHome, "repo-a");
+    initRepo(repo);
+    const sidPrefix = "f100f100";
+    const fullSid = "f100f100-2222-4567-8abc-def012345678";
+    const worktreePath = addWorktree(repo, sidPrefix);
+    plantChannelHeartbeat(fullSid, 30 * 60); // 30min old — > 15min repo, < 60min floor
+
+    const configPath = join(tmpHome, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        repos: [
+          {
+            name: "repo-a",
+            canonical: repo,
+            auto: true,
+            gc: true,
+            cleanupAfterIdleHours: 0.25, // 15min per-repo window
+          },
+        ],
+      }),
+    );
+    process.env[CONFIG_ENV] = configPath;
+
+    await gcCheck(makeInput());
+    // Without the floor (channel window = 15min) the 30min HB would be stale →
+    // reaped. The max(15min, 60min) = 60min floor keeps it fresh → preserved.
     expect(existsSync(worktreePath)).toBe(true);
   });
 });

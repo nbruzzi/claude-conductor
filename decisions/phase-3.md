@@ -1846,3 +1846,40 @@ affects:
 **Reason:** The channel now records the provenance of every message body (file-source + basename, or stdin) — the audit value `--body-file` lacked — additively, at zero backwards-compat cost.
 
 ---
+
+## 2026-06-04 — Decision: worktree reapers consult the channel heartbeat store (L1049 slice-2b)
+
+```yaml
+---
+ts: 2026-06-04T13:21:35Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/channels/index.ts,
+    src/channels/api.ts,
+    src/hooks/checks/dotfiles-worktree-gc.ts,
+    src/hooks/checks/repo-worktree-gc.ts,
+    src/active-sessions/index.ts,
+  ]
+---
+```
+
+**Context:** The slice-2a entry (above) deferred slice-2b — the liveness-signal fix for the verified 3/3 live-worktree-reap. Root cause (primary-source 2026-06-03): a touch-vs-CHECK heartbeat-store mismatch — both worktree reapers gate on `isSessionLiveByPrefix`, which reads ONLY the active-sessions store, but cohort activity (`cli.ts send`) refreshes ONLY the channel store, so a channel-active session reads dead and its worktree is reaped. Gated on #3 completion (now met: #192 + #193) + a cohort subagent-distance design-lens (now run: Alpha Reliability+Architecture + Charlie Architecture+RE + Delta self-check, all primary-source-verified).
+
+**Options considered + chosen:**
+
+1. **Reaper-layer channel consult — CHOSEN.** New `channels/index.ts` helper `isSidPrefixLiveOnChannel` (prefix-scan + dual-dir `heartbeats/` + legacy `heartbeat/` union + mtime-window); both reapers OR it with `isSessionLiveByPrefix`. The reapers already import active-sessions and can add a channels import with no layering violation.
+2. **Push the channel consult into `isSessionLiveByPrefix` (active-sessions) — REJECTED.** `channels/*` imports `active-sessions` (e.g. `isValidArtifactId`), so active-sessions importing channels is a CIRCULAR dependency. The consult must compose at the importing (reaper) layer.
+3. **Wake-driven refresh of the active-sessions anchor on channel-send — REJECTED.** A behavior change that can regress; OR-ing a second read store is additive and cannot regress existing behavior.
+
+**Key folds (design-lens):** helper THROWS on invalid channelId (sibling parity) + I/O fail-soft + JSDoc "unsafe as a sole reap-gate" (M1); dual-dir union or a pre-rename peer mid-transition false-deads (F-A); repo-site channel window = `max(perRepoWindow, GC_WINDOW_MS)` 60-min send-cadence floor, because the channel store is SPARSE and a short `cleanupAfterIdleHours` would else false-dead a channel-only-fresh session (M4); future-mtime → not-live, stricter than active-sessions, safe under OR (m6); channel-skip breadcrumb at the previously-silent repo site (m7); bump-sentinel excluded (m9); the "2b" tag collision (reconcile-boot increment vs this slice) disambiguated (m8); the false "anchor refreshes at channel-send" docstring corrected (doc-nit).
+
+**Invariant:** the consult is OR — adds protection, never removes (it sits UPSTREAM of the 2a dirty-tree guard; a future AND-combine is pinned against by a test).
+
+**Reason:** A fresh heartbeat in EITHER store is ground-truth liveness; OR-consulting the channel store closes the verified false-dead additively (no pid, no behavior change, cannot regress a correct reap). The window floor matches the channel store's sparse send cadence.
+
+**Supersedes / superseded_by:** Realizes the slice-2a-deferred slice-2b; completes the worktree-reaper arc of backlog L1049. KNOWN-REMAINING (distinct follow-ons): reconcile-boot's `--apply` presence-GC carries the SAME active-sessions-only false-dead (deletes a channel-active peer's heartbeat; operator-`--apply`-gated, boot-recommended) — fix = compose the helper at its layer; and the channel heartbeat store has no per-file GC (unbounded growth; mtime-gated so reap-correctness holds).
+
+---

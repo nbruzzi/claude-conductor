@@ -304,6 +304,107 @@ describe("dotfiles-worktree-gc hook", () => {
     expect(existsSync(wtPath)).toBe(false);
   });
 
+  /* ─── Channel-store liveness consult (L1049 slice-2b) ───────────── */
+
+  // Plant a coordination-channel heartbeat for `fullSid`, aged `ageSeconds`.
+  // The channel store resolves under $HOME/.claude/channels (HOME is sandboxed,
+  // CLAUDE_CONDUCTOR_CHANNELS_DIR unset). Cohort `cli.ts send` refreshes ONLY
+  // this store — the cross-store gap 2b closes.
+  function plantChannelHeartbeat(fullSid: string, ageSeconds: number): void {
+    const dir = join(
+      tmpHome,
+      ".claude",
+      "channels",
+      "coordination",
+      "heartbeats",
+    );
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, fullSid);
+    writeFileSync(p, String(Date.now()));
+    const mtime = Date.now() / 1000 - ageSeconds;
+    utimesSync(p, mtime, mtime);
+  }
+
+  it("REGRESSION (3/3 live-reap): fresh CHANNEL heartbeat + NO active-sessions heartbeat → NOT reaped + channel breadcrumb", async () => {
+    // The verified 2026-06-03 bug: a cohort session channel-sends (refreshing
+    // ONLY the channel store) while its active-sessions anchor ages out. The
+    // active-sessions-only gate read it dead → reaped a LIVE worktree.
+    const sidPrefix = "c11dca11";
+    const fullSid = "c11dca11-1111-4111-8111-000000000000";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    plantChannelHeartbeat(fullSid, 0); // fresh channel HB; no active-sessions HB
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(true); // preserved by the channel consult
+
+    const events = readPresenceFailures();
+    const fallback = events.find(
+      (e) => e.kind === "worktree-gc-liveness-fallback-fired",
+    );
+    expect(fallback).toBeDefined();
+    expect(fallback?.detail).toContain("coordination channel");
+    expect(events.find((e) => e.kind === "worktree-gc-reaped")).toBeUndefined();
+  });
+
+  it("OR-invariant (M2/T4): active-sessions FRESH + channel STALE → still protected (OR, not AND)", async () => {
+    // Channel staleness must not OVERRIDE active-sessions liveness — the consult
+    // is OR (adds protection), never AND. Guards a future AND-refactor.
+    const sidPrefix = "a55a55aa";
+    const fullSid = "a55a55aa-2222-4111-8111-000000000000";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    mkdirSync(join(tmpHome, ".claude"), { recursive: true });
+    touchHeartbeat({
+      artifactId: artifactIdFromPath(join(tmpHome, ".claude")),
+      sessionId: fullSid,
+      artifactPath: join(tmpHome, ".claude"),
+      now: Date.now(),
+    });
+    plantChannelHeartbeat(fullSid, 7200); // channel stale (2h > 60min floor)
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(true); // active-sessions liveness still protects
+  });
+
+  it("M3 bound (T3): STALE channel heartbeat past window + no active-sessions → correctly reaped", async () => {
+    // A dead session's channel heartbeat lingers (the channel store has no
+    // per-file GC), but it is mtime-gated: once past the window it does NOT
+    // protect the worktree.
+    const sidPrefix = "dead00de";
+    const fullSid = "dead00de-3333-4111-8111-000000000000";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    plantChannelHeartbeat(fullSid, 7200); // 2h-old (> 60min) → not live
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(false); // stale channel doesn't protect → reaped
+    expect(
+      readPresenceFailures().find((e) => e.kind === "worktree-gc-reaped"),
+    ).toBeDefined();
+  });
+
+  it("M2 ordering (T1): dirty worktree + stale channel + no active-sessions → WIP guard still protects (consult is upstream, OR-only)", async () => {
+    // The channel consult sits UPSTREAM of the 2a dirty-tree guard. A dirty
+    // worktree with both stores stale falls through the liveness gate to the WIP
+    // guard, which preserves it — the consult never bypasses it.
+    const sidPrefix = "d1d1d100";
+    const fullSid = "d1d1d100-9999-4111-8111-000000000000";
+    const wtPath = provisionRawWorktree(sidPrefix);
+    writeFileSync(join(wtPath, "wip-uncommitted.ts"), "// in-flight\n");
+    plantChannelHeartbeat(fullSid, 7200); // stale channel — does not protect
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(wtPath)).toBe(true); // WIP guard preserved it
+    const guard = readPresenceFailures().find(
+      (e) =>
+        e.kind === "worktree-cleanup-failed" &&
+        e.detail.includes("dirty working tree"),
+    );
+    expect(guard).toBeDefined();
+  });
+
   /* ─── Dirty-tree --force data-loss guard (L1049 slice 2a) ───────── */
 
   it("dirty worktree (uncommitted WIP) → NOT reaped + guard breadcrumb (--force would destroy WIP)", async () => {
