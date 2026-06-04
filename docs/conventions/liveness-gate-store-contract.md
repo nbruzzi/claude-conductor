@@ -90,17 +90,29 @@ last-seen-cursor / LATEST-symlink sweeps (do not gate on session liveness).
 ## Enforcement
 
 `scripts/check-liveness-gate-store-contract.sh` (a `check-*` convention check —
-CI + pre-commit, error code `LGC-001` in `error-code-scheme.md`) scans `src/`
-(non-test) for callers of `isSessionLiveByPrefix` / `isSidPrefixLiveOnChannel`:
-a class-A gate must consult BOTH; a single-store caller is flagged unless it is
-ALLOW-LISTED (a documented class-B gate — the qualifier's escape-hatch). This
-catches a NEW alive-anywhere gate that ships single-store. The check is NOT
-enforce-by-construction (a combined primitive can be bypassed; a source scan
-catches the bypass).
+CI + pre-commit; error code `LGC-001` in `error-code-scheme.md`) is an
+**allow-list-gated tripwire**: it scans `src/` (non-test) for callers of the
+liveness prefix-helpers (`isSessionLiveByPrefix` / `isSidPrefixLiveOnChannel`)
+and flags any caller NOT on the `ALLOWLIST` (the classified, store-contract-
+verified gates) with `LGC-001` — forcing a NEW gate to be classified before it
+ships. NOT enforce-by-construction (a combined primitive could be bypassed; a
+source scan catches the bypass).
 
-Sequencing: this check lands AFTER the Slice 1 + Slice 2 merges — until both
-reconcile-boot and teammate-idle consult both stores, the check would (correctly)
-flag them as in-progress single-store gates.
+**Why a tripwire, not a "consults-both-stores" verifier.** The alive-anywhere
+gates read the stores via DIFFERENT primitives, so "calls both helpers" is the
+wrong test: the worktree reapers call both prefix-helpers, but reconcile-boot
+reads active-sessions via its own `classifyLiveness` + the channel via
+`isSidPrefixLiveOnChannel`, and teammate-idle reads active-sessions via
+`isSessionLiveByPrefix` + the channel via its `heartbeat_mtime_ms` idle-read. A
+grep cannot verify "consults both stores by any mechanism" (the channel read
+alone has 3+ forms), so the `ALLOWLIST` IS the human-verified both-stores gate,
+and the tripwire makes adding a NEW un-classified gate impossible-to-do-silently.
+
+**Honest scope.** The tripwire catches the IDIOMATIC prefix-helper probes — the
+common new-gate shape. A gate that reads a store only via a raw primitive
+(`heartbeat_mtime_ms` / `scanHeartbeats` / `newestHeartbeatMtime`) and never a
+prefix-helper is not auto-caught; the written contract above + the PR-boundary
+store-contract review cover that residual.
 
 ## Known-remaining
 

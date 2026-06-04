@@ -60,6 +60,9 @@ jobs:
       - name: Check decision log
         run: bun run check-decision-log
 
+      - name: Check liveness-gate store contract
+        run: bun run check-liveness-gate-store-contract
+
       - name: Test
         # Run the suite once WITH coverage and tee the output so the
         # "Check coverage floor" gate below reads it via --from-file instead
