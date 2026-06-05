@@ -2234,3 +2234,50 @@ affects:
 — C1 S4-slim authored by Delta; design Q + OBSERVE-NOT-INFER fold with Alpha (captain); inline Nick-lens audit + Alpha PR-boundary merge-gate.
 
 ---
+
+```yaml
+---
+ts: 2026-06-05T21:30:39Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/channels/index.ts,
+    src/channels/identity.ts,
+    src/channels/cli.ts,
+    test/channels/identity-race.test.ts,
+    test/channels/cli.test.ts,
+  ]
+---
+```
+
+**Context:** L1 D3 — coordination-primitive fixes (C2 cycle), conductor half: (b) close the documented `claimIdentityNamed`<->`claimIdentity` pre-lock `linkSync` race; (c) bind the discoverable `release` verb + fold stale `release-self` strings. (The third D3 item — the Monitor self-filter helper — is dotfiles-only, a separate PR.) Primary-source verification reshaped the lane: 2 of 3 board premises were stale (the §5 Monitor recipe was ALREADY the jq `from`-field form; `release-self` ALREADY shipped CAS-guarded) — Alpha confirmed + owns the reshape.
+
+**(b) Race-fix — options considered:**
+
+1. **Named-side sentinel-reverify-under-lock in `claimNamedIdentityWithLock` (CHOSEN).** Before mutating, re-read the on-disk sentinel's `session_id` vs the metadata snapshot (`holderSessionId`). Divergence -> `{kind:"raced"}` (yield, mutate nothing) -> caller throws `IdentityRacedError` (CLI exit 8 RACE_LOST). Verified non-null holder -> `renameSync` (provably stable under the lock: no release can unlink it, no vanilla `linkSync` can replace a present sentinel). Null holder (released in-window) -> create-only `linkSync` so a racing vanilla create is caught via EEXIST -> raced.
+2. **Vanilla-side `commitIdentityClaim` reverify (the `it.todo`'s documented plan).** Re-verify the sentinel in vanilla `claimIdentity`'s post-`linkSync` commit + abort-to-next-letter on mismatch. Equally complete BUT touches the HOT bare-join commit path (every join re-reads the sentinel) + changes pool-walk exhaustion semantics.
+
+**Chosen (b):** Option 1 — named-side reverify.
+
+**Reason (b):** Both close the divergence (named proceeds ONLY when sentinel==metadata and sets both atomically under the lock; any vanilla arriving after sees a present sentinel -> EEXIST -> skips, never commits the letter). Option 1 is NARROWER — only the cold operator-`--force` takeover path; the hot bare-join path (the cohort's actual claim flow) is untouched, no new exhaustion edge. **DEVIATION logged:** this departs from the `it.todo`'s vanilla-side locus; the `it.todo` is converted to a passing integration test whose description names the named-side fix. The cohort runs bare-join (no `--force`), so this is defense-in-depth on a cold path — narrowness > documented-locus match.
+
+**(c) Release-verb — options considered:**
+
+1. **Thin `release` alias (switch fall-through) + fold stale strings (CHOSEN).** `case "release":` falls through to the canonical `case "release-self":` body; add `VERB_HELP["release"]` + the TOP_LEVEL_HELP listing; fold the 3 stale `identity.ts` strings (which still called `release-self` "deferred / a backlog ride-along") to point at the working verb.
+2. **Standalone `release` wrapping `releaseIdentity` (the board spec).** Rejected — DUPLICATES `release-self` and REGRESSES its CAS-guard (re-introduces the resolve->release race that `release-self` already closes via exit 7 RACE_RELEASED).
+
+**Chosen (c):** Option 1 (Alpha-confirmed: `release` is the discoverable name; `release-self` stays canonical).
+
+**Reason (c):** Fall-through is the thinnest alias — one shared body, zero logic duplication, no CAS-guard regression. Cross-edge: dotfiles `src/channels/cli.ts` is a THIN re-export of `runChannelsCli` (verified at primary source), so the verb flows through the shim automatically — NO shim-mirror needed (the #193/P1 cross-edge concern dissolves).
+
+**Verification:** typecheck + lint clean. (b) integration (`claimIdentityNamed` -> `IdentityRacedError` + no-clobber) + 5 unit branch tests (match / diverged / unheld / corrupt-orphan / null-create-EEXIST) + a concurrent vanilla-vs-named coherence fuzz (RE-2) + identity.test.ts 41 pass + N=20 takeover hot-path 2 pass (no regression). (c) paired alias test + exit-8 `RACE_LOST` CLI test (RE-4) + full cli.test.ts pass + `release --help` smoke. `bun run ci-local` all gates PASS; CI run id + conclusion appended on the PR.
+
+**Distance-audit (Reliability Engineer subagent, pre-merge):** RE-1 — the only critical ("the named-side reverify doesn't FULLY close it; vanilla `commitIdentityClaim` (CAS-free) can land a delayed metadata overwrite after the takeover") — REFUTED at primary source: N proceeds (renameSync / null-branch linkSync) ONLY when `sentinelHolder === holderSessionId`, and `metadata[L]=S` exists IFF S already ran `commitIdentityClaim`, so any vanilla that won the sentinel committed BEFORE N can match-and-proceed — there is no delayed-commit-after-takeover path (Alpha's gate review independently verified the load-bearing lock-ordering: `removeIdentityClaim` is `withMetadataLock`-gated + release is metadata-first, so a concurrent release cannot unlink the sentinel during the takeover lock). Folded the 3 legit findings: RE-2 (concurrent coherence fuzz), RE-3 (existsSync-split in the null-branch so `--force` recovers a corrupt/torn ORPHAN sentinel — restoring the pre-reverify recovery — but never a valid claim, which parses and yields `raced`), RE-4 (exit-8 `RACE_LOST` CLI test). 3-lens convergence (Alpha gate + Bravo independent shadow + this RE distance-audit) ratified (b); Bravo's shadow added explicit coverage for the SECOND "racing vanilla caught" route — the null-branch create-only `linkSync` EEXIST -> raced (driven deterministically via a broken-symlink TOCTOU).
+
+**Supersedes / superseded_by:** (b) closes the Plan v1.3 §residual-race `it.todo` (converted to a real test). No architectural supersede.
+
+— L1 D3 (b)+(c) authored by Charlie; PR to Alpha merge-gate (C2 cycle).
+
+---

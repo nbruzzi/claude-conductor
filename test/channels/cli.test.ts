@@ -36,7 +36,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { claimIdentity } from "../../src/channels/identity.ts";
+import {
+  claimIdentity,
+  identitySentinelPath,
+} from "../../src/channels/identity.ts";
 import {
   createChannel,
   readMetadata,
@@ -448,6 +451,86 @@ describe("channels CLI — Slice 5 identity verbs (subprocess)", () => {
     expect(selfReleased?.body).toContain(`identity Alpha`);
     expect(selfReleased?.body).toContain(`session ${TEST_SESSION_ID}`);
     expect(selfReleased?.body).toContain(`released by self`);
+  });
+
+  it("release: alias dispatches to the same release-self logic (drops identity + self-released status)", async () => {
+    // D3 (c): `release` is a thin alias (switch fall-through) for the
+    // canonical `release-self`. Assert it behaves identically end-to-end.
+    await createChannel({
+      channelId: "c-cli-rel-alias",
+      handoffId: "c-cli-rel-alias",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-cli-rel-alias",
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const result = runSlice5(["release", "c-cli-rel-alias"]);
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      kind: string;
+      identity: string;
+      previous_session_id: string;
+    };
+    expect(parsed.kind).toBe("released");
+    expect(parsed.identity).toBe("Alpha");
+    expect(parsed.previous_session_id).toBe(TEST_SESSION_ID);
+
+    // Identity + sentinel gone, exactly as release-self.
+    expect(
+      readMetadata("c-cli-rel-alias").identities?.["Alpha"],
+    ).toBeUndefined();
+    expect(
+      existsSync(join(slice5Dir, "c-cli-rel-alias", "identities", "Alpha")),
+    ).toBe(false);
+
+    // Same self-released audit-trail as the canonical verb.
+    const messageLines = readFileSync(
+      join(slice5Dir, "c-cli-rel-alias", "messages.jsonl"),
+      "utf-8",
+    )
+      .split("\n")
+      .filter((l: string) => l.length > 0);
+    const selfReleased = messageLines
+      .map((l: string) => JSON.parse(l) as { kind: string; body: string })
+      .find(
+        (m: { kind: string; body: string }) =>
+          m.kind === "status" && m.body.startsWith("self-released:"),
+      );
+    expect(selfReleased).toBeDefined();
+    expect(selfReleased?.body).toContain("identity Alpha");
+  });
+
+  it("join --as --force into a raced sentinel exits 8 RACE_LOST (IdentityRacedError CLI mapping)", async () => {
+    // D3 (b) RE-4: end-to-end coverage of the IdentityRacedError -> exit 8
+    // RACE_LOST mapping in the join catch. Construct the divergent mid-race
+    // state (sentinel reclaimed out from under the metadata snapshot), then
+    // drive `join --as Alpha --force` from a THIRD session.
+    await createChannel({
+      channelId: "c-cli-raced",
+      handoffId: "c-cli-raced",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-cli-raced",
+      sessionId: TEST_SESSION_ID,
+    }); // TEST holds Alpha
+    // Simulate a lock-free vanilla reclaim: sentinel now PEER, metadata still TEST.
+    writeFileSync(
+      identitySentinelPath("c-cli-raced", "Alpha"),
+      `${JSON.stringify({ session_id: PEER_SESSION_ID, role: "queue", joined_at: new Date().toISOString() })}\n`,
+    );
+    const raceSession = "00000000-0000-4000-8000-000000000003";
+    const result = runSlice5(
+      ["join", "c-cli-raced", "--as", "Alpha", "--force", "--json"],
+      raceSession,
+    );
+    expect(result.exitCode).toBe(8);
+    const firstLine = result.stderr.trim().split("\n")[0] ?? "";
+    const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+    expect(parsed["category"]).toBe("RACE_LOST");
+    expect(parsed["code"]).toBe(8);
   });
 
   it("release-self: exit 5 NOT_HELD when this session has no claim on the channel", async () => {

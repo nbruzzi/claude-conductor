@@ -690,7 +690,7 @@ export class IdentityActiveError extends Error {
  * Thrown when `claimIdentityNamed` is called by a session that already
  * holds a DIFFERENT NATO letter on the same channel. Per Decision §11(b):
  * silent atomic-move would obscure the operator's prior claim; reject and
- * point at the deferred `release-self` verb so the operator's intent is
+ * point at the `release` verb (alias of `release-self`) so the operator's intent is
  * explicit. Same-letter rejoin (per §11(a)) is idempotent and does NOT
  * throw.
  */
@@ -706,7 +706,7 @@ export class IdentityAlreadyHeldBySelfError extends Error {
     super(
       `[join] this session already holds identity '${currentIdentity}' on channel '${channelId}'; ` +
         `cannot claim '${requestedIdentity}' without releasing first. ` +
-        `(release-self verb is a backlog ride-along; for now, run 'close-peer ${channelId} --peer ${currentIdentity} --force' from a peer session OR re-spawn.)`,
+        `Run 'channels release ${channelId}' to drop '${currentIdentity}', then re-run your join (or take over from a peer session via 'close-peer ${channelId} --peer ${currentIdentity} --force').`,
     );
     this.name = "IdentityAlreadyHeldBySelfError";
     this.channelId = channelId;
@@ -743,6 +743,39 @@ export class IdentityCasMismatchError extends Error {
     this.identity = identity;
     this.expected = expected;
     this.actual = actual;
+  }
+}
+
+/**
+ * Thrown when `claimIdentityNamed --force` detects, under the metadata lock,
+ * that the on-disk sentinel diverged from the metadata snapshot — a lock-free
+ * vanilla `claimIdentity` reclaimed the letter inside the takeover window. The
+ * takeover YIELDS (does not clobber the fresh claim) rather than corrupt peer
+ * state; the operator re-runs. Closes the residual race formerly documented as
+ * an acceptable operator-only `--force` defer (Slice-7 `it.todo`). CLI verb
+ * maps to exit 8 RACE_LOST — distinct from `cas-mismatch`'s exit 7.
+ */
+export class IdentityRacedError extends Error {
+  readonly channelId: string;
+  readonly identity: NatoIdentity;
+  readonly expectedHolder: string | null;
+  readonly actualHolder: string | null;
+  constructor(
+    channelId: string,
+    identity: NatoIdentity,
+    expectedHolder: string | null,
+    actualHolder: string | null,
+  ) {
+    super(
+      `[join] identity '${identity}' on channel '${channelId}' was concurrently reclaimed during ` +
+        `takeover (expected on-disk holder '${expectedHolder ?? "(none)"}', found '${actualHolder ?? "(none)"}'). ` +
+        `Re-run 'join ${channelId} --as ${identity} --force' to retry, or 'meta ${channelId}' to inspect the current holder.`,
+    );
+    this.name = "IdentityRacedError";
+    this.channelId = channelId;
+    this.identity = identity;
+    this.expectedHolder = expectedHolder;
+    this.actualHolder = actualHolder;
   }
 }
 
@@ -869,7 +902,7 @@ export async function claimIdentityNamed(args: {
       };
     }
     // Different-letter rejection per §11(b). Operator must explicitly
-    // release the current claim (deferred release-self verb) before
+    // release the current claim (the `release` / `release-self` verb) before
     // claiming a different letter; silent atomic-move would obscure the
     // prior claim and confuse downstream tooling.
     throw new IdentityAlreadyHeldBySelfError(
@@ -905,7 +938,7 @@ export async function claimIdentityNamed(args: {
     mode: 0o600,
   });
 
-  let renameSyncConsumedTmpPath = false;
+  let tmpPathConsumed = false;
   try {
     try {
       linkSync(tmpPath, sentinelPath);
@@ -970,10 +1003,18 @@ export async function claimIdentityNamed(args: {
         result.ageMs,
       );
     }
-    // result.kind === "claimed" — takeover succeeded under the lock.
-    // renameSync moved tmpPath into sentinelPath; finally cleanup will
-    // ENOENT-tolerantly skip.
-    renameSyncConsumedTmpPath = true;
+    if (result.kind === "raced") {
+      throw new IdentityRacedError(
+        channelId,
+        identity,
+        result.expectedHolder,
+        result.actualHolder,
+      );
+    }
+    // result.kind === "claimed" — takeover succeeded under the lock. The
+    // takeover consumed tmpPath (renameSync moved it, or the create-only
+    // linkSync branch hardlinked + unlinked it), so the finally cleanup skips.
+    tmpPathConsumed = true;
 
     // Post-lock audit-trail (Decision §3 RE-3 closure). Best-effort — on
     // appendMessage failure, write appendPresenceFailure breadcrumb so the
@@ -1006,7 +1047,7 @@ export async function claimIdentityNamed(args: {
       takeover_displaced_session_id: result.displacedSessionId,
     };
   } finally {
-    if (!renameSyncConsumedTmpPath) {
+    if (!tmpPathConsumed) {
       try {
         unlinkSync(tmpPath);
       } catch {
