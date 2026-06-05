@@ -39,6 +39,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -723,6 +724,51 @@ describe("claimNamedIdentityWithLock — sentinel-reverify-under-lock branches (
       nSession,
     );
     expect(existsSync(tmpPath)).toBe(false); // renameSync consumed tmpPath
+  });
+
+  it("null-branch create-only EEXIST -> raced (racing-vanilla-created sentinel caught; Bravo shadow add)", async () => {
+    // The SECOND "racing vanilla caught" route (the first is the diverged
+    // branch). In the null-branch, a vanilla `linkSync` that creates the
+    // sentinel between our existsSync check and our create-only linkSync is
+    // caught via EEXIST -> raced. Reproduce that TOCTOU deterministically with a
+    // BROKEN SYMLINK: existsSync() follows it (target missing) -> false, so the
+    // reverify takes the create-only linkSync route; but linkSync() sees the dir
+    // entry -> EEXIST -> raced. readSentinelSessionId also reads through to
+    // ENOENT -> null, so holderSessionId === sentinelHolder === null (null-branch).
+    const channelId = "c-revlock-eexist";
+    const letter = "Echo";
+    const nSession = "sess-eexist-n";
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: "sess-eexist-init",
+    });
+    const sentinelPath = identitySentinelPath(channelId, letter);
+    const tmpPath = writeTmpClaim(sentinelPath, nSession); // mkdirs the dir
+    symlinkSync(
+      join(dirname(sentinelPath), ".nonexistent-eexist-target"),
+      sentinelPath,
+    );
+
+    const result = await claimNamedIdentityWithLock({
+      channelId,
+      identity: letter,
+      newClaim: {
+        session_id: nSession,
+        role: "queue",
+        joined_at: new Date().toISOString(),
+      },
+      tmpPath,
+      sentinelPath,
+      force: true,
+      fromSession: undefined,
+    });
+
+    // The racing create is DETECTED, not clobbered: raced, metadata untouched.
+    expect(result.kind).toBe("raced");
+    expect(readMetadata(channelId).identities?.[letter]).toBeUndefined();
+    expect(existsSync(tmpPath)).toBe(true); // raced left tmpPath for the caller
+    rmSync(tmpPath, { force: true });
   });
 });
 
