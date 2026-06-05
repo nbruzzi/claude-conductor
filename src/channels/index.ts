@@ -28,6 +28,7 @@ import {
   constants as fsConstants,
   createReadStream,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -51,6 +52,7 @@ import { getWallClockNow } from "../shared/clock.ts";
 import { extractValidSessionId } from "../hooks/session-id.ts";
 import { channelsDir } from "../shared/paths.ts";
 import { appendPresenceFailure } from "../shared/presence-failure-log.ts";
+import { validateIdentityClaim } from "./claim.ts";
 
 /** Conservative atomic-append threshold. POSIX guarantees PIPE_BUF (512 on
  *  macOS); Linux regular-file O_APPEND is typically safe up to 4096. We
@@ -1253,6 +1255,25 @@ export async function closeStalePeerIdentity(args: {
 }
 
 /**
+ * Read the `session_id` recorded in an on-disk identity sentinel, or `null`
+ * if the sentinel is absent, unreadable, or shape-invalid. Used by
+ * `claimNamedIdentityWithLock`'s sentinel-reverify-under-lock guard to detect
+ * a lock-free vanilla `claimIdentity` reclaim before an unconditional
+ * `renameSync` clobbers it. Treating "present-but-corrupt" the same as
+ * "absent" (null) is conservative: the takeover yields rather than overwrites.
+ */
+function readSentinelSessionId(sentinelPath: string): string | null {
+  let raw: string;
+  try {
+    raw = readFileSync(sentinelPath, "utf-8");
+  } catch {
+    return null;
+  }
+  const claim = validateIdentityClaim(raw);
+  return claim === null ? null : claim.session_id;
+}
+
+/**
  * Atomically commit a named-identity takeover under `withMetadataLock`.
  * Sibling-of `closeStalePeerIdentity` for the P2 `claim --as <Identity>`
  * flow per plan giggly-bouncing-spark.md Decisions §3 + §4 + §9.
@@ -1270,9 +1291,13 @@ export async function closeStalePeerIdentity(args: {
  * inside the lock to bound the racing window with concurrent metadata
  * mutators (`commitIdentityClaim` / `removeIdentityClaim` / `setIdentityRole`
  * / `closeStalePeerIdentity`). The residual race with vanilla
- * `claimIdentity:240-259`'s pre-lock linkSync is documented in plan §3
- * acceptance section as bounded operator-only (`--force` + concurrent vanilla
- * join). Mitigation deferred to follow-up cycle.
+ * `claimIdentity`'s pre-lock linkSync (formerly an acceptable operator-only
+ * `--force` defer) is now CLOSED by the sentinel-reverify-under-lock guard
+ * below: before mutating, the on-disk sentinel is re-read and compared to the
+ * metadata snapshot, and a divergence (lock-free vanilla reclaim) yields
+ * `{kind: "raced"}` instead of clobbering. The unheld-letter sub-case uses
+ * create-only `linkSync` (EEXIST -> raced) so a racing vanilla create is
+ * detected, not overwritten.
  *
  * **Discriminated result:**
  *   - `{kind: "claimed", displacedSessionId}` — takeover succeeded; sentinel
@@ -1284,6 +1309,10 @@ export async function closeStalePeerIdentity(args: {
  *   - `{kind: "cas-mismatch", expected, actual}` — refused: `--from-session`
  *     was passed but did not match the holder's session_id. Caller throws
  *     `IdentityCasMismatchError`.
+ *   - `{kind: "raced", expectedHolder, actualHolder}` — refused: the on-disk
+ *     sentinel diverged from the metadata snapshot (a lock-free vanilla
+ *     `claimIdentity` reclaim landed in our window), so the takeover yielded
+ *     rather than clobber it. Caller throws `IdentityRacedError`.
  *
  * `tmpPath` MUST exist on the same filesystem as `sentinelPath` (renameSync
  * requires same-fs); the caller's `mkdirSync(identitiesDir, {recursive:true})`
@@ -1301,6 +1330,11 @@ export async function claimNamedIdentityWithLock(args: {
   | { kind: "claimed"; displacedSessionId: string | null }
   | { kind: "active"; holderSessionId: string; ageMs: number | null }
   | { kind: "cas-mismatch"; expected: string; actual: string | null }
+  | {
+      kind: "raced";
+      expectedHolder: string | null;
+      actualHolder: string | null;
+    }
 > {
   const { channelId, identity, newClaim, tmpPath, sentinelPath, force } = args;
   if (!isValidArtifactId(channelId)) {
@@ -1344,12 +1378,62 @@ export async function claimNamedIdentityWithLock(args: {
       } as const;
     }
 
-    // Force=true: atomic takeover. renameSync replaces sentinelPath with
-    // tmpPath in one syscall — there is NO between-state where sentinel is
-    // absent or doubly-claimed. (POSIX rename(2) atomicity guarantee on
-    // same-filesystem; same-fs is guaranteed by caller's mkdirSync +
-    // writeFileSync of tmpPath in identitiesDir.)
-    renameSync(tmpPath, sentinelPath);
+    // Force=true: atomic takeover, guarded by sentinel-reverify-under-lock.
+    //
+    // The metadata snapshot (`holderSessionId`, read above in this lock cycle)
+    // is our reference for whom we believe we are displacing. But the on-disk
+    // sentinel is the canonical claim marker, and vanilla `claimIdentity`'s
+    // sentinel `linkSync` runs OUTSIDE this lock — so a vanilla join can
+    // reclaim the letter in the window between our metadata read and now. An
+    // unconditional `renameSync` (create-or-replace) would then clobber that
+    // fresh vanilla sentinel, producing a permanent sentinel/metadata
+    // divergence + double-claim (the Slice-7 residual race). Reverify first.
+    const sentinelHolder = readSentinelSessionId(sentinelPath);
+    if (sentinelHolder !== holderSessionId) {
+      // Sentinel diverged from the metadata snapshot — a lock-free vanilla
+      // reclaim (or a torn release) landed under us. Do NOT clobber it. We
+      // have mutated neither sentinel nor metadata, so just yield; the caller
+      // surfaces a re-runnable race error.
+      return {
+        kind: "raced",
+        expectedHolder: holderSessionId,
+        actualHolder: sentinelHolder,
+      } as const;
+    }
+    if (sentinelHolder === null) {
+      // Metadata + sentinel agree the letter is unheld right now (prior holder
+      // fully released inside our window). A force-takeover of an unheld letter
+      // is a create — use create-only `linkSync` so a vanilla `linkSync`
+      // racing in is DETECTED via EEXIST rather than silently clobbered by a
+      // create-or-replace `renameSync`.
+      try {
+        linkSync(tmpPath, sentinelPath);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException | undefined)?.code === "EEXIST") {
+          return {
+            kind: "raced",
+            expectedHolder: null,
+            actualHolder: readSentinelSessionId(sentinelPath),
+          } as const;
+        }
+        throw err;
+      }
+      // `linkSync` created a second hardlink; `tmpPath` still exists. Remove it
+      // so the caller's "claimed => tmpPath consumed" contract holds uniformly
+      // with the `renameSync` branch below.
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // tmp already gone; ignore.
+      }
+    } else {
+      // Sentinel present AND === the metadata snapshot holder. Under this lock
+      // no release can unlink it (`removeIdentityClaim` is lock-gated) and no
+      // vanilla `linkSync` can replace it (EEXIST on a present sentinel), so it
+      // is stable === holder until we replace it. `renameSync` atomically
+      // overwrites it in one syscall (POSIX rename(2), same-filesystem).
+      renameSync(tmpPath, sentinelPath);
+    }
 
     // Update metadata.identities under the same lock cycle so concurrent
     // metadata mutators see consistent post-state.

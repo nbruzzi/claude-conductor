@@ -450,6 +450,55 @@ describe("channels CLI — Slice 5 identity verbs (subprocess)", () => {
     expect(selfReleased?.body).toContain(`released by self`);
   });
 
+  it("release: alias dispatches to the same release-self logic (drops identity + self-released status)", async () => {
+    // D3 (c): `release` is a thin alias (switch fall-through) for the
+    // canonical `release-self`. Assert it behaves identically end-to-end.
+    await createChannel({
+      channelId: "c-cli-rel-alias",
+      handoffId: "c-cli-rel-alias",
+      sessionId: TEST_SESSION_ID,
+    });
+    await claimIdentity({
+      channelId: "c-cli-rel-alias",
+      sessionId: TEST_SESSION_ID,
+    });
+
+    const result = runSlice5(["release", "c-cli-rel-alias"]);
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      kind: string;
+      identity: string;
+      previous_session_id: string;
+    };
+    expect(parsed.kind).toBe("released");
+    expect(parsed.identity).toBe("Alpha");
+    expect(parsed.previous_session_id).toBe(TEST_SESSION_ID);
+
+    // Identity + sentinel gone, exactly as release-self.
+    expect(
+      readMetadata("c-cli-rel-alias").identities?.["Alpha"],
+    ).toBeUndefined();
+    expect(
+      existsSync(join(slice5Dir, "c-cli-rel-alias", "identities", "Alpha")),
+    ).toBe(false);
+
+    // Same self-released audit-trail as the canonical verb.
+    const messageLines = readFileSync(
+      join(slice5Dir, "c-cli-rel-alias", "messages.jsonl"),
+      "utf-8",
+    )
+      .split("\n")
+      .filter((l: string) => l.length > 0);
+    const selfReleased = messageLines
+      .map((l: string) => JSON.parse(l) as { kind: string; body: string })
+      .find(
+        (m: { kind: string; body: string }) =>
+          m.kind === "status" && m.body.startsWith("self-released:"),
+      );
+    expect(selfReleased).toBeDefined();
+    expect(selfReleased?.body).toContain("identity Alpha");
+  });
+
   it("release-self: exit 5 NOT_HELD when this session has no claim on the channel", async () => {
     await createChannel({
       channelId: "c-cli-rs-empty",

@@ -112,6 +112,7 @@ import {
   IdentityAlreadyHeldBySelfError,
   IdentityCasMismatchError,
   IdentityNotHeldError,
+  IdentityRacedError,
   isValidIdentity,
   setRole,
   unlinkIdentitySentinelOrLogOrphan,
@@ -176,6 +177,8 @@ const VERB_HELP: Record<string, string> = {
     "set-role <channel-id> --role <pen|queue|out>\n  Update the role of this session's claimed identity. Exits 5 if no\n  identity is held (per RE-6 — silent no-op is the failure mode).",
   "close-peer":
     "close-peer <channel-id> --peer <Identity> [--force]\n  Release a peer's NATO identity if its heartbeat is > 60 s stale.\n  --force overrides the staleness gate (operator escape hatch).",
+  release:
+    "release <channel-id>\n  Alias of 'release-self': release THIS session's NATO identity claim so you\n  can re-join as another letter (e.g. 'release <ch>' then 'join <ch> --as Alpha').\n  Identical contract to 'release-self' (CAS-guarded; exits 5 NOT_HELD /\n  7 RACE_RELEASED; posts a 'self-released' status). Run 'release-self --help' for detail.",
   "release-self":
     "release-self <channel-id>\n  Release THIS session's NATO identity claim on the channel.\n  Resolves the held letter automatically via getIdentityForSession; uses\n  implicit force (self-heartbeat is fresh by definition). CAS-guarded\n  against takeover races: if another peer claimed your identity between\n  the resolve + release steps, exits 7 RACE_RELEASED rather than\n  mistakenly releasing their fresh claim. Posts a 'self-released' status\n  message (distinct from 'peer-closed') so observers distinguish\n  operator-initiated self-release from peer-side close-peer action.\n  Exits 5 NOT_HELD if no identity is claimed on this channel.",
   "forget-cursor":
@@ -230,7 +233,7 @@ const TOP_LEVEL_HELP =
   "Subcommands: from-handoff | resolve-handoff | summarize-handoff-channel | create | join |\n" +
   "             close | send | read | list | meta | heartbeat | peers | body | whoami |\n" +
   "             whoami-active |\n" +
-  "             set-role | close-peer | release-self | forget-cursor | show-cursor |\n" +
+  "             set-role | close-peer | release | release-self | forget-cursor | show-cursor |\n" +
   "             forget-message-cursor |\n" +
   "             show-message-cursor | kinds\n" +
   "\n" +
@@ -916,6 +919,12 @@ export async function runChannelsCli(
               die(ctx, err.message, {
                 code: 7,
                 category: "CAS_MISMATCH",
+              });
+            }
+            if (err instanceof IdentityRacedError) {
+              die(ctx, err.message, {
+                code: 8,
+                category: "RACE_LOST",
               });
             }
             // Unknown — re-throw to bubble through the catch-all at
@@ -1907,6 +1916,7 @@ export async function runChannelsCli(
           },
         );
       }
+      case "release":
       case "release-self": {
         // Self-targeted sibling of `close-peer` — releases THIS session's
         // claim on the channel. Auto-resolves the held letter (no --peer

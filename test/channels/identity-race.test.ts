@@ -33,7 +33,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -41,11 +48,13 @@ import {
   claimIdentity,
   claimIdentityNamed,
   identitySentinelPath,
+  IdentityRacedError,
   NATO_POOL,
   setRole,
 } from "../../src/channels/identity.ts";
 import {
   appendMessage,
+  claimNamedIdentityWithLock,
   createChannel,
   readMessages,
   readMetadata,
@@ -440,10 +449,231 @@ describe("claimIdentityNamed — takeover race fuzz (Plan v1.3 §7 / RE-6)", () 
     }
   }, 30_000);
 
-  it.todo(
-    "takeover --force races vanilla claimIdentity pool-walking — expected-failure until vanilla-commitIdentityClaim sentinel-reverify lands (residual race per Plan v1.3 §residual-race-documentation; vanilla:240-259 linkSync OUTSIDE lock can clobber takeover's metadata via later commitIdentityClaim)",
-    () => {
-      /* placeholder until vanilla-claimIdentity hardening lands */
-    },
-  );
+  it("takeover --force YIELDS (IdentityRacedError) when the sentinel was reclaimed out from under the metadata snapshot — D3 (b) sentinel-reverify-under-lock close", async () => {
+    // Closes the residual race the prior it.todo tracked. The documented
+    // failure: vanilla claimIdentity's pre-lock linkSync (lock-free) reclaims a
+    // letter inside the takeover window; the old unconditional renameSync then
+    // clobbered that fresh claim -> permanent sentinel/metadata divergence +
+    // double-claim. The fix lives in claimNamedIdentityWithLock (the named
+    // side, narrower than the it.todo's vanilla-commitIdentityClaim plan):
+    // reverify the on-disk sentinel vs the metadata snapshot under the lock and
+    // YIELD on divergence rather than clobber.
+    //
+    // Deterministic reproduction of the divergent mid-race state: claim Alpha
+    // for X (sentinel=X, metadata=X), then overwrite ONLY the sentinel to V
+    // (simulating a lock-free vanilla reclaim metadata hasn't caught up to). A
+    // --force takeover by N must DETECT sentinel(V) != metadata(X) and refuse.
+    const channelId = "c-reverify-race";
+    const letter = "Alpha";
+    const xSession = "sess-reverify-x";
+    const vSession = "sess-reverify-v";
+    const nSession = "sess-reverify-n";
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: xSession,
+    });
+    await claimIdentityNamed({
+      channelId,
+      sessionId: xSession,
+      identity: letter,
+    });
+
+    const sentinelPath = identitySentinelPath(channelId, letter);
+    writeFileSync(
+      sentinelPath,
+      `${JSON.stringify({ session_id: vSession, role: "queue", joined_at: new Date().toISOString() })}\n`,
+    );
+
+    await expect(
+      claimIdentityNamed({
+        channelId,
+        sessionId: nSession,
+        identity: letter,
+        force: true,
+      }),
+    ).rejects.toThrow(IdentityRacedError);
+
+    // No-clobber: sentinel still V, metadata still X. N did NOT win.
+    const sentinelAfter = JSON.parse(readFileSync(sentinelPath, "utf-8")) as {
+      session_id: string;
+    };
+    expect(sentinelAfter.session_id).toBe(vSession);
+    expect(readMetadata(channelId).identities?.[letter]?.session_id).toBe(
+      xSession,
+    );
+  }, 30_000);
+});
+
+/**
+ * D3 (b) — claimNamedIdentityWithLock sentinel-reverify-under-lock, branch
+ * coverage at the primitive level (the integration path above proves the
+ * caller throws; these pin each reverify branch in isolation).
+ */
+describe("claimNamedIdentityWithLock — sentinel-reverify-under-lock branches (D3 (b))", () => {
+  let tmpCounter = 0;
+  // Write a tmpPath claim file in the sentinel's dir (same fs, as the real
+  // claimIdentityNamed P1 does) so renameSync/linkSync are valid.
+  function writeTmpClaim(sentinelPath: string, sessionId: string): string {
+    const dir = dirname(sentinelPath);
+    mkdirSync(dir, { recursive: true });
+    const tmpPath = join(dir, `.tmp.test.${tmpCounter++}`);
+    writeFileSync(
+      tmpPath,
+      `${JSON.stringify({ session_id: sessionId, role: "queue", joined_at: new Date().toISOString() })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    return tmpPath;
+  }
+
+  it("MATCH (sentinel === metadata snapshot): renameSync path -> claimed + post-state consistent", async () => {
+    const channelId = "c-revlock-match";
+    const letter = "Alpha";
+    const xSession = "sess-match-x";
+    const nSession = "sess-match-n";
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: xSession,
+    });
+    await claimIdentityNamed({
+      channelId,
+      sessionId: xSession,
+      identity: letter,
+    });
+    const sentinelPath = identitySentinelPath(channelId, letter);
+    const tmpPath = writeTmpClaim(sentinelPath, nSession);
+
+    const result = await claimNamedIdentityWithLock({
+      channelId,
+      identity: letter,
+      newClaim: {
+        session_id: nSession,
+        role: "queue",
+        joined_at: new Date().toISOString(),
+      },
+      tmpPath,
+      sentinelPath,
+      force: true,
+      fromSession: undefined,
+    });
+
+    expect(result.kind).toBe("claimed");
+    if (result.kind === "claimed") {
+      expect(result.displacedSessionId).toBe(xSession);
+    }
+    expect(
+      (
+        JSON.parse(readFileSync(sentinelPath, "utf-8")) as {
+          session_id: string;
+        }
+      ).session_id,
+    ).toBe(nSession);
+    expect(readMetadata(channelId).identities?.[letter]?.session_id).toBe(
+      nSession,
+    );
+    expect(existsSync(tmpPath)).toBe(false); // renameSync consumed tmpPath
+  });
+
+  it("DIVERGED (sentinel !== metadata snapshot): yields raced, mutates nothing", async () => {
+    const channelId = "c-revlock-diverged";
+    const letter = "Bravo";
+    const xSession = "sess-div-x";
+    const vSession = "sess-div-v";
+    const nSession = "sess-div-n";
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: xSession,
+    });
+    await claimIdentityNamed({
+      channelId,
+      sessionId: xSession,
+      identity: letter,
+    });
+    const sentinelPath = identitySentinelPath(channelId, letter);
+    // Sentinel reclaimed to V; metadata still records X.
+    writeFileSync(
+      sentinelPath,
+      `${JSON.stringify({ session_id: vSession, role: "queue", joined_at: new Date().toISOString() })}\n`,
+    );
+    const tmpPath = writeTmpClaim(sentinelPath, nSession);
+
+    const result = await claimNamedIdentityWithLock({
+      channelId,
+      identity: letter,
+      newClaim: {
+        session_id: nSession,
+        role: "queue",
+        joined_at: new Date().toISOString(),
+      },
+      tmpPath,
+      sentinelPath,
+      force: true,
+      fromSession: undefined,
+    });
+
+    expect(result.kind).toBe("raced");
+    if (result.kind === "raced") {
+      expect(result.expectedHolder).toBe(xSession);
+      expect(result.actualHolder).toBe(vSession);
+    }
+    // Mutated nothing: sentinel still V, metadata still X.
+    expect(
+      (
+        JSON.parse(readFileSync(sentinelPath, "utf-8")) as {
+          session_id: string;
+        }
+      ).session_id,
+    ).toBe(vSession);
+    expect(readMetadata(channelId).identities?.[letter]?.session_id).toBe(
+      xSession,
+    );
+    expect(existsSync(tmpPath)).toBe(true); // primitive left tmpPath for caller
+    rmSync(tmpPath, { force: true });
+  });
+
+  it("UNHELD (metadata null + sentinel absent): create-only linkSync path -> claimed", async () => {
+    const channelId = "c-revlock-unheld";
+    const letter = "Charlie";
+    const nSession = "sess-unheld-n";
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: "sess-unheld-init",
+    });
+    const sentinelPath = identitySentinelPath(channelId, letter);
+    const tmpPath = writeTmpClaim(sentinelPath, nSession);
+    expect(existsSync(sentinelPath)).toBe(false);
+
+    const result = await claimNamedIdentityWithLock({
+      channelId,
+      identity: letter,
+      newClaim: {
+        session_id: nSession,
+        role: "queue",
+        joined_at: new Date().toISOString(),
+      },
+      tmpPath,
+      sentinelPath,
+      force: true,
+      fromSession: undefined,
+    });
+
+    expect(result.kind).toBe("claimed");
+    if (result.kind === "claimed") {
+      expect(result.displacedSessionId).toBeNull();
+    }
+    expect(
+      (
+        JSON.parse(readFileSync(sentinelPath, "utf-8")) as {
+          session_id: string;
+        }
+      ).session_id,
+    ).toBe(nSession);
+    expect(readMetadata(channelId).identities?.[letter]?.session_id).toBe(
+      nSession,
+    );
+    expect(existsSync(tmpPath)).toBe(false); // linkSync + unlink consumed tmpPath
+  });
 });
