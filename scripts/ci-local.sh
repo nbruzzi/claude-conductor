@@ -69,6 +69,18 @@ run_gate "check-generic-paths" bun run check-generic-paths
 run_gate "check-import-extensions" bun run check-import-extensions
 run_gate "check-dep-rationale" bun run check-dep-rationale
 run_gate "check-spdx-headers" bun run check-spdx-headers
+# --- advisory (NOT a gate): surface UNCOMMITTED substrate the COMMIT-based
+# decision-log gate below cannot see. check-decision-log diffs committed history
+# (merge-base..HEAD), so run PRE-commit it can report a vacuous "clean" while the
+# working tree holds staged/unstaged substrate edits — then CI reds post-commit.
+# Captured here so that false pre-commit confidence is surfaced; NEVER folded into
+# FAILED (advisory only — Lane L2). The helper prints its own remedy + always
+# exits 0. See scripts/warn-uncommitted-substrate.sh.
+DLOG_ADVISORY="$(bash "$REPO_ROOT/scripts/warn-uncommitted-substrate.sh")"
+if [ -n "$DLOG_ADVISORY" ]; then
+  printf '\n=== advisory: uncommitted substrate (decision-log) ===\n'
+  printf '%s\n' "$DLOG_ADVISORY"
+fi
 run_gate "check-decision-log" bun run check-decision-log
 run_gate "check-liveness-gate-store-contract" bun run check-liveness-gate-store-contract
 
@@ -109,6 +121,15 @@ while [ "$i" -lt "${#NAMES[@]}" ]; do
   [ "${STATUSES[$i]}" = "SKIP" ] && SKIPPED=$((SKIPPED + 1))
   i=$((i + 1))
 done
+
+# Advisory footer (NOT a gate): if uncommitted substrate was detected above, the
+# check-decision-log result in this summary did NOT cover it (commit-based gate).
+# Surfaced here at the go/no-go point so the summary can't read as "all clear".
+if [ -n "$DLOG_ADVISORY" ]; then
+  printf '\nci-local: ADVISORY — uncommitted substrate detected; the check-decision-log result above\n'
+  printf '  did NOT evaluate it (commit-based gate). Commit-then-recheck before pushing — see the\n'
+  printf '  "uncommitted substrate (decision-log)" advisory above for the exact remedy.\n'
+fi
 
 if [ "$FAILED" -ne 0 ]; then
   printf '\nci-local: FAIL — fix the above before pushing (CI will reject otherwise).\n' >&2
