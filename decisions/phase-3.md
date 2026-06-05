@@ -2068,3 +2068,47 @@ affects:
 — S1 authored by Charlie (ea19aa59); inline subagent Nick-lens audit (2 folds applied) + Echo PR-boundary merge-gate (#203).
 
 ---
+
+## 2026-06-05 — Decision: C1 S2 — real session-pid liveness + subtract-only PROTECT lane
+
+```yaml
+---
+ts: 2026-06-05T14:32:56Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/index.ts,
+    src/active-sessions/reconcile-boot.ts,
+    src/shared/session-id-discovery.ts,
+    src/hooks/checks/dotfiles-worktree-provisioner.ts,
+  ]
+---
+```
+
+**Context:** C1's durable false-LIVE/false-DEAD root-fix needs the SESSION's real OS pid — today `OwnerRecord.pid` is the EPHEMERAL dispatcher `process.pid` (every recorded pid probed ESRCH this cohort — the motivating datum). The pid-SPIKE (Delta) PASSED: the harness publishes `~/.claude/sessions/<pid>.json = {pid, sessionId, ...}`. S2 records that real pid + adds a same-host `kill(pid,0)` PROTECT to the presence reaper. Wave-1; seam + ceiling + S4-scope ratified by Nick post-spike.
+
+**Decisions:**
+
+1. **Seam = Model B (Charlie+Bravo converged independently; Echo-ratified).** pid wires as a reconcile-boot `isGcEligible` subtract-term (a lazy thunk mirroring `channelLiveProbe`), NOT folded into S1's `classifySessionLiveness` bucket. pid-liveness has DIFFERENT semantics (same-host-only, ceiling-bounded, operator-reclaim-oriented); folding it into `isSessionLive` would impose those caveats on every caller + conflate "process exists" with "is coordinating". Keeps the canonical liveness signature STABLE across S2 — S2 is S1-INDEPENDENT (reconcile-boot enumeration stays on `classifyLiveness`, allow-listed, not migrated).
+
+2. **Ceiling-bounded protect; `PID_PROTECT_CEILING_MS = 2 × GC_WINDOW_MS` (120min, Nick-ratified).** The protect fires ONLY in the band `(GC_WINDOW_MS, PID_PROTECT_CEILING_MS]` — `isGcEligible` already gates `age > GC_WINDOW_MS`, the thunk gates `age <= PID_PROTECT_CEILING_MS`. Beyond the ceiling, mtime-staleness wins regardless of the pid → a reused-pid false-protect cannot leak forever (degrades to today's proxy). The RFC's illustrative "≤ GC_WINDOW_MS" ceiling would have been a NO-OP (the floor already protects that band) — the operative ceiling MUST be `> GC_WINDOW_MS` (Bravo primary-source catch, Echo-ratified).
+
+3. **Subtract-only + degrade-safe.** The pid term is a conjunctive `&& !pidProtectProbe()` — structurally it can only force `gc_eligible=false`, never enable a GC. Absent `sessionOsPid` (legacy / flag-off record) → the probe is false → `isGcEligible` reduces to EXACTLY today's predicate. The lane is a SAFE AUGMENT (the cohort huddle's framing): adds protection where a real pid exists, never breaks legacy GC.
+
+4. **Source = scan-by-sessionId (dir-scan), not the ppid-walk.** `resolveSessionOsPid(sessionId)` scans the `<pid>.json` registry for the file whose embedded sessionId matches (reusing `readCCBinaryFile` + the cold-start retry; skips uuid-stemmed telemetry). Chosen over the cohort's literal `walkPpidTree` suggestion because (a) the caller KNOWS its sessionId — scan-by-known-id is the natural operation, and (b) it makes the sessionId-MATCH SAFETY GUARD (never record a stale/recycled pidfile's pid) deterministically TESTABLE (inject a sandbox dir), which the ppid-walk is not.
+
+5. **Recording call-site = the flag-on provisioner path; flag-off degrades (accepted bound).** `recordSessionOsPid` is called in `dotfiles-worktree-provisioner` after the anchor-pin (conductor-internal — no new cross-edge surface). The provisioner early-returns flag-off (`CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES`), so flag-off sessions record no pid → their protect degrades to mtime. Accepted per the degrade-safe framing + the feature trending default-on. Retry budget tightened to ≤100ms (audit RE-1) — the caller already holds the sessionId, so a cold-start miss only forgoes a degrade-safe protect; bound the `Atomics.wait` off the SessionStart critical path.
+
+6. **Deserialization twin (caught in build).** `OwnerRecord.sessionOsPid?` is additive + auto-preserved by `mergeOwnerRecord` on WRITE, but `readOwnerRecord` is per-field-EXPLICIT — the new field needed an explicit type-validated carry-back THERE too (the write-merge generalization does NOT cover the read-parse). A round-trip test caught the omission; the carry-back was added.
+
+**Cross-edge:** NONE new. The recording (provisioner check + setter) is conductor-internal; `resolveSessionOsPid` is internal-relative consumed. `cross_edge_consumers_verified` resolves empty.
+
+**Verification:** typecheck clean; full suite 2671/0; the two new pid suites 20/0 (probe ESRCH/EPERM/absent; ceiling band + bounded-leak; dead/cross-host/no-pid degrade; sessionId-match safety; casRecheck pid-mirror); CI-only checks (generic-paths/import-ext/dep-rationale/spdx/liveness-gate-store-contract/drift) clean. Inline Nick-lens audit (subagent): SHIP-WITH-FOLDS, no blockers (RE-1 retry-budget + lock-domain-comment folded; TA-1 EPERM-branch accepted as outcome-pinned).
+
+**Supersedes / superseded_by:** builds ON S1 (#203 canonical `classifySessionLiveness` — Model B keeps pid OUT of it) + Q2's channelLive-lazy/channelHB-GC (#202). S3a (2-sweep) + S3b (fast-reap) CAPPED/DEFERRED per Nick's investment-bound (revisit only if cross-host cohorts emerge). The optional start-time/procStart complete-closure stays DEFERRED (cross-platform-free via the pidfile per Charlie/Delta, but non-load-bearing for S2's ceiling-bounded protect).
+
+— C1 S2 authored by Bravo (Wave-1); PR-boundary peer-shadow = Delta (freshest pid context); Echo merge-gate. Fold-order: merges AFTER S1 #203.
+
+---

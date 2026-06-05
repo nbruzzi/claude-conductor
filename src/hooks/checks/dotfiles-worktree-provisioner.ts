@@ -52,9 +52,11 @@ import {
   artifactIdFromPath,
   listLivePeers,
   readSentinelDotfilesRoot,
+  recordSessionOsPid,
   setSentinelDotfilesRoot,
 } from "../../active-sessions/index.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
+import { resolveSessionOsPid } from "../../shared/session-id-discovery.ts";
 // Phase 3 Slice 1 (cycle 2026-05-19) — generic flow extracted to
 // src/worktrees/provision-repo.ts. This hook now builds a dotfiles-
 // RepoProvisionConfig + delegates steps 3-8 to materializeRepoWorktree.
@@ -106,6 +108,28 @@ export async function check(input: HookInput): Promise<HookResult> {
       // diverges from this hook's read (e.g., a featureFlagOverride somehow
       // flips between calls).
       return pass();
+    }
+
+    // C1 S2 — record the session's REAL OS pid onto the now-pinned canonical
+    // anchor (pinned by materializeRepoWorktree's step-6 pinAnchor, ahead of the
+    // provision step, so it exists even on a provision-failed return below).
+    // Lets reconcile-boot's pid-protect probe this session's liveness directly.
+    // The source scans the CC binary's sessions/<pid>.json registry BY sessionId;
+    // a mismatch or miss → null → no-op (the protect degrades to mtime). Flag-off
+    // sessions never reach here (returned at the flag-gate above), so their
+    // protect degrades — the accepted bound.
+    //
+    // Retry budget is deliberately TIGHT (≤100ms) here (audit RE-1): unlike
+    // resolveSessionId's discover-an-UNKNOWN-id walk, we already hold the
+    // sessionId, and a cold-start miss only forgoes a degrade-safe protect — so
+    // bound the Atomics.wait to keep this net-new work off the SessionStart
+    // critical path.
+    const osPid = resolveSessionOsPid(sessionId, {
+      retryCount: 1,
+      retryDelayMs: 100,
+    });
+    if (osPid !== null) {
+      recordSessionOsPid(sessionId, osPid);
     }
 
     if (materialized.kind === "provision-failed") {

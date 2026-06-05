@@ -89,6 +89,27 @@ export const LIVE_WINDOW_MS = 30 * 60 * 1000;
  */
 export const GC_WINDOW_MS = 2 * LIVE_WINDOW_MS;
 
+/**
+ * Ceiling for the C1-S2 session-pid PROTECT lane. A same-host `kill(pid, 0)`
+ * probe ({@link isOsPidAlive}) that finds a session's RECORDED OS pid alive
+ * forces `gc_eligible = false` — but ONLY while the heartbeat is within this
+ * ceiling. Beyond it, mtime-staleness wins regardless of the pid, so a
+ * RECYCLED-pid false-protect cannot leak forever (the protect degrades to
+ * today's proxy behaviour past the ceiling).
+ *
+ * MUST be strictly greater than `GC_WINDOW_MS`, or the protect is a no-op:
+ * `gc_eligible` already requires `age > GC_WINDOW_MS` (the 60min safety-floor),
+ * so a ceiling ≤ that floor would never widen the protected band. The protect
+ * therefore lives in the band `(GC_WINDOW_MS, PID_PROTECT_CEILING_MS]`.
+ *
+ * The value is a coverage-vs-leak-bound trade: wider protects a genuinely-
+ * alive-but-heartbeat-silent session for longer, but also lets a recycled-pid
+ * false-protect persist longer (always bounded). 2× `GC_WINDOW_MS` (120min) is
+ * the Nick-ratified start value (post-spike), tunable later.
+ * (RFC #200 §3.2 — the ceiling-trade.)
+ */
+export const PID_PROTECT_CEILING_MS = 2 * GC_WINDOW_MS;
+
 /** "Likely dead" threshold for operator listings. */
 export const LIKELY_DEAD_MS = 10 * 60 * 1000;
 
@@ -111,6 +132,36 @@ export const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
 function defensiveAgeMs(now: number, mtimeMs: number): number | null {
   if (mtimeMs > now + CLOCK_SKEW_TOLERANCE_MS) return null;
   return Math.max(0, now - mtimeMs);
+}
+
+/**
+ * Same-host OS-process liveness probe (C1 S2). `process.kill(pid, 0)` sends NO
+ * signal — it only tests whether a process with that pid exists and is
+ * signalable. POSIX-portable (macOS + Linux); no `/proc`, no fork.
+ *
+ * Returns `true` (ALIVE) on no-throw AND on `EPERM` (a process exists at that
+ * pid that we lack permission to signal — e.g. pid 1; the spike confirmed it
+ * throws `EPERM`, not `ESRCH`). Returns `false` (NOT ALIVE) on `ESRCH` (no such
+ * process) and on a missing/invalid pid (`≤ 0` / non-integer — an ABSENT
+ * signal, never a protect).
+ *
+ * The asymmetry is deliberate. This feeds a SUBTRACT-ONLY protect on a MUTATING
+ * gate (`reconcile-boot` `--apply`), which must fail toward NOT-reaping on an
+ * ambiguous-but-present pid (`EPERM`); but an ABSENT pid must NOT protect, or a
+ * legacy heartbeat with no recorded session pid would be pinned live forever. A
+ * future fast-reap (S3b) keys on `ESRCH` SPECIFICALLY — never on `EPERM`.
+ *
+ * Same-host only: a pid is meaningless across hosts, so callers gate this on a
+ * host match (`owner.host === currentHost`) before probing.
+ */
+export function isOsPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /**
@@ -152,6 +203,15 @@ export type OwnerRecord = {
   // unanimous). Preserved across `touchHeartbeat` + setter writes via
   // `mergeOwnerRecord`'s read-merge-write.
   pausedAt?: number;
+  // C1 S2 (session-pid PROTECT lane) — the session's REAL OS pid (the Claude
+  // Code harness pid read from ~/.claude/sessions/<pid>.json), DISTINCT from
+  // `pid` above which is the EPHEMERAL dispatcher/actor `process.pid`. Optional
+  // + additive (mirrors `pausedAt?` / `dotfilesRoot?`): old readers tolerate its
+  // absence, and `mergeOwnerRecord` preserves it across every write. Recorded
+  // once at session-init by `recordSessionOsPid`; read SESSION-LEVEL by
+  // reconcile-boot's pid-protect via `readSessionOsPid`. Absent → the protect
+  // degrades to mtime (the safe-augment shape).
+  sessionOsPid?: number;
 };
 
 export type PeerInfo = {
@@ -723,6 +783,17 @@ function readOwnerRecord(path: string): OwnerRecord | null {
     const pausedAtRaw = obj["pausedAt"];
     const pausedAt =
       typeof pausedAtRaw === "number" ? { pausedAt: pausedAtRaw } : {};
+    // C1 S2 — carry the optional `sessionOsPid` (the real session OS pid)
+    // through. The DESERIALIZATION twin of recordSessionOsPid's write:
+    // mergeOwnerRecord PRESERVES it on every write, but this read path is
+    // per-field-EXPLICIT (see the pausedAt note above), so a new optional field
+    // must be added HERE too or readSessionOsPid never reads back what was
+    // persisted. Type-validated, like dotfilesRoot/pausedAt.
+    const sessionOsPidRaw = obj["sessionOsPid"];
+    const sessionOsPid =
+      typeof sessionOsPidRaw === "number"
+        ? { sessionOsPid: sessionOsPidRaw }
+        : {};
     return {
       sessionId,
       pid,
@@ -731,6 +802,7 @@ function readOwnerRecord(path: string): OwnerRecord | null {
       touchedAt,
       ...dotfilesRoot,
       ...pausedAt,
+      ...sessionOsPid,
     };
   } catch {
     return null;
@@ -1563,6 +1635,49 @@ export function readSessionPausedAt(sessionId: string): number | null {
   if (!existsSync(path)) return null;
   const record = readOwnerRecord(path);
   return record?.pausedAt ?? null;
+}
+
+/**
+ * C1 S2 (session-pid PROTECT lane) — record a session's REAL OS pid (the harness
+ * pid, discovered via `resolveSessionOsPid`) onto its canonical anchor heartbeat,
+ * mirroring `markSessionPaused`'s SESSION-LEVEL write. reconcile-boot reads it
+ * back SESSION-LEVEL via `readSessionOsPid`, so the pid-protect applies to ALL of
+ * the session's candidates, not just its anchor. No-create (like
+ * `markSessionPaused`): the call-site (the provisioner, post-anchor-pin) has
+ * already force-created the anchor; a missing anchor → no-op (degrades to mtime).
+ * Rejects a non-positive / non-integer pid — never record a garbage signal.
+ */
+export function recordSessionOsPid(sessionId: string, osPid: number): void {
+  if (!isValidSessionId(sessionId)) return;
+  if (!Number.isInteger(osPid) || osPid <= 0) return;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  const existing = readOwnerRecord(path);
+  if (existing === null) return;
+
+  const now = getWallClockNow();
+  const record = mergeOwnerRecord(existing, sessionId, now, {
+    sessionOsPid: osPid,
+  });
+  writeAtomic(path, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * C1 S2 — read a session's recorded OS pid from its canonical anchor heartbeat
+ * (mirrors `readSessionPausedAt`). Returns the harness pid, or `null` if unset /
+ * no anchor. reconcile-boot's pid-protect uses this for a SESSION-LEVEL probe.
+ */
+export function readSessionOsPid(sessionId: string): number | null {
+  if (!isValidSessionId(sessionId)) return null;
+  const artifactId = canonicalClaudeHomeArtifactId();
+  if (!isValidArtifactId(artifactId)) return null;
+
+  const path = heartbeatPath(artifactId, sessionId);
+  if (!existsSync(path)) return null;
+  const record = readOwnerRecord(path);
+  return record?.sessionOsPid ?? null;
 }
 
 /**
