@@ -2193,3 +2193,44 @@ affects:
 — L2 DLOG-local authored by Bravo; PR-boundary peer-shadow = TBD (cohort, per dynamic-pairing); Alpha merge-gate.
 
 ---
+
+## 2026-06-05 — Decision: C1 S4-slim — formalized liveness state machine + 2-primitive contract test
+
+```yaml
+---
+ts: 2026-06-05T21:36:07Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/session-liveness.ts,
+    test/active-sessions/liveness-state-machine.test.ts,
+    test/active-sessions/liveness-contract.test.ts,
+  ]
+---
+```
+
+**Context:** RFC #200 §3.5/§4 spec the liveness state machine + contract test for the C1 boot-reconciliation arc. S1 (#203 canonical `classifySessionLiveness`) + S2 (#204 pid-protect) shipped the primitives; S4-slim FORMALIZES them. "Slim" because S3a (2-sweep generation marker) + S3b (fast-reap) are CAPPED per Nick's investment-bound — so the 2-sweep states (suspected-dead / confirmed-dead) AND the 3rd contract primitive (generation/2-sweep) are out of scope.
+
+**Decisions:**
+
+1. **Formalize the SHIPPED + lifecycle states only (Alpha cohort call, OBSERVE-NOT-INFER).** The state machine is `live → likely-dead → stale → gc'd(--apply) → reclaimed`; `paused` orthogonal. The classifiable states (live/likely-dead/stale) come straight from S1 `classifySessionLiveness` (mtime OR-compose) gated by S2's pid protect — NO new classifier is hand-rolled. `LivenessState = Liveness | "idle" | "gc'd" | "reclaimed"` ties the machine to the shipped `Liveness` buckets.
+
+2. **`idle` = a NAMED but DEFERRED observe-rung, not a classified state (the load-bearing bound).** The harness already publishes per-session busy/idle status (`~/.claude/sessions/<pid>.json status`). An initial proposal classified idle by a two-store split (channel-stale-but-active-fresh = idle) — clever + free, but it would BAKE a divergent inference of exactly what the harness OBSERVES. Per Nick's OBSERVE-NOT-INFER bound (Alpha caught it on the design Q), idle is kept a named state with `kind: "observe"` edges marked DEFERRED — documented, NOT classified by the substrate this slice (left to the observe direction, a future rung). This deliberately REPOSITIONS idle off RFC §3.5's literal linear `live → idle → likely-dead` decay path (idle becomes an off-path observe edge, not a decay-path state) — a topology deviation per OBSERVE-NOT-INFER, breadcrumbed in the `LIVENESS_TRANSITIONS` JSDoc so it reads as intentional, not a transcription error (ARCH-1 audit fold).
+
+3. **Placement INSIDE session-liveness.ts (the canonical liveness module).** The state vocabulary (`LivenessState`) + transition table (`LIVENESS_TRANSITIONS`) live in the canonical module: legal compose, NO LGC-001/002 trip (the pivot removed the would-be classifier, so no new raw-primitive caller; the canonical OR-composers stay the only liveness entry — tripwire re-run clean, 110 files), no active-sessions↔channels module cycle.
+
+4. **gc'd is the ONLY state-deleting edge (NEVER-auto-kill formalized).** `stale → gc'd` is `kind: "operator"` — reconcile-boot `--apply` + the four guards (gc_eligible + presence-only + !split_brain + apply-time CAS-recheck). No decay/refresh/observe/lifecycle edge ever lands in gc'd; liveness is NON-monotonic pre-gc (a silent peer refreshing EITHER store recovers to live — the gc'd state is a substrate transition, not a death certificate).
+
+5. **2-primitive contract test (not 3 — generation primitive capped).** Pins (1) mtime-proxy OR-composed both-store (A1) via `classifySessionLiveness` + reconcile-boot's channel-protect; (2) session-pid ceiling-bounded subtract-only protect via reconcile-boot's `isGcEligible` + the apply-time CAS pid-mirror; PLUS the gc'd/reclaimed lifecycle, the rogue-gate closure (S1 LGC-002, pinned behaviorally — classifySessionLiveness is alive-anywhere), and the NEVER-auto-kill invariants (report-mode never mutates; pause/channel/pid each subtract).
+
+**Cross-edge:** NONE new. `session-liveness.ts` is conductor-internal (NOT in the package `exports` map); the additions are consumed internal-relative (the two new test suites). `cross_edge_consumers_verified` resolves empty. Identity/worktree `--apply`-GC fold DEFERRED → C2.
+
+**Verification:** typecheck clean; format + lint clean; SPDX clean (288 tracked files); LGC tripwire clean (110 src files; no new raw-primitive caller); full suite 2731/0 (+28 net-new: 12 state-machine table + 16 contract). Inline 2-subagent Nick-lens audit (Test Architect + Architecture Auditor; axes surface+depth+distance): SHIP-WITH-FOLDS, B0 — all folds applied before commit (TA-1 positive stale→gc'd GC pin; TA-2 closed transition-set assertion; TA-3 dropped the verbatim apply-time CAS clone + honest docstring; TA-4 dropped the inert subtract-only case; ARCH-1 RFC-topology-deviation breadcrumb). ci-local + main-CI: pending — verified green before any shipped-claim.
+
+**Supersedes / superseded_by:** FORMALIZES S1 (#203) + S2 (#204) — supersedes ad-hoc `Liveness`-bucket usage with the explicit state machine. S3a (2-sweep) + S3b (fast-reap) CAPPED per Nick's investment-bound — the suspected-dead/confirmed-dead states + the 3rd contract primitive are deferred with them. `idle` classification deferred to the observe direction. Identity/worktree `--apply`-GC → C2.
+
+— C1 S4-slim authored by Delta; design Q + OBSERVE-NOT-INFER fold with Alpha (captain); inline Nick-lens audit + Alpha PR-boundary merge-gate.
+
+---

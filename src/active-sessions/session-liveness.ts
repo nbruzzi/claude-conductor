@@ -197,3 +197,139 @@ export function classifySessionLiveness(
   if (ageMs > LIKELY_DEAD_MS) return { verdict: "likely-dead", paused };
   return { verdict: "live", paused };
 }
+
+/**
+ * The formalized liveness lifecycle (RFC #200 §3.5, C1 S4-slim) — supersedes the
+ * ad-hoc {@link Liveness} buckets with an explicit state machine.
+ *
+ * S4-slim formalizes the SHIPPED + lifecycle states only (Alpha cohort call,
+ * 2026-06-05): the classifiable path `live -> likely-dead -> stale` comes
+ * straight from {@link classifySessionLiveness} (S1 mtime OR-compose) gated by
+ * S2's pid protect; `gc'd -> reclaimed` are operation-driven lifecycle states;
+ * `paused` is orthogonal. It OMITS the 2-sweep states (suspected-dead /
+ * confirmed-dead) — they need the S3a generation marker, CAPPED this cycle.
+ *
+ * `idle` is kept a NAMED state but its signal is the OBSERVE rung: the harness
+ * already publishes per-session busy/idle status (the harness `sessions/<pid>.json`
+ * status field). Per the Nick-blessed OBSERVE-NOT-INFER bound we do NOT re-derive it
+ * from a two-store heartbeat split; the idle edges are marked DEFERRED (a future
+ * observe rung) — documented here, NOT classified by the substrate this slice.
+ * This REPOSITIONS idle off RFC #200 §3.5's literal linear
+ * `live -> idle -> likely-dead` decay path: idle is an off-path observe edge
+ * (sibling-of-live), NOT a decay-path state — a deliberate topology deviation
+ * per OBSERVE-NOT-INFER, not a transcription error.
+ *
+ * The classifiable states are exactly the shipped {@link Liveness} buckets, so
+ * NO new classifier is hand-rolled — callers classify via classifySessionLiveness
+ * (mtime, S1) + reconcile-boot's gc_eligible (mtime+pid, S2). This module adds
+ * the state vocabulary + the transition table; liveness-contract.test.ts pins
+ * the classifiable + lifecycle edges against S1+S2.
+ */
+export type LivenessState = Liveness | "idle" | "gc'd" | "reclaimed";
+
+/**
+ * What drives a {@link LivenessTransition}:
+ *   - "decay"     — substrate-driven; time passes, no actor (a heartbeat ages out)
+ *   - "refresh"   — the session ACTED (a heartbeat refreshed) — recovery;
+ *                   liveness is NON-monotonic, a silent peer can return
+ *   - "operator"  — operator-explicit (`reconcile-boot --apply`); the ONLY
+ *                   state-deleting edge — the NEVER-auto-kill gate
+ *   - "lifecycle" — a new session registers / reclaims the freed artifact
+ *   - "observe"   — DEFERRED observe rung: the harness-published session status
+ *                   (OBSERVE-NOT-INFER), documented but NOT classified this slice
+ */
+export type LivenessTransitionKind =
+  | "decay"
+  | "refresh"
+  | "operator"
+  | "lifecycle"
+  | "observe";
+
+/** One edge of the formalized lifecycle, with its explicit, testable signal. */
+export type LivenessTransition = {
+  from: LivenessState;
+  to: LivenessState;
+  kind: LivenessTransitionKind;
+  /** The explicit signal that fires this edge (RFC #200 §3.5). */
+  signal: string;
+};
+
+/**
+ * The C1 S4-slim liveness state machine (RFC #200 §3.5). Each edge's `signal` is
+ * its explicit, testable trigger. The decay/refresh edges are classified by S1's
+ * classifySessionLiveness (mtime OR-compose); the operator `stale -> gc'd` edge
+ * by reconcile-boot's gc_eligible + the NEVER-auto-kill guards (S2); the `idle`
+ * edges are the DEFERRED observe rung (harness status; OBSERVE-NOT-INFER) — named
+ * but not classified. Identity/worktree `--apply`-GC is DEFERRED (roadmap → C2),
+ * so the GC edge is the presence-class one S2 implements.
+ */
+export const LIVENESS_TRANSITIONS: readonly LivenessTransition[] = [
+  // ── forward decay (mtime ages out; classified by S1 classifySessionLiveness) ──
+  {
+    from: "live",
+    to: "likely-dead",
+    kind: "decay",
+    signal:
+      "active-sessions HB ages into (LIKELY_DEAD_MS, LIVE_WINDOW_MS] with no fresh channel HB",
+  },
+  {
+    from: "likely-dead",
+    to: "stale",
+    kind: "decay",
+    signal:
+      "active-sessions HB ages past LIVE_WINDOW_MS (or goes absent) with no fresh channel HB",
+  },
+  // ── refresh recovery (the session acted; liveness is NON-monotonic) ──
+  {
+    from: "likely-dead",
+    to: "live",
+    kind: "refresh",
+    signal:
+      "a channel send or active-sessions touch refreshes a heartbeat within LIVE_WINDOW_MS",
+  },
+  {
+    from: "stale",
+    to: "live",
+    kind: "refresh",
+    signal:
+      "a silent/sleeping peer refreshes either store again: re-classified live — the gc'd state is a substrate transition, NOT a death certificate",
+  },
+  // ── operator-explicit GC — the ONLY state-deleting edge (NEVER-auto-kill) ──
+  {
+    from: "stale",
+    to: "gc'd",
+    kind: "operator",
+    signal:
+      "gc_eligible (stale && age > GC_WINDOW_MS && !paused && !channel-live && !pid-alive) AND operator `--apply` AND !split_brain AND the apply-time CAS-recheck still holds",
+  },
+  // ── reclaim lifecycle (a new session takes the freed artifact) ──
+  {
+    from: "gc'd",
+    to: "reclaimed",
+    kind: "lifecycle",
+    signal:
+      "a new session registers / takes over the freed presence / identity / worktree",
+  },
+  {
+    from: "reclaimed",
+    to: "live",
+    kind: "lifecycle",
+    signal:
+      "the reclaiming session's first heartbeat / channel send re-enters the live state",
+  },
+  // ── idle: DEFERRED observe rung (harness status; OBSERVE-NOT-INFER) ──
+  {
+    from: "live",
+    to: "idle",
+    kind: "observe",
+    signal:
+      "DEFERRED — harness-published session status flips busy->idle (the harness `sessions/<pid>.json` status field); OBSERVE-NOT-INFER, not re-derived from a heartbeat split this slice",
+  },
+  {
+    from: "idle",
+    to: "live",
+    kind: "observe",
+    signal:
+      "DEFERRED — harness-published session status flips idle->busy (the harness `sessions/<pid>.json` status field); OBSERVE-NOT-INFER, not re-derived this slice",
+  },
+];
