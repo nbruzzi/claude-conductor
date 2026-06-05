@@ -29,9 +29,12 @@ import { hostname } from "node:os";
 import {
   GC_WINDOW_MS,
   LIVE_WINDOW_MS,
+  PID_PROTECT_CEILING_MS,
   classifyLiveness,
+  isOsPidAlive,
   listArtifactIds,
   reReadHeartbeat,
+  readSessionOsPid,
   readSessionPausedAt,
   removeOwnHeartbeat,
   scanHeartbeats,
@@ -72,11 +75,11 @@ export type ReconcileBootArtifactClass = "presence" | "identity" | "worktree";
  * enumeration). A presence candidate never lists it (it always has a heartbeat
  * to evaluate); only the cross-class identity/worktree enumeration can.
  *
- * `pid-alive` is RESERVED forward-compat (Pair-B §10 Q2): a same-host
- * `kill(pid, 0)` probe that can only ever force `gc_eligible = false` (a safety
- * blocker for a paused-but-alive peer), never enable a GC. The probe is a
- * follow-up enhancement; it is NOT implemented this slice, so `failed_signals`
- * never lists `pid-alive` yet.
+ * `pid-alive` (C1 S2): a same-host `kill(pid, 0)` probe on the session's RECORDED
+ * OS pid, consulted as a CEILING-bounded gc_eligible PROTECT (isGcEligible). It
+ * can only force `gc_eligible = false`, never enable a GC. Like `paused`, it is a
+ * PROTECTION — not a failed liveness signal — so `failed_signals` does NOT list
+ * it; the type member is retained for potential future protect-visibility.
  */
 export type ReconcileBootSignal =
   | "mtime-age"
@@ -131,9 +134,16 @@ export type ReconcileBootError = {
 export type ReconcileBootCasRace = {
   artifact_id: string;
   session_id: string;
-  /** Why the re-read no longer permits GC: the session is now live, now paused,
-   *  its heartbeat was refreshed back under the GC floor, or it is gone/garbage. */
-  reason: "now-live" | "now-paused" | "mtime-refreshed" | "file-gone";
+  /** Why the re-read no longer permits GC: the session is now live (channel or
+   *  mtime), now paused, its recorded OS pid probes alive within the ceiling
+   *  (pid-alive), its heartbeat refreshed back under the GC floor, or it is
+   *  gone/garbage. */
+  reason:
+    | "now-live"
+    | "now-paused"
+    | "mtime-refreshed"
+    | "file-gone"
+    | "pid-alive";
 };
 
 export type ReconcileBootOutput = {
@@ -210,25 +220,30 @@ function failedSignals(
  *     deletes a LIVE peer's presence
  *     heartbeat — the data-loss class B#2 fixed for the worktree reaper, applied
  *     here to the presence-GC mutation.
- *   - pid-alive (§10 Q2, reserved): a same-host `kill(pid, 0)` probe — a
- *     paused-but-alive process is never GC'd. Deferred; not this slice.
+ *   - pid-alive (C1 S2): a same-host `kill(pid, 0)` probe on the session's
+ *     RECORDED OS pid (recordSessionOsPid) — a pid-alive session is never GC'd,
+ *     CEILING-bounded: the protect fires ONLY while `ageMs <=
+ *     PID_PROTECT_CEILING_MS` (gated in the enumeratePresence thunk), so a
+ *     reused-pid false-protect cannot leak past the ceiling (degrades to mtime).
  */
 function isGcEligible(
   classification: Liveness,
   ageMs: number,
   paused: boolean,
   channelLiveProbe: () => boolean,
+  pidProtectProbe: () => boolean,
 ): boolean {
-  // Q2 lazy-compute: channelLiveProbe is a THUNK, invoked only here. The
-  // preceding AND-terms (stale && past-window && !paused) short-circuit, so the
-  // channel-dir scan (isSidPrefixLiveOnChannel) runs ONLY for a candidate that
-  // is otherwise gc-eligible — live/fresh/paused candidates skip it entirely.
+  // Q2 lazy-compute: channelLiveProbe + pidProtectProbe are THUNKS, invoked only
+  // here. The preceding AND-terms (stale && past-window && !paused) short-circuit,
+  // so the channel-dir scan + the kill(0) probe run ONLY for a candidate that is
+  // otherwise gc-eligible — live/fresh/paused candidates skip both entirely.
   // Semantics-identical to the eager form; subtract-only preserved.
   return (
     classification === "stale" &&
     ageMs > GC_WINDOW_MS &&
     !paused &&
-    !channelLiveProbe()
+    !channelLiveProbe() &&
+    !pidProtectProbe()
   );
 }
 
@@ -243,6 +258,7 @@ function enumeratePresence(
   now: number,
   currentHost: string,
   isSessionPaused: (sessionId: string) => boolean,
+  isSessionOsPidAlive: (sessionId: string) => boolean,
 ): { candidates: ReconcileBootCandidate[]; errors: ReconcileBootError[] } {
   const out: ReconcileBootCandidate[] = [];
   const errors: ReconcileBootError[] = [];
@@ -294,13 +310,24 @@ function enumeratePresence(
         classification,
         // split-brain is a cross-entry property; computed in a second pass.
         split_brain: false,
-        gc_eligible: isGcEligible(classification, h.ageMs, paused, () =>
-          isSidPrefixLiveOnChannel(
-            h.sessionId,
-            COORDINATION_CHANNEL_ID,
-            now,
-            GC_WINDOW_MS,
-          ),
+        gc_eligible: isGcEligible(
+          classification,
+          h.ageMs,
+          paused,
+          () =>
+            isSidPrefixLiveOnChannel(
+              h.sessionId,
+              COORDINATION_CHANNEL_ID,
+              now,
+              GC_WINDOW_MS,
+            ),
+          // pid-protect (C1 S2): host-match + ceiling are per-candidate; the
+          // recorded-pid kill(0) probe is SESSION-level (memoized in
+          // runReconcileBoot). Subtract-only — can only PROTECT, never GC.
+          () =>
+            h.owner.host === currentHost &&
+            h.ageMs <= PID_PROTECT_CEILING_MS &&
+            isSessionOsPidAlive(h.sessionId),
         ),
         paused,
         failed_signals: failedSignals(h, currentHost),
@@ -571,6 +598,22 @@ function casRecheckFlip(
   ) {
     return "now-live";
   }
+  // pid-protect apply-time mirror (C1 S2 — the A1 "recheck every protecting
+  // store at apply-time" contract): a same-host RECORDED pid that probes alive
+  // within the ceiling means the session is alive → flip out of GC. Subtract-only
+  // (can only protect). Uses the FRESH re-read's host + age, like the channel
+  // recheck above. Probed after the cheaper rechecks (same lazy spirit).
+  {
+    const osPid = readSessionOsPid(c.session_id);
+    if (
+      fresh.owner.host === hostname() &&
+      fresh.ageMs <= PID_PROTECT_CEILING_MS &&
+      osPid !== null &&
+      isOsPidAlive(osPid)
+    ) {
+      return "pid-alive";
+    }
+  }
   // A touch since enumeration flips it out of the stale bucket ...
   if (classifyLiveness(fresh) !== "stale") return "now-live";
   // ... or refreshes it back under the GC floor (still stale, but no longer
@@ -661,11 +704,32 @@ export function runReconcileBoot(
     return paused;
   };
 
+  // Session-level OS-pid liveness, memoized like the pause lookup (C1 S2). The
+  // recorded harness pid lives on the canonical anchor (recordSessionOsPid), so
+  // one read + one kill(0) probe per session covers all its candidates. Absent
+  // pid (legacy / flag-off record) or a dead pid → false → no protect (degrades
+  // to mtime). The host-match + ceiling gate is applied per-candidate in the
+  // enumeratePresence thunk; this memo answers only "is the recorded pid alive?".
+  const osPidAliveMemo = new Map<string, boolean>();
+  const isSessionOsPidAlive = (sessionId: string): boolean => {
+    const cached = osPidAliveMemo.get(sessionId);
+    if (cached !== undefined) return cached;
+    const pid = readSessionOsPid(sessionId);
+    const alive = pid !== null && isOsPidAlive(pid);
+    osPidAliveMemo.set(sessionId, alive);
+    return alive;
+  };
+
   // Presence is enumerated UNCONDITIONALLY: identity/worktree classification
   // cross-refs each session's presence liveness (buildSessionLivenessMap), so
   // the presence pass must run even when only identity/worktree are in scope.
   // Its candidates/errors are OUTPUT only when presence is in scope.
-  const presence = enumeratePresence(now, currentHost, isSessionPaused);
+  const presence = enumeratePresence(
+    now,
+    currentHost,
+    isSessionPaused,
+    isSessionOsPidAlive,
+  );
   const sessionLiveness = buildSessionLivenessMap(presence.candidates);
 
   const candidates: ReconcileBootCandidate[] = [];

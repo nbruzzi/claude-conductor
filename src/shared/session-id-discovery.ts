@@ -333,6 +333,51 @@ export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
   return { kind: "ambiguous", candidates };
 }
 
+/**
+ * Resolve the REAL OS pid for a KNOWN session (C1 S2): scan the Claude Code
+ * binary's `~/.claude/sessions/` registry for the pid-stemmed `<pid>.json` whose
+ * embedded `sessionId` matches, and return its `pid`. The sessionId-match is the
+ * load-bearing safety guard — a pid that is NOT ours (a stale/recycled pidfile)
+ * must never be returned. Skips uuid-stemmed telemetry files (the registry dir
+ * carries mixed pid/uuid stems).
+ *
+ * The caller knows its sessionId (a SessionStart hook), so this scans BY the
+ * known sessionId rather than walking the ppid tree ({@link resolveSessionId}'s
+ * discover-my-UNKNOWN-id path) — the scan is the natural operation for a known
+ * id, and it is deterministically testable. It reuses the same `<pid>.json`
+ * reader + cold-start retry (the harness may not have written the pidfile yet at
+ * session-init). Returns `null` when no matching pidfile is found within the
+ * retry budget — the caller then records nothing and the pid-protect degrades
+ * to mtime.
+ */
+export function resolveSessionOsPid(
+  sessionId: string,
+  opts?: ResolveOptions,
+): number | null {
+  if (!isStrictUUID(sessionId)) return null;
+  const sessionsDir = effectiveSessionsDir(opts);
+  const retryCount = opts?.retryCount ?? DEFAULT_RETRY_COUNT;
+  const retryDelayMs = opts?.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+
+  for (let attempt = 0; attempt <= retryCount; attempt++) {
+    let entries: string[];
+    try {
+      entries = readdirSync(sessionsDir);
+    } catch {
+      entries = [];
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      const stem = entry.slice(0, -5);
+      if (!/^\d+$/.test(stem)) continue; // pid-stemmed CC files only (skip uuid telemetry)
+      const cc = readCCBinaryFile(join(sessionsDir, entry));
+      if (cc !== null && cc.sessionId === sessionId) return cc.pid;
+    }
+    if (attempt < retryCount) sleepSync(retryDelayMs);
+  }
+  return null;
+}
+
 function truncateId(sessionId: string): string {
   if (sessionId.length <= 12) return sessionId;
   return `${sessionId.slice(0, 8)}...${sessionId.slice(-4)}`;
