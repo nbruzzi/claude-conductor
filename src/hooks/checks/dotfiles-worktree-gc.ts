@@ -58,15 +58,11 @@ import { effectiveHome } from "../../shared/home.ts";
 import {
   artifactIdFromPath,
   clearSentinelDotfilesRoot,
-  isSessionLiveByPrefix,
   listAllHeartbeats,
   unregisterActiveSession,
   type HeartbeatListing,
 } from "../../active-sessions/index.ts";
-import {
-  COORDINATION_CHANNEL_ID,
-  isSidPrefixLiveOnChannel,
-} from "../../channels/index.ts";
+import { sessionLivePrefixSource } from "../../active-sessions/session-liveness.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
@@ -144,34 +140,27 @@ export async function check(input: HookInput): Promise<HookResult> {
       // Cross-artifact liveness gate (backlog L1049; 2026-06-02 4/4 live-reap
       // fix). byDotfilesRoot above scans ONLY the ~/.claude anchor, which
       // refreshes at session-start + per-tool heartbeats on the ~/.claude
-      // artifact — NOT channel-send (that touches the separate CHANNEL store,
-      // the cross-store gap L1049 slice-2b closes below). Per-tool heartbeats
-      // land on the session's CWD artifact (its worktree). So a live session
-      // editing files is fresh on its cwd artifact while its anchor went
-      // stale/absent — the old anchor-only check (`sidPrefixHasLiveAnchor`)
-      // mis-read it as dead and reaped a LIVE worktree. `isSessionLiveByPrefix`
-      // scans ALL active-sessions artifacts; `isSidPrefixLiveOnChannel` adds the
-      // coordination CHANNEL store (cohort sends refresh ONLY that store). Live
-      // on EITHER store (OR — adds protection, never removes) → do NOT reap.
-      const liveActiveSessions = isSessionLiveByPrefix(wt.sessionId, now);
-      const liveOnChannel =
-        !liveActiveSessions &&
-        isSidPrefixLiveOnChannel(
-          wt.sessionId,
-          COORDINATION_CHANNEL_ID,
-          now,
-          GC_WINDOW_MS,
-        );
-      if (liveActiveSessions || liveOnChannel) {
+      // artifact — NOT channel-send (that touches the separate CHANNEL store).
+      // Per-tool heartbeats land on the session's CWD artifact (its worktree).
+      // So a live session editing files is fresh on its cwd artifact while its
+      // anchor went stale/absent — the old anchor-only check mis-read it as dead
+      // and reaped a LIVE worktree. The canonical OR-composer
+      // `sessionLivePrefixSource` (C1 S1) scans ALL active-sessions artifacts AND
+      // the coordination CHANNEL store (cohort sends refresh ONLY that store),
+      // returning WHICH store proved liveness so the breadcrumb stays forensic.
+      // Live in EITHER store → do NOT reap.
+      const liveSource = sessionLivePrefixSource(wt.sessionId, now);
+      if (liveSource !== null) {
         appendPresenceFailure({
           timestamp: new Date().toISOString(),
           sessionId,
           source: "dispatcher",
           kind: "worktree-gc-liveness-fallback-fired",
           artifactPath: wt.path,
-          detail: liveOnChannel
-            ? `sid-prefix ${wt.sessionId} is live on the coordination channel (fresh channel heartbeat) but the active-sessions store was stale/missing — skipping reap of a live worktree (L1049 slice-2b)`
-            : `sid-prefix ${wt.sessionId} is live cross-artifact (fresh heartbeat on some artifact) but the ~/.claude anchor was stale/missing — skipping reap of a live worktree (L1049)`,
+          detail:
+            liveSource === "channel"
+              ? `sid-prefix ${wt.sessionId} is live on the coordination channel (fresh channel heartbeat) but the active-sessions store was stale/missing — skipping reap of a live worktree (L1049 slice-2b)`
+              : `sid-prefix ${wt.sessionId} is live cross-artifact (fresh heartbeat on some artifact) but the ~/.claude anchor was stale/missing — skipping reap of a live worktree (L1049)`,
         });
         continue;
       }
@@ -235,7 +224,7 @@ export async function check(input: HookInput): Promise<HookResult> {
       }
 
       // F4 never-kill-silently (L1049): this reap survived the cross-artifact
-      // liveness gate above (isSessionLiveByPrefix === false), so the owning
+      // liveness gate above (sessionLivePrefixSource === null), so the owning
       // session had NO live heartbeat (age<window) on ANY artifact — not merely
       // stale on the anchor. (No-heartbeat is not provably-dead; the
       // 2-sweep-confirm follow-up adds that — NIT-RE.) Record it so the reap is

@@ -36,6 +36,10 @@ const SCRIPT_PATH = join(
 // is never itself a "caller" if some future scope-widening scans test/.
 const FN_ACTIVE = ["isSessionLive", "ByPrefix"].join("");
 const FN_CHANNEL = ["isSidPrefixLive", "OnChannel"].join("");
+// C1 S1 — the raw single-listing verdict (LGC-002) + the canonical OR-composer
+// (must NOT be flagged). Assembled at runtime so this test file is never a hit.
+const FN_CLASSIFY = ["classify", "Liveness"].join("");
+const FN_CANONICAL = ["classify", "SessionLiveness"].join("");
 
 let repo: string;
 
@@ -111,10 +115,13 @@ describe("scripts/check-liveness-gate-store-contract.sh", () => {
   });
 
   it("does NOT flag an ALLOW-LISTED gate calling a prefix-helper", () => {
-    // A known, classified gate path (the dotfiles worktree reaper) is on the
-    // ALLOWLIST — verified-compliant, so calling the helper is expected.
+    // A known, classified gate path (teammate-idle-reminder) is on the ALLOWLIST
+    // — verified-compliant, so calling the helper is expected. (C1 S1 REMOVED the
+    // worktree reapers from the allow-list — they now route through the canonical
+    // sessionLivePrefixSource — so a raw-primitive call there would now be FLAGGED;
+    // teammate-idle stays as a verified both-stores gate.)
     write(
-      "src/hooks/checks/dotfiles-worktree-gc.ts",
+      "src/hooks/checks/teammate-idle-reminder.ts",
       `import { ${FN_ACTIVE} } from "../../active-sessions/index.ts";\nexport const live = ${FN_ACTIVE}("aa", 0);\n`,
     );
     commit();
@@ -162,6 +169,46 @@ describe("scripts/check-liveness-gate-store-contract.sh", () => {
     write(
       "src/block-comment.ts",
       `/* see ${FN_ACTIVE} for the active-sessions probe */\nexport const x = 1;\n`,
+    );
+    commit();
+    const { exitCode } = run();
+    expect(exitCode).toBe(0);
+  });
+
+  // ── C1 S1: LGC-002 — the raw classifyLiveness single-listing verdict ──
+
+  it("flags a NEW src file reading the raw classifyLiveness verdict (LGC-002) — the rogue-gate root-vs-patch proof", () => {
+    // A rogue gate deciding liveness via ONLY the raw single-listing verdict is
+    // the exact single-store class C1 closes — it MUST be caught.
+    write(
+      "src/rogue-gate.ts",
+      `import { ${FN_CLASSIFY} } from "./active-sessions/index.ts";\nexport const v = ${FN_CLASSIFY}({} as never);\n`,
+    );
+    commit();
+    const { exitCode, stderr } = run();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("error[LGC-002]");
+    expect(stderr).toContain("src/rogue-gate.ts");
+    expect(stderr).toContain("session-liveness");
+  });
+
+  it("does NOT flag the canonical classifySessionLiveness (the allowed OR-composed path)", () => {
+    // The canonical is NOT a raw primitive — routing through it is the FIX, not a
+    // violation. Guards the substring-distinction (classifyLiveness must not match
+    // classifySessionLiveness) so the canonical is never a false-positive.
+    write(
+      "src/good-gate.ts",
+      `import { ${FN_CANONICAL} } from "./active-sessions/session-liveness.ts";\nexport const v = ${FN_CANONICAL}("aa", 0);\n`,
+    );
+    commit();
+    const { exitCode } = run();
+    expect(exitCode).toBe(0);
+  });
+
+  it("does NOT flag an ALLOW-LISTED enumerator reading classifyLiveness (reconcile-boot)", () => {
+    write(
+      "src/active-sessions/reconcile-boot.ts",
+      `import { ${FN_CLASSIFY} } from "./index.ts";\nexport const v = ${FN_CLASSIFY}({} as never);\n`,
     );
     commit();
     const { exitCode } = run();

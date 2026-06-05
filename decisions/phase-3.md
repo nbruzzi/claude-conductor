@@ -2028,3 +2028,43 @@ affects:
 — Q2 authored by Delta (CONVENE-2 Delta-track); peer-shadow at the PR boundary.
 
 ---
+
+## 2026-06-05 — Decision: C1 S1 — canonical session-liveness API + LGC-002 (tripwire-not-structural-unexport)
+
+```yaml
+---
+ts: 2026-06-05T14:23:12Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/active-sessions/session-liveness.ts,
+    src/hooks/checks/dotfiles-worktree-gc.ts,
+    src/hooks/checks/repo-worktree-gc.ts,
+    scripts/check-liveness-gate-store-contract.sh,
+  ]
+---
+```
+
+**Context:** C1 Slice 1 (RFC #200 §3.1) — the durable root-vs-patch closure of the false-DEAD liveness-gate class. A1 PATCHED false-dead per-gate (each gate manually OR-ing both heartbeat stores); LGC-001 scanned only the idiomatic prefix-helpers, leaving a raw-primitive false-negative. S1 CENTRALIZES the alive-anywhere OR-compose into one canonical API so a single-store alive-anywhere gate is structurally caught. Ships independent of the pid lane (S2).
+
+**Three decisions (all cohort-ratified on `coordination`, 2026-06-05):**
+
+1. **Canonical lives in a NEW leaf module `active-sessions/session-liveness.ts`, NOT `index.ts` (architectural).** The OR-compose must consult the channel store (`isSidPrefixLiveOnChannel`); `channels/index.ts` already imports `active-sessions/index.ts` at module scope, so putting the channel import in `index.ts` would close an active-sessions↔channels module cycle AT THE HUB (TDZ risk, per reconcile-boot's cycle note). A leaf module imports BOTH stores with no back-edge → no cycle; nothing imports it at module-eval (only the reaper hooks, at call sites).
+
+2. **Mechanism = the LGC-002 tripwire, NOT literal structural-unexport (refines RFC §3.1's "structural closure").** Primary-source finding: literal unexport-all is INFEASIBLE — TS/ESM has no package-private, and `classifyLiveness` + `scanHeartbeats` have legitimate CROSS-FILE consumers that are NOT alive-anywhere reap-gates (reconcile-boot ENUMERATION; the dotfiles `/presence` DISPLAY label). Chosen: extend the LGC-001 scan to flag the raw `classifyLiveness` verdict (`LGC-002`) outside an allow-list + migrate the alive-anywhere REAP-gates to the canonical — the RFC's own "caught (or won't compile)" arm, the "caught" side; the rogue-gate fixture test is the closure evidence. (Echo escalated the "is tripwire-closure still root-closure vs true structural?" framing to Nick; this slice builds the reversible tripwire version meanwhile, per that ratification. Mirrors the LGC-001 model — already a tripwire, not structural.)
+
+3. **Seam = Model B: pid (S2) is a reconcile-boot `gc_eligible` subtract-term, NOT folded into `classifySessionLiveness` (api-shape).** Charlie + Bravo converged independently; Echo ratified. pid-liveness has DIFFERENT semantics than heartbeat-store liveness — same-host-only + ceiling-bounded-protect + operator-reclaim-oriented — so folding it into the canonical verdict would impose those caveats on every caller + conflate "process exists" with "is coordinating." → the canonical signature (`classifySessionLiveness` / `isSessionLive` / `isSessionLivePrefix` / `sessionLivePrefixSource`) is STABLE across S2; S2 wires pid as a lazy thunk mirroring `channelLiveProbe`.
+
+**Migration (behavior-preserving):** the two worktree reap-gates (`dotfiles-worktree-gc`, `repo-worktree-gc`) route through `sessionLivePrefixSource` instead of manually OR-ing the prefix-helpers. The channel-floor invariant (`channel window = max(windowMs, GC_WINDOW_MS)`, for sparse channel sends) is now CENTRALIZED in the composer; `sessionLivePrefixSource` returns WHICH store proved liveness so each reaper keeps its forensic which-store breadcrumb. Their existing tests pass unchanged. The LGC-002 allow-list is updated: the reapers are REMOVED (they no longer touch a raw primitive); `session-liveness.ts` is added; reconcile-boot + teammate-idle are retained (verified both-stores gates).
+
+**Cross-edge:** NO dotfiles change. `classifyLiveness` stays exported (not privatized), so the dotfiles `src/active-sessions/cli.ts` `/presence` display consumer is unaffected (`index.ts` exports untouched). Conductor LGC scans conductor `src/` only.
+
+**Reason:** centralizing the OR-compose closes the raw-primitive false-negative the A1 patch + LGC-001 left open — the durable root-fix — while the tripwire + leaf-module + Model-B-seam choices keep it feasible under TS limits, cycle-safe, and forward-compatible with S2 at zero canonical-API churn.
+
+**Supersedes / superseded_by:** Builds ON A1 (#194/#196/#197) + the channelHB-GC (Q2, assumed by the canonical's channel read). First build slice of the C1 arc (RFC #200); S2 (pid lane) + a slimmed S4 follow (S3a/S3b capped per Nick's D1 investment-bound ruling, 2026-06-05).
+
+— S1 authored by Charlie (ea19aa59); inline subagent Nick-lens audit (2 folds applied) + Echo PR-boundary merge-gate (#203).
+
+---
