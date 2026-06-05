@@ -5,6 +5,8 @@ Copyright 2026 nbruzzi
 
 # C1: Boot-Reconciliation Contract — durable session-liveness (design)
 
+> **⛔ SUPERSEDED — shipped BOUNDED; PR #200 closed 2026-06-05 (Nick-approved).** Nick's premise-audit ("what if the captain could SEE its siblings?") reframed this arc from _build-deep-inference_ to **observe-not-infer** — the harness already publishes `~/.claude/sessions/<pid>.json` (`status`/`updatedAt`/`procStart`). Shipped on `main`: **S1** #203 (canonical `classifySessionLiveness` + LGC-002 + rogue-gate test), **S2** #204 (real session-pid subtract-only PROTECT, Model B, ceiling-bounded), **cohort-sight** #205 (read-only captain board). **CAPPED:** S3a (2-sweep) + S3b (fast-reap) — they harden mtime-inference that observation makes moot same-host; revisit only for cross-host cohorts. **C2 follow-ups:** S4-slim (state machine + 2-primitive mtime+pid contract test) + D3 (coordination-primitives) + DLOG-local. Durable record: backlog `wiki/backlog.md` L137 + `~/.claude/plans-durable/captain-observability-design-seed-2026-06-05.md`. Kept as the design record (not merged to main; the bounded outcome is the disposition).
+
 **Status:** design RFC for the multi-cycle C1 arc (roadmap L1049; agetor steal-list A-P0-1; backlog 1040) — the durable ROOT-closure the A1 acute slices point at. The artifact for Nick's multi-cycle buy-in. A1-shaped: design → audit-loop → ~4 slices. Co-scoped: Charlie (author) + Alpha (D1/correctness) + Delta (effort/sequencing). This revision folds the cohort co-scope (see the fold-log at the end).
 
 ## 1. Problem — the mtime proxy has TWO failure modes
