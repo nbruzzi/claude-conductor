@@ -2112,3 +2112,45 @@ affects:
 — C1 S2 authored by Bravo (Wave-1); PR-boundary peer-shadow = Delta (freshest pid context); Echo merge-gate. Fold-order: merges AFTER S1 #203.
 
 ---
+
+## 2026-06-05 — Decision: cohort-sight read-only captain board (D2; observe-not-infer)
+
+```yaml
+---
+ts: 2026-06-05T14:26:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/cohort-sight/index.ts,
+    src/cohort-sight/cli.ts,
+    src/cli/dispatcher.ts,
+    test/cohort-sight/cohort-sight.test.ts,
+  ]
+---
+```
+
+**Context:** The 2026-06-05 cohort huddle (Nick's "what if the captain could SEE its siblings?" provocation) blessed BOUNDING the deep liveness-INFERENCE — C1 S3a (2-sweep) + S3b (fast-reap) CAPPED/deferred (revisit only on cross-host cohorts) — and instead KEEPING + EXTENDING the OBSERVATION primitive the pid-SPIKE surfaced: the harness already publishes a per-session registry at `~/.claude/sessions/<pid>.json` ({pid, sessionId, cwd, status:busy/idle, updatedAt}). D2 builds the minimal buildable observation slice: a read-only captain board consuming what the harness + channel already publish, with ZERO new writes / ZERO new protocol.
+
+**Options considered:**
+
+1. **Conductor module (pure core + CLI verb), dashboard-consumable later (CHOSEN)** — `src/cohort-sight/index.ts` `buildCohortSight(now)` (the fusing core) + `src/cohort-sight/cli.ts` (`claude-conductor cohort-sight`, dispatcher-routed). All fusing primitives (`readMetadata`, the sessions-dir scan, `kill(pid,0)`) are conductor-resident; the pure core stays importable by the dashboard later.
+2. A new Live-mode view in the separate `claude-conductor-dashboard` repo — visual, but requires the dashboard deployed AND a conductor-exported primitive anyway; heavier + cross-repo. The board is terminal-native and Echo's merge-gate is conductor.
+3. Extend the channels `peers` verb — but cohort-sight fuses the HARNESS sessions-file (not channel-only) + `kill0`; a distinct concern from channel participation.
+
+**Chosen:** Option 1 — a conductor `src/cohort-sight/` module (core + CLI), PR to Echo.
+
+**Reason:** The fusing primitives are conductor-resident; a CLI verb mirrors the existing read-only operator-report pattern (`reconcile-boot`) and is terminal-native for the captain. Structuring as a pure `buildCohortSight()` core + thin CLI keeps the core dashboard-consumable — the dashboard's Live panel can later import it, so the two COMPOSE rather than duplicate (the parallel-infrastructure trap avoided).
+
+**Augment-only + degradable (load-bearing invariant):** cohort-sight only READS + reports; NO state-deleting (reaper/GC) path may depend on it — the pidfile is an UNDOCUMENTED, CC-version-coupled harness artifact (the C1 pid-SPIKE caveat). Every read is fail-soft (unreadable pidfile -> `blindSpots[]`; missing dir -> empty board); the `process.kill(pid,0)` probe treats EPERM as alive (exists-but-not-ours), only ESRCH as gone. This is the OBSERVE layer (distinct from the liveness-INFERENCE substrate): it obviates re-deriving busy/idle, NOT the artifact-keyed collision detection nor the channel's intentional signals.
+
+**Scope:** v1 ships the 6 directly-available fields (identity / pid / status / cwd / age / kill0). `waitingFor` (RFC-listed) is DEFERRED to v2 — it needs channel-MESSAGE derivation (a session's last `over`/`question`), heavier + heuristic; surfaced to Echo. The probe (`isPidSignalable`) mirrors S2's `isOsPidAlive` (active-sessions) — a candidate to unify once S2 lands; kept local so cohort-sight stays independent of the in-flight S2 slice.
+
+**Verification:** typecheck clean; lint clean; format clean; 10 cohort-sight tests + full suite (2661 pass) green; smoke-run on real data renders the live 5-session cohort board (Alpha/Bravo/Charlie/Delta/Echo).
+
+**Supersedes / superseded_by:** D2 of the 2026-06-05 huddle seed (Nick-blessed: D1 inference-bound + D2 cohort-sight + D3 coord-primitive fixes). No supersede; independent of C1 S1/S2 (the observe path, not the inference substrate).
+
+— cohort-sight (D2) authored by Delta; peer-shadow at the PR boundary (Echo merge-gate).
+
+---
