@@ -2154,3 +2154,42 @@ affects:
 — cohort-sight (D2) authored by Delta; peer-shadow at the PR boundary (Echo merge-gate).
 
 ---
+
+## 2026-06-05 — Decision: ci-local advisory for uncommitted substrate vs the commit-based decision-log gate (L2)
+
+```yaml
+---
+ts: 2026-06-05T21:02:19Z
+kind: tooling
+severity: minor
+phase: 3
+affects:
+  [
+    scripts/warn-uncommitted-substrate.sh,
+    scripts/ci-local.sh,
+    test/scripts/warn-uncommitted-substrate.test.ts,
+  ]
+---
+```
+
+**Context:** `check-decision-log.sh` (DLOG-001) is COMMIT-based — it diffs `merge-base(origin/main,HEAD)..HEAD`. Running `bun run ci-local` PRE-commit (HEAD ≈ origin/main) makes that range EMPTY, so check-decision-log reports a vacuous "clean" even when the working tree holds staged/unstaged substrate edits. The author then commits + pushes and CI runs the SAME gate against the now-committed diff, where it REDS (this bit C1 S1, #203). ci-local's whole purpose is local-green == CI-green; this gap defeats it for the DLOG gate specifically.
+
+**Options considered:**
+
+1. **Advisory detect-and-warn step ci-local calls (CHOSEN)** — a small `scripts/warn-uncommitted-substrate.sh` that detects uncommitted substrate (`git diff --name-only HEAD` ∪ untracked, classified IDENTICALLY to check-decision-log) and prints commit-then-recheck guidance; ci-local captures it, shows it inline + in the summary; the helper ALWAYS exits 0 and is NEVER folded into `FAILED`. No new gate, no pre-push hook.
+2. Make check-decision-log itself working-tree-aware — rejected: it must stay commit-based to mirror CI exactly; a working-tree mode would diverge local from CI and become its own false signal.
+3. A blocking pre-commit/pre-push gate on uncommitted substrate — rejected by directive (Nick: advisory, NOT a hard gate / new infra; conductor has no pre-push hook).
+
+**Chosen:** Option 1 — an advisory helper invoked by ci-local; detect-and-warn only.
+
+**Reason:** Closes the false-confidence gap at the exact go/no-go point (the ci-local summary) without changing the commit-based gate's CI-parity semantics and without adding enforcement infra. A separate script makes the substrate classifier independently unit-testable and lets a paired structural test pin its parity with check-decision-log so the two cannot drift.
+
+**Scope:** "Uncommitted" includes UNTRACKED `src/*.ts` (via `git ls-files --others --exclude-standard`), not only tracked working-tree changes — an untracked new substrate file is the same post-commit-CI-red case. This extends the directive's literal `git diff --name-only HEAD` + staged; flagged at the PR boundary as a deliberate completeness call (trivially foldable if the shadow disagrees). ci-local's run-all-aggregate behavior and exit codes are unchanged; the advisory never affects pass/fail.
+
+**Verification:** advisory unit suite green (temp-git sandbox: tracked-mod / staged-new / untracked / nested detected; `*.test.ts` + non-src excluded; clean tree → empty; always exit 0; not-a-git-repo graceful-skip; `--help`); classification-parity + ci-local-wiring + shebang-before-SPDX pins green; `ci-local.test.ts` gate-parity unaffected; `bun run ci-local` dogfooded; full typecheck / format / lint / suite green (exact counts in the PR + commit body).
+
+**Supersedes / superseded_by:** none. Complements Q1 ci-local (#199) by closing the DLOG-specific pre-commit gap that #199's run-all surfaced but could not see.
+
+— L2 DLOG-local authored by Bravo; PR-boundary peer-shadow = TBD (cohort, per dynamic-pairing); Alpha merge-gate.
+
+---
