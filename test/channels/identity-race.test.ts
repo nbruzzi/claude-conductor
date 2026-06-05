@@ -676,4 +676,107 @@ describe("claimNamedIdentityWithLock — sentinel-reverify-under-lock branches (
     );
     expect(existsSync(tmpPath)).toBe(false); // linkSync + unlink consumed tmpPath
   });
+
+  it("CORRUPT ORPHAN (present-but-unparseable sentinel + metadata null): --force recovers via renameSync (RE-3)", async () => {
+    const channelId = "c-revlock-corrupt";
+    const letter = "Delta";
+    const nSession = "sess-corrupt-n";
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: "sess-corrupt-init",
+    });
+    const sentinelPath = identitySentinelPath(channelId, letter);
+    const tmpPath = writeTmpClaim(sentinelPath, nSession); // mkdirs the dir
+    // Plant a corrupt (unparseable) orphan sentinel: present on disk, NO metadata
+    // entry (a torn write). readSentinelSessionId -> null but the file exists ->
+    // the existsSync-split recovery branch. Pre-RE-3 this wedged the letter
+    // (create-only linkSync EEXIST -> raced forever); now --force recovers it.
+    writeFileSync(sentinelPath, "}{ not valid json\n");
+
+    const result = await claimNamedIdentityWithLock({
+      channelId,
+      identity: letter,
+      newClaim: {
+        session_id: nSession,
+        role: "queue",
+        joined_at: new Date().toISOString(),
+      },
+      tmpPath,
+      sentinelPath,
+      force: true,
+      fromSession: undefined,
+    });
+
+    // Recovered: the corrupt orphan is clobbered; N holds the letter, sentinel +
+    // metadata coherent. (A VALID orphan would NOT be clobbered — it parses ->
+    // sentinelHolder !== null -> the diverged branch -> raced.)
+    expect(result.kind).toBe("claimed");
+    expect(
+      (
+        JSON.parse(readFileSync(sentinelPath, "utf-8")) as {
+          session_id: string;
+        }
+      ).session_id,
+    ).toBe(nSession);
+    expect(readMetadata(channelId).identities?.[letter]?.session_id).toBe(
+      nSession,
+    );
+    expect(existsSync(tmpPath)).toBe(false); // renameSync consumed tmpPath
+  });
+});
+
+/**
+ * D3 (b) RE-2 — concurrent vanilla-vs-named contention on the SAME letter (the
+ * live interleaving the converted it.todo described). The deterministic branch
+ * tests above pin the reverify LOGIC; this stresses REAL concurrency and pins
+ * the load-bearing post-state invariant (sentinel === metadata, no divergence)
+ * that the pre-fix unconditional renameSync could violate.
+ */
+describe("claimIdentity vs claimIdentityNamed --force — concurrent coherence (D3 (b) RE-2)", () => {
+  it("100 iterations of concurrent vanilla-claim + named --force on Alpha never diverge", async () => {
+    let iterationsRun = 0;
+    for (let iter = 0; iter < 100; iter++) {
+      const channelId = `c-vn-race-${iter}`;
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: `vn-init-${iter}`,
+      });
+      // Race a vanilla pool-walk claim (lands on Alpha, the lowest free letter)
+      // against a --force named takeover targeting Alpha. Promise.allSettled
+      // interleaves their linkSync + lock acquisition on a single event loop, so
+      // vanilla's post-linkSync commitIdentityClaim can land before OR after the
+      // takeover commits.
+      await Promise.allSettled([
+        claimIdentity({ channelId, sessionId: `vn-vanilla-${iter}` }),
+        claimIdentityNamed({
+          channelId,
+          sessionId: `vn-named-${iter}`,
+          identity: "Alpha",
+          force: true,
+        }),
+      ]);
+
+      // Load-bearing invariant: if Alpha is held, its on-disk sentinel and its
+      // metadata entry AGREE (no sentinel/metadata divergence). A --force
+      // takeover legitimately displaces the vanilla claimant, so we do NOT
+      // assert return-value uniqueness — only substrate coherence, which the
+      // pre-fix renameSync-clobber-then-delayed-vanilla-commit could break.
+      const metaAlpha =
+        readMetadata(channelId).identities?.["Alpha"]?.session_id;
+      if (metaAlpha !== undefined) {
+        const sentinelAlpha = JSON.parse(
+          readFileSync(identitySentinelPath(channelId, "Alpha"), "utf-8"),
+        ) as { session_id: string };
+        if (sentinelAlpha.session_id !== metaAlpha) {
+          throw new Error(
+            `iter=${iter} DIVERGENCE: sentinel Alpha=${sentinelAlpha.session_id} != metadata Alpha=${metaAlpha}`,
+          );
+        }
+      }
+      iterationsRun++;
+    }
+    expect(iterationsRun).toBe(100);
+  }, 60_000);
 });

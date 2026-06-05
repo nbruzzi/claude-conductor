@@ -1401,30 +1401,46 @@ export async function claimNamedIdentityWithLock(args: {
       } as const;
     }
     if (sentinelHolder === null) {
-      // Metadata + sentinel agree the letter is unheld right now (prior holder
-      // fully released inside our window). A force-takeover of an unheld letter
-      // is a create — use create-only `linkSync` so a vanilla `linkSync`
-      // racing in is DETECTED via EEXIST rather than silently clobbered by a
-      // create-or-replace `renameSync`.
-      try {
-        linkSync(tmpPath, sentinelPath);
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException | undefined)?.code === "EEXIST") {
-          return {
-            kind: "raced",
-            expectedHolder: null,
-            actualHolder: readSentinelSessionId(sentinelPath),
-          } as const;
+      // `sentinelHolder === null` means the on-disk sentinel is either ABSENT
+      // or PRESENT-but-unparseable (corrupt/torn). `holderSessionId` is null
+      // too (we reached here via the equality check above), so metadata records
+      // no live claim either way. Split on file presence:
+      if (existsSync(sentinelPath)) {
+        // Present-but-unparseable + no metadata entry = a CORRUPT ORPHAN (a
+        // VALID orphan would parse -> `sentinelHolder !== null` -> the diverged
+        // branch above, which yields `raced`). It is NOT a live claim, so a
+        // `--force` takeover RECOVERS it by clobbering. This restores the
+        // recovery the pre-reverify unconditional `renameSync` gave: without it
+        // the corrupt sentinel EEXISTs every create-only `linkSync` forever and
+        // permanently wedges the letter. Safe under the lock — no release can
+        // unlink it (lock-gated) and no vanilla can replace a present sentinel
+        // (EEXIST), so it is stable until this renameSync.
+        renameSync(tmpPath, sentinelPath);
+      } else {
+        // Truly absent: the letter is unheld right now (prior holder fully
+        // released inside our window). Use create-only `linkSync` so a vanilla
+        // `linkSync` racing in is DETECTED via EEXIST rather than silently
+        // clobbered by a create-or-replace `renameSync`.
+        try {
+          linkSync(tmpPath, sentinelPath);
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException | undefined)?.code === "EEXIST") {
+            return {
+              kind: "raced",
+              expectedHolder: null,
+              actualHolder: readSentinelSessionId(sentinelPath),
+            } as const;
+          }
+          throw err;
         }
-        throw err;
-      }
-      // `linkSync` created a second hardlink; `tmpPath` still exists. Remove it
-      // so the caller's "claimed => tmpPath consumed" contract holds uniformly
-      // with the `renameSync` branch below.
-      try {
-        unlinkSync(tmpPath);
-      } catch {
-        // tmp already gone; ignore.
+        // `linkSync` created a second hardlink; `tmpPath` still exists. Remove
+        // it so the caller's "claimed => tmpPath consumed" contract holds
+        // uniformly with the `renameSync` branches.
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          // tmp already gone; ignore.
+        }
       }
     } else {
       // Sentinel present AND === the metadata snapshot holder. Under this lock
