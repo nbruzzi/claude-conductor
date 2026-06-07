@@ -44,6 +44,7 @@ import {
   type ChannelMessage,
   type ChannelRole,
 } from "../../src/channels/api.ts";
+import { isChannelMessage } from "../../src/channels/index.ts";
 
 const SESSION = "ad41f287-c7d2-4b01-a3ad-3aec8eb25d29";
 let sandbox: string;
@@ -220,6 +221,81 @@ describe("ChannelMessage round-trip — Slice 7 invariant lock", () => {
       const [received] = readMessages("c-large");
       expect(received?.body_ref).toBe(appended.body_ref);
       expect(received?.body).toBeUndefined();
+    });
+  });
+
+  describe("L409 body_preview (send-time blank-preview fix)", () => {
+    it("shunted large body populates a single-line, truncated body_preview", async () => {
+      await setup("c-bp");
+      const big = "alpha bravo charlie delta echo ".repeat(200); // ~6KB > 3072
+      const appended = await appendMessage({
+        channelId: "c-bp",
+        message: baseMsg({ body: big }),
+      });
+      expect(appended.body_ref).toBeDefined();
+      expect(appended.body).toBeUndefined();
+      expect(appended.body_preview).toBeDefined();
+      // <= 200 content codepoints + at most a single trailing ellipsis
+      expect(
+        Array.from(appended.body_preview ?? "").length,
+      ).toBeLessThanOrEqual(201);
+      expect(appended.body_preview?.startsWith("alpha bravo charlie")).toBe(
+        true,
+      );
+      // round-trips through serialize → JSONL → readMessages (extra field preserved)
+      const [received] = readMessages("c-bp");
+      expect(received?.body_preview).toBe(appended.body_preview);
+      expect(received?.body).toBeUndefined();
+      expect(received?.body_ref).toBe(appended.body_ref);
+    });
+
+    it("collapses newlines so the preview stays single-line (tail/JSONL safety)", async () => {
+      await setup("c-bp-nl");
+      const big = "line one\nline two\r\nline three\t".repeat(150); // > 3072 w/ breaks
+      const appended = await appendMessage({
+        channelId: "c-bp-nl",
+        message: baseMsg({ body: big }),
+      });
+      expect(appended.body_preview).toBeDefined();
+      expect(appended.body_preview).not.toContain("\n");
+      expect(appended.body_preview).not.toContain("\r");
+    });
+
+    it("truncates on codepoint boundaries — never splits an astral surrogate", async () => {
+      await setup("c-bp-cp");
+      const big = "🦀".repeat(2000); // 4 bytes each → ~8KB; truncation lands mid-stream
+      const appended = await appendMessage({
+        channelId: "c-bp-cp",
+        message: baseMsg({ body: big }),
+      });
+      expect(appended.body_preview).toBeDefined();
+      const cps = Array.from((appended.body_preview ?? "").replace(/…$/u, ""));
+      expect(cps.length).toBeGreaterThan(0);
+      // a split surrogate would not equal the whole crab codepoint
+      for (const cp of cps) expect(cp).toBe("🦀");
+    });
+
+    it("small (non-shunted) body → no body_preview", async () => {
+      await setup("c-bp-small");
+      const appended = await appendMessage({
+        channelId: "c-bp-small",
+        message: baseMsg({ body: "tiny inline body" }),
+      });
+      expect(appended.body_ref).toBeUndefined();
+      expect(appended.body).toBe("tiny inline body");
+      expect(appended.body_preview).toBeUndefined();
+    });
+
+    it("isChannelMessage rejects a non-string body_preview (shape hygiene)", () => {
+      expect(
+        isChannelMessage({
+          ts: new Date().toISOString(),
+          from: SESSION,
+          kind: "note",
+          body_ref: "deadbeef",
+          body_preview: 123,
+        }),
+      ).toBe(false);
     });
   });
 

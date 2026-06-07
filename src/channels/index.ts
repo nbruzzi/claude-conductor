@@ -60,6 +60,12 @@ import { validateIdentityClaim } from "./claim.ts";
  *  to a sidecar file and only a pointer message is appended. */
 const SMALL_MESSAGE_MAX_BYTES = 3 * 1024;
 
+/** L409: max codepoints in a shunt-time `body_preview` (see {@link buildBodyPreview}).
+ *  Bounded at or below the smallest downstream preview window (the Monitor recipe
+ *  slices [0:220]; the peer deliverer caps at MAX_INLINE_BODY_CHARS = 200) so no
+ *  consumer re-truncates it awkwardly. */
+const BODY_PREVIEW_MAX_CHARS = 200;
+
 /** Lock-stale-steal threshold — `acquireLock` reclaims a lockfile whose
  *  mtime exceeds this age, on the assumption the holder crashed. Exported
  *  per Phase 2 Slice 4 — the channels-gc-reaper computes its mtime gate
@@ -246,6 +252,13 @@ export type ChannelMessage = {
   kind: ChannelKind;
   body?: string;
   body_ref?: string;
+  /** L409: single-line, codepoint-bounded preview of a body that was shunted
+   *  to a `body_ref` sidecar (set at send-time when the body exceeds the inline
+   *  limit). Lets raw-JSONL preview consumers (the Monitor/tail recipe, the peer
+   *  message deliverer) render content instead of a blank, while `body_ref`
+   *  stays the authoritative full body. Absent on small (inline-body) and legacy
+   *  messages — purely additive; the body/body_ref XOR is preserved. */
+  body_preview?: string;
   /** Populated when `body_ref` is set on the message but the referenced
    *  body file could not be read (missing, permission denied, IO error).
    *  Surfaces what was previously a silent fallback (message returned with
@@ -873,6 +886,7 @@ function serializeLine(msg: ChannelMessage): string {
   };
   if (msg.body !== undefined) obj["body"] = msg.body;
   if (msg.body_ref !== undefined) obj["body_ref"] = msg.body_ref;
+  if (msg.body_preview !== undefined) obj["body_preview"] = msg.body_preview;
   // Phase 1 structured fields: write only when defined; preserves existing
   // line shape on legacy messages (forward-compat with pre-Phase-1 readers).
   if (msg.identity !== undefined) obj["identity"] = msg.identity;
@@ -880,6 +894,21 @@ function serializeLine(msg: ChannelMessage): string {
   if (msg.version !== undefined) obj["version"] = msg.version;
   if (msg.provenance !== undefined) obj["provenance"] = msg.provenance;
   return `${JSON.stringify(obj)}\n`;
+}
+
+/** L409: build a single-line, codepoint-bounded preview of a body being shunted
+ *  to a `body_ref` sidecar, so raw-JSONL preview consumers (the Monitor recipe,
+ *  the peer message deliverer) render content instead of a blank.
+ *  - Newlines/CRs collapse to a single space: JSONL is one-line-per-message and
+ *    a raw newline would also fracture a `tail` preview across lines.
+ *  - Truncation is codepoint-safe (`Array.from`, not `.slice`) so an astral
+ *    surrogate pair (emoji, some CJK) is never split into a lone surrogate.
+ *  Returns "" for a whitespace-only body — the caller omits the field then. */
+function buildBodyPreview(body: string): string {
+  const singleLine = body.replace(/[\r\n]+/g, " ").trim();
+  const cps = Array.from(singleLine);
+  if (cps.length <= BODY_PREVIEW_MAX_CHARS) return singleLine;
+  return `${cps.slice(0, BODY_PREVIEW_MAX_CHARS).join("")}…`;
 }
 
 function appendLineAtomically(path: string, line: string): void {
@@ -1709,6 +1738,11 @@ export async function appendMessage(args: {
         kind: message.kind,
         body_ref: ref,
       };
+      // L409: a single-line content preview so raw-JSONL consumers (the
+      // Monitor/tail recipe, the peer message deliverer) render content rather
+      // than a blank. Omitted when the body is whitespace-only (empty preview).
+      const preview = buildBodyPreview(message.body);
+      if (preview.length > 0) shunted.body_preview = preview;
       if (message.identity !== undefined) shunted.identity = message.identity;
       if (message.role !== undefined) shunted.role = message.role;
       if (message.version !== undefined) shunted.version = message.version;
@@ -2192,6 +2226,8 @@ export function isChannelMessage(v: unknown): v is ChannelMessage {
   if (!CHANNEL_KINDS.includes(o["kind"] as ChannelKind)) return false;
   if (o["body"] !== undefined && typeof o["body"] !== "string") return false;
   if (o["body_ref"] !== undefined && typeof o["body_ref"] !== "string")
+    return false;
+  if (o["body_preview"] !== undefined && typeof o["body_preview"] !== "string")
     return false;
   // Phase 1 additive optional fields: validate shape if present, ignore absence.
   if (o["identity"] !== undefined && typeof o["identity"] !== "string")
