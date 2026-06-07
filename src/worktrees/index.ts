@@ -101,6 +101,28 @@ export function worktreePathForSession(
 }
 
 /**
+ * Is `worktreeId` (the path tail after `<canonical>-`) a sid-prefix-shaped id —
+ * exactly SID_PREFIX_LEN (8) lowercase-hex chars, the shape
+ * {@link worktreePathForSession} produces for an AUTO-provisioned per-session
+ * worktree?
+ *
+ * The worktree reapers use this to SCOPE themselves to worktrees they can safely
+ * attribute to a session by sid-prefix. A MANUAL named-branch worktree
+ * (`<canonical>-<nato>-<slug>`, e.g. `-delta-g2`, `-golf-item3`) has a slug tail,
+ * NOT a sid-prefix: `sessionLivePrefixSource` can't attribute it (no session's
+ * sid starts with the slug) and `removeWorktree`'s `slice(0, SID_PREFIX_LEN)`
+ * truncates the slug to a WRONG path — a silent no-op the reaper re-logs
+ * `worktree-cleanup-incomplete` every boot. So named worktrees are out of the
+ * reaper's sid-prefix model — skipped, left to the operator sweep — until G6-P2
+ * lands a safe-by-content (merged + clean + stale) named-reap path.
+ * (G6-P1 reaper-coverage; CG5-exempt — a scope filter, not a liveness verdict.)
+ */
+export function isSidPrefixWorktreeId(worktreeId: string): boolean {
+  // SID_PREFIX_LEN (8) lowercase-hex — the worktreePathForSession path shape.
+  return /^[0-9a-f]{8}$/u.test(worktreeId);
+}
+
+/**
  * Provision a worktree for the session. Idempotent over the path:
  * a second call with the same sessionId returns `kind: "exists"`.
  *

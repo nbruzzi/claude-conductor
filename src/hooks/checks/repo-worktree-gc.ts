@@ -64,7 +64,11 @@ import { sessionLivePrefixSource } from "../../active-sessions/session-liveness.
 import { getWallClockNow } from "../../shared/clock.ts";
 import { effectiveHome } from "../../shared/home.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
-import { listWorktrees, removeWorktree } from "../../worktrees/index.ts";
+import {
+  isSidPrefixWorktreeId,
+  listWorktrees,
+  removeWorktree,
+} from "../../worktrees/index.ts";
 import {
   readRepoConfig,
   type RepoConfigEntry,
@@ -146,6 +150,23 @@ function reapRepo(args: {
   const source = `${SOURCE}:${repo.name}`;
 
   for (const wt of worktrees) {
+    // G6-P1 reaper-coverage (subtract-only scope filter; CG5-exempt). Only
+    // AUTO-provisioned sid-prefix worktrees are safely sid-attributable; a
+    // MANUAL named worktree (slug tail, not 8-hex) can't be sid-attributed AND
+    // removeWorktree's slice(0,8) truncates its slug to a wrong path (a silent
+    // no-op). Skip it (operator-sweep territory) until G6-P2's safe-by-content
+    // named-reap. This only ADDS a skip — it can never enable a reap.
+    if (!isSidPrefixWorktreeId(wt.sessionId)) {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        source: "dispatcher",
+        kind: "worktree-gc-skipped-named",
+        artifactPath: wt.path,
+        detail: `[${source}] ${wt.sessionId} is a named (non-sid-prefix) worktree — outside the reaper's sid-prefix model; left to operator-sweep until G6-P2`,
+      });
+      continue;
+    }
     // Cross-artifact liveness (backlog L1049): the canonical OR-composer
     // `sessionLivePrefixSource` (C1 S1) scans ALL active-sessions artifacts AND
     // the coordination CHANNEL store (cohort sends refresh ONLY that store),

@@ -85,6 +85,10 @@ export type PresenceFailureKind =
   | "worktree-gc-liveness-fallback-fired"
   | "worktree-cleanup-failed"
   | "worktree-cleanup-incomplete"
+  // G6-P1 reaper-coverage — the reaper skipped a MANUAL named (non-sid-prefix)
+  // worktree: outside its sid-prefix model (can't sid-attribute + removeWorktree
+  // would no-op), left to the operator sweep until G6-P2's safe named-reap.
+  | "worktree-gc-skipped-named"
   // Phase 3 Slice 2 follow-up — provisioner observability (provisionWorktree
   // returned ok but post-create state is incomplete: stat-errno, realpath
   // mismatch with canonical, or sentinel-readback null). Mirrors the
@@ -426,6 +430,7 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "worktree-gc-liveness-fallback-fired" ||
     k === "worktree-cleanup-failed" ||
     k === "worktree-cleanup-incomplete" ||
+    k === "worktree-gc-skipped-named" ||
     k === "worktree-provision-incomplete" ||
     // P0 substrate canary (backlog L:892, 2026-05-17) — node_modules
     // symlink-clone failed during provisioner post-creation.

@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  isSidPrefixWorktreeId,
   linkCanonicalNodeModules,
   listWorktrees,
   provisionWorktree,
@@ -44,6 +45,33 @@ import { makeTmpRepo, type TmpRepo } from "../../test-utils/index.ts";
 const FEATURE_FLAG_ENV = "CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES";
 const SID = "94a8058c-d764-43e1-a87e-b43126b7fe90";
 const SID2 = "76b84abc-a6a2-4395-bb65-f5bd799c525c";
+
+describe("isSidPrefixWorktreeId — G6-P1 reaper scope filter", () => {
+  it("accepts an 8-char lowercase-hex sid-prefix (the auto-provisioned shape)", () => {
+    expect(isSidPrefixWorktreeId("94a8058c")).toBe(true);
+    expect(isSidPrefixWorktreeId(SID.slice(0, 8))).toBe(true);
+  });
+
+  it("rejects a MANUAL named-branch slug (the worktree-debt class)", () => {
+    for (const named of [
+      "delta-g2",
+      "golf-item3",
+      "charlie-d3a",
+      "charlie-d3-03342ac4",
+      "bravo-nudge-kind",
+    ]) {
+      expect(isSidPrefixWorktreeId(named)).toBe(false);
+    }
+  });
+
+  it("rejects wrong-length or non-hex ids (exactly 8, lowercase 0-9a-f)", () => {
+    expect(isSidPrefixWorktreeId("94a8058")).toBe(false); // 7 chars
+    expect(isSidPrefixWorktreeId("94a8058cd")).toBe(false); // 9 chars
+    expect(isSidPrefixWorktreeId("94A8058C")).toBe(false); // uppercase
+    expect(isSidPrefixWorktreeId("94a8058g")).toBe(false); // non-hex 'g'
+    expect(isSidPrefixWorktreeId("")).toBe(false);
+  });
+});
 
 let repo: TmpRepo | null = null;
 let prevFlag: string | undefined;
