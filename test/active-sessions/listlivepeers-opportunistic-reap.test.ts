@@ -92,7 +92,7 @@ describe("T10 — listLivePeers opportunistic-reap success telemetry (Branch B)"
       artifactPath: ARTIFACT_PATH,
       now: Date.now(),
     });
-    // Backdate the file mtime ~24h (well past GC_WINDOW_MS=120min) so the next
+    // Backdate the file mtime ~24h (well past GC_WINDOW_MS=60min) so the next
     // listLivePeers walk classifies it aged-out and opportunistically reaps it.
     const longAgoSeconds = Math.floor(Date.now() / 1000) - 60 * 60 * 24;
     utimesSync(heartbeatPath(PEER), longAgoSeconds, longAgoSeconds);
