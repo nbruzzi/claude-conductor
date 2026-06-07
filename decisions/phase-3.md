@@ -2319,3 +2319,40 @@ affects:
 — L409 body_preview authored by Bravo (Axis-3); subagent design-lens (primary-source consumer-trace) + PR to Alpha merge-gate (roadmap execution).
 
 ---
+
+```yaml
+---
+ts: 2026-06-07T23:06:56Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/channels/index.ts,
+    src/channels/cli.ts,
+    test/channels/join-or-create.test.ts,
+  ]
+---
+```
+
+**Context:** L171 channel-growth — channel metadata `participants: string[]` (index.ts:338) is APPEND-ONLY (pushed on join at index.ts:1018, never pruned). On the eternal `coordination` channel it grows unbounded (~27 entries, ~25 dead, observed live) — a DISTINCT unbounded file from the messages.jsonl rotation. Owner: Bravo (A3 metadata-surface). Alpha-lensed, then a primary-source RE-LENS reshaped the placement.
+
+**Options considered:**
+
+1. **Prune-on-join IN joinChannel calling classifySessionLiveness directly** (the original lensed spec). REJECTED at primary source: channels/index.ts already imports active-sessions/index.ts, and classifySessionLiveness lives in active-sessions/session-liveness.ts which imports BOTH active-sessions/index AND channels/index. session-liveness.ts:14-20 documents the no-channels-back-edge-at-the-hub invariant — importing classifySessionLiveness into channels/index.ts would RE-CLOSE the active-sessions↔channels module cycle (TDZ risk) the S4-slim placement (#208) deliberately avoided.
+2. **[CHOSEN] Dependency-injection (inversion-of-control).** joinChannel / joinOrCreateChannel take an OPTIONAL `pruneStale?: (sid) => boolean`; the prune runs atomically inside the existing withMetadataLock after the push (drop where pruneStale(sid) AND sid != sessionId AND sid not in meta.identities). The CLI edge (cli.ts — a top-level consumer that imports session-liveness with NO cycle) builds the predicate `sid => classifySessionLiveness(sid, now).verdict === "stale"` and injects it on the coordination join-or-create path. Mechanism in the library, policy at the consumer.
+3. **Fold into the SHARED channels-gc-reaper.** REJECTED: the list only grows on join, so prune-on-join fully bounds it; the SHARED-reaper edit adds serialization cost for no gain.
+
+**Chosen:** Option 2 — DI prune-on-join.
+
+**Reason:** keeps channels/index.ts cycle-free (the hard architectural constraint) while still consuming the LGC-002-clean canonical classifySessionLiveness composer (not a raw primitive — tripwire clean). Prune-in-place is safe: the ever-joined set is reconstructable from messages.jsonl (every join posts a message; the from-set IS ever-joined), and consumers tolerate it — handoff-resolver already skips no-heartbeat participants (same counts, fewer to scan), the `peers` verb + active-channels display show live/recent (what is operationally wanted). Criterion = verdict 'stale' (age beyond LIVE_WINDOW), NOT a literal GC_WINDOW: classifySessionLiveness returns a VERDICT not an age, and a raw-age GC_WINDOW check would trip LGC-002; over-pruning is harmless (idempotent rejoin re-appends — Alpha WITHDREW the GC_WINDOW lean on exactly this point). Scoped to COORDINATION_CHANNEL_ID: classifySessionLiveness is coordination-centric (consults the coordination HB store), so other channels (GC'd, finite) do NOT receive the predicate — a session live-on-X-but-not-coordination must not be mis-pruned.
+
+**Cross-edge:** NONE. Conductor-internal — no dotfiles readers of participants[] (verified). `cross_edge_consumers_verified` empty.
+
+**Verification:** typecheck + format + lint clean; LGC-002 tripwire clean (111 src files; classifySessionLiveness is the canonical composer, allow-listed). +5 tests in join-or-create.test.ts (drops-stale / keeps-live / keeps-self / keeps-identity-holder / idempotent-rejoin). Full suite green. CI run-id + conclusion on the PR.
+
+**Supersedes / superseded_by:** none. Addresses the L171 participants[]-prune part of the P5 channel-growth bundle. NO ChannelMetadata version bump — same string-array schema, fewer entries.
+
+— participants-prune authored by Bravo (Axis-3); Alpha design-lens + primary-source cycle-blocker re-lens (DI shape blessed, GC_WINDOW withdrawn) + PR to Alpha merge-gate.
+
+---

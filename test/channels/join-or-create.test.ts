@@ -18,6 +18,7 @@ import {
   joinOrCreateChannel,
   readMetadata,
 } from "../../src/channels/index.ts";
+import { claimIdentityNamed } from "../../src/channels/identity.ts";
 
 const CHANNEL = "coordination";
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -101,5 +102,88 @@ describe("joinOrCreateChannel", () => {
       handoffId: "explicit-anchor",
     });
     expect(meta.handoff_id).toBe("explicit-anchor");
+  });
+});
+
+describe("joinOrCreateChannel — participants-prune (L171, prune-on-join via injected pruneStale)", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  const D = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"; // a "dead" participant
+
+  it("drops a stale participant in-place when joining", async () => {
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: A });
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: D });
+    expect(readMetadata(CHANNEL).participants).toEqual([A, D]);
+    // B joins with a predicate that marks D stale.
+    const meta = await joinOrCreateChannel({
+      channelId: CHANNEL,
+      sessionId: B,
+      pruneStale: (sid) => sid === D,
+    });
+    expect(meta.participants).toEqual([A, B]); // D pruned, B added, A kept
+    expect(readMetadata(CHANNEL).participants).toEqual([A, B]); // persisted
+  });
+
+  it("keeps a live participant (pruneStale returns false)", async () => {
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: A });
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: D });
+    const meta = await joinOrCreateChannel({
+      channelId: CHANNEL,
+      sessionId: B,
+      pruneStale: () => false, // nobody stale
+    });
+    expect(meta.participants).toEqual([A, D, B]); // all kept
+  });
+
+  it("never prunes self even when the predicate marks everyone stale", async () => {
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: A });
+    const meta = await joinOrCreateChannel({
+      channelId: CHANNEL,
+      sessionId: B,
+      pruneStale: () => true, // marks all (incl. self) stale
+    });
+    expect(meta.participants).toEqual([B]); // self kept; A (not self/identity) pruned
+  });
+
+  it("never prunes a current identity-holder even when marked stale", async () => {
+    await createChannel({
+      channelId: CHANNEL,
+      handoffId: CHANNEL,
+      sessionId: A,
+    });
+    await claimIdentityNamed({
+      channelId: CHANNEL,
+      sessionId: A,
+      identity: "Alpha",
+    });
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: D });
+    // B joins; predicate marks A and D stale. A holds Alpha -> kept; D -> pruned.
+    const meta = await joinOrCreateChannel({
+      channelId: CHANNEL,
+      sessionId: B,
+      pruneStale: (sid) => sid === A || sid === D,
+    });
+    expect(meta.participants).toContain(A); // identity-holder kept despite stale
+    expect(meta.participants).toContain(B); // self
+    expect(meta.participants).not.toContain(D); // pruned
+  });
+
+  it("idempotent rejoin re-appends a previously pruned participant", async () => {
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: A });
+    await joinOrCreateChannel({ channelId: CHANNEL, sessionId: D });
+    // A re-joins, pruning D.
+    await joinOrCreateChannel({
+      channelId: CHANNEL,
+      sessionId: A,
+      pruneStale: (sid) => sid === D,
+    });
+    expect(readMetadata(CHANNEL).participants).toEqual([A]); // D pruned
+    // D rejoins (no longer stale) -> re-appended (over-prune costs ~zero).
+    const meta = await joinOrCreateChannel({
+      channelId: CHANNEL,
+      sessionId: D,
+    });
+    expect(meta.participants).toEqual([A, D]);
   });
 });

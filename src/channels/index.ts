@@ -1000,8 +1000,16 @@ export async function createChannel(args: {
 export async function joinChannel(args: {
   channelId: string;
   sessionId: string;
+  /** L171 participants-prune (prune-on-join): when supplied, stale participants
+   *  are dropped in place during this join — bounding the otherwise append-only
+   *  list on the eternal channel. The predicate is INJECTED (not imported here)
+   *  because channels/index.ts importing classifySessionLiveness would re-close
+   *  the active-sessions<->channels module cycle (session-liveness.ts:14-20):
+   *  mechanism lives here, policy is supplied by the CLI edge. Self and current
+   *  identity-holders are never pruned regardless of the predicate. */
+  pruneStale?: (sessionId: string) => boolean;
 }): Promise<ChannelMetadata> {
-  const { channelId, sessionId } = args;
+  const { channelId, sessionId, pruneStale } = args;
   // RE-3 boundary guard (slice 6 / A3).
   if (!isValidArtifactId(channelId)) {
     throw new Error(
@@ -1015,8 +1023,26 @@ export async function joinChannel(args: {
         `[channels] channel ${channelId} is closed (at ${meta.closed_at})`,
       );
     }
+    let changed = false;
     if (!meta.participants.includes(sessionId)) {
       meta.participants.push(sessionId);
+      changed = true;
+    }
+    if (pruneStale !== undefined) {
+      // Never prune self or a session that currently holds a NATO identity.
+      const identityHolders = new Set(
+        Object.values(meta.identities ?? {}).map((claim) => claim.session_id),
+      );
+      const kept = meta.participants.filter(
+        (sid) =>
+          sid === sessionId || identityHolders.has(sid) || !pruneStale(sid),
+      );
+      if (kept.length !== meta.participants.length) {
+        meta.participants = kept;
+        changed = true;
+      }
+    }
+    if (changed) {
       writeMetadataRaw(channelId, meta, sessionId);
     }
     touchHeartbeat(channelId, sessionId);
@@ -1048,8 +1074,12 @@ export async function joinOrCreateChannel(args: {
   channelId: string;
   sessionId: string;
   handoffId?: string;
+  /** L171 participants-prune — forwarded to {@link joinChannel} on the join
+   *  path (a freshly created channel has only the creator, so nothing to
+   *  prune). See joinChannel's `pruneStale` for the cycle-avoidance rationale. */
+  pruneStale?: (sessionId: string) => boolean;
 }): Promise<ChannelMetadata> {
-  const { channelId, sessionId } = args;
+  const { channelId, sessionId, pruneStale } = args;
   const handoffId = args.handoffId ?? channelId;
   if (!isValidArtifactId(channelId)) {
     throw new Error(
@@ -1067,7 +1097,11 @@ export async function joinOrCreateChannel(args: {
       if (!existsSync(metadataPath(channelId))) throw err;
     }
   }
-  return joinChannel({ channelId, sessionId });
+  return joinChannel({
+    channelId,
+    sessionId,
+    ...(pruneStale !== undefined ? { pruneStale } : {}),
+  });
 }
 
 /** Close a channel. Idempotent. Prevents new messages. */

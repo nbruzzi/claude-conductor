@@ -48,6 +48,7 @@ import {
 } from "../active-sessions/index.ts";
 import { parseFlags } from "../cli/flags.ts";
 import { getWallClockNow } from "../shared/clock.ts";
+import { classifySessionLiveness } from "../active-sessions/session-liveness.ts";
 import {
   archiveHandoff,
   pruneHandoffArchive,
@@ -835,9 +836,24 @@ export async function runChannelsCli(
         // The eternal coordination channel is join-or-create: it is not
         // handoff-derived and must be reachable from nothing on first join.
         // Every other channel requires prior creation (join never creates).
+        // L171 prune-on-join: bound the eternal coordination channel's
+        // append-only participants[] by dropping stale participants at join.
+        // The liveness predicate is injected HERE (the cli edge) — importing
+        // classifySessionLiveness into channels/index.ts would re-close the
+        // active-sessions<->channels module cycle (session-liveness.ts:14-20).
+        // Scoped to COORDINATION_CHANNEL_ID: classifySessionLiveness is
+        // coordination-centric (it consults the coordination HB store), and
+        // every other channel is GC'd (finite lifetime), so only the
+        // join-or-create (eternal) path receives the predicate. classifySession-
+        // Liveness is the canonical composer (LGC-002 clean), and verdict
+        // 'stale' (age beyond LIVE_WINDOW) is the terminal dead state — over-
+        // pruning is harmless (idempotent rejoin re-appends).
+        const now = getWallClockNow();
+        const pruneStale = (sid: string): boolean =>
+          classifySessionLiveness(sid, now).verdict === "stale";
         const meta =
           channelId === COORDINATION_CHANNEL_ID
-            ? await joinOrCreateChannel({ channelId, sessionId })
+            ? await joinOrCreateChannel({ channelId, sessionId, pruneStale })
             : await joinChannel({ channelId, sessionId });
         let claim:
           | Awaited<ReturnType<typeof claimIdentity>>
