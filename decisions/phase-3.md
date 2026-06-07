@@ -2281,3 +2281,41 @@ affects:
 — L1 D3 (b)+(c) authored by Charlie; PR to Alpha merge-gate (C2 cycle).
 
 ---
+
+```yaml
+---
+ts: 2026-06-07T21:29:10Z
+kind: api-shape
+severity: minor
+phase: 3
+affects:
+  [
+    src/channels/index.ts,
+    src/hooks/checks/peer-message-deliverer.ts,
+    test/channels/message-roundtrip.test.ts,
+    test/hooks/checks/peer-message-deliverer.test.ts,
+  ]
+---
+```
+
+**Context:** L409 (backlog "§5 Monitor recipe shows blank preview for body_ref-backed notes"). The send-time shunt (index.ts appendMessage) drops `body` and keeps only `body_ref` when a serialized line exceeds SMALL_MESSAGE_MAX_BYTES (3072). Raw-JSONL preview consumers — the Monitor/tail recipe and the peer-message-deliverer hook — render a BLANK preview for every shunted note (bit live this cohort: every body_ref note woke peers blank). Goal: a non-blank CONTENT preview without breaking the body/body_ref read contract.
+
+**Options considered:**
+
+1. **Preview in `body` + flip read-resolve to unconditional (`cli.ts` `if (m.body_ref && !m.body)` → `if (m.body_ref)`).** Looks conductor-internal / zero-recipe-change. REJECTED at primary source: `peer-recent-message.ts:178-181` (`getMostRecentPeerMessageWithBody`) is body-FIRST ("inline body wins" — returns raw `match.body` without resolving the sidecar). A preview-in-body would feed a TRUNCATED body to its sole caller (`live-update-reminder.ts` PARALLEL_JOIN_MARKER substring check) AND to the `.length > 0` body-first guards in audit-verdict-auto-wrap / verify / quorum / queue / inference — a real regression. Salvageable only by ALSO flipping peer-recent-message to body_ref-first = 2 shared-contract changes, riskier.
+2. **[CHOSEN] New additive `body_preview?: string`, populated at shunt-time; `body` stays empty.** The body/body_ref XOR is preserved, so EVERY existing consumer (read-resolve, peer-recent-message, render.ts, the `.length>0` guards) is behaviorally unchanged. Consumers that want the preview (Monitor recipe, peer-message-deliverer) read the new field as a fallback.
+3. **Recipe-side-only marker (no schema change).** Cheapest, but per-consumer (every raw reader re-implements the body_ref→marker logic) and not the "send-time" DRY fix the roadmap named.
+
+**Chosen:** Option 2 — additive `body_preview` field.
+
+**Reason:** purely additive — zero existing-consumer behavior change, verified at primary source across BOTH repos (a subagent design-lens consumer-traced it: the body-first paths, the `.length>0` guards, and `render.ts` cell-7's `hasBody && hasBodyRef` malformed-check all key on `body`/`body_ref`, never the new field; `isChannelMessage` ignores extras and now type-guards the new one). DRY: one producer, every raw consumer reads one field. The preview is built single-line (newlines/CRs → a space — JSONL is one-line-per-message and a raw newline also fractures a `tail` preview) and codepoint-safe-truncated (`Array.from`, ≤ BODY_PREVIEW_MAX_CHARS=200 + an ellipsis — never splits an astral surrogate), bounded at/below the smallest downstream window (Monitor `[0:220]`, deliverer 200).
+
+**Cross-edge:** conductor adds the field + ONE conductor consumer (peer-message-deliverer formatMessageBlock surfaces the preview in its body-absent branch). The dotfiles Monitor recipe (OPERATING-MANUAL §5 ~L416) + scripts/monitor-self-filter.sh (~L48) are the SECOND consumer → a FOLLOW-UP dotfiles PR. Back-compat: an absent `body_preview` falls back to today's blank, so the conductor PR lands independently. `cross_edge_consumers_verified` = the two dotfiles jq sites (wired in the follow-up dotfiles PR).
+
+**Verification:** typecheck + format + lint clean; +6 tests (5 in message-roundtrip.test.ts: shunt→preview present/truncated/round-tripped, newline-collapse, codepoint-safe truncation, small-body→no-preview, isChannelMessage rejects non-string; +1 end-to-end in peer-message-deliverer.test.ts: shunted body surfaces the preview, not the bare pointer). Full suite green. CI run-id + conclusion appended on the PR before any shipped-claim.
+
+**Supersedes / superseded_by:** none. Closes the conductor half of backlog L409; the dotfiles Monitor-recipe consumer follows.
+
+— L409 body_preview authored by Bravo (Axis-3); subagent design-lens (primary-source consumer-trace) + PR to Alpha merge-gate (roadmap execution).
+
+---

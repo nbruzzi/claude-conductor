@@ -191,6 +191,18 @@ function formatMessageBlock(
   // Body absent → body_ref-only message. Surface the body_ref pointer
   // with recovery hint (`channels read --since-cursor` to follow).
   if (displayBody === undefined || displayBody.length === 0) {
+    // L409: when the body shunted to a body_ref sidecar, a send-time
+    // body_preview lets us surface CONTENT instead of a bare pointer. Flow it
+    // through the same sanitize+fence injection-defense path as a real body;
+    // append a recovery hint since it is a truncated preview, not the full body.
+    if (msg.body_preview !== undefined && msg.body_preview.length > 0) {
+      const previewNonce = randomUUID().slice(0, 8);
+      const fencedPreview = fencePeerBody(
+        sanitizePeerBody(msg.body_preview),
+        previewNonce,
+      );
+      return `${speaker}\n${fencedPreview}\n  (preview — channels read ${channelId} --since-cursor for the full body)`;
+    }
     const refHint =
       msg.body_ref !== undefined
         ? `  (body via body_ref:${sanitizePeerBody(msg.body_ref)} — channels read ${channelId} --since-cursor)`

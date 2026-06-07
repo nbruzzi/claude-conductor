@@ -771,6 +771,28 @@ describe("peer-message-deliverer hook", () => {
   });
 
   // ─────────────────────────────────────── INPUT VALIDATION (3)
+  describe("L409 body_preview (shunted-body content instead of bare pointer)", () => {
+    it("surfaces the send-time body_preview for a shunted body", async () => {
+      await setupChannel();
+      seedCommittedCursor(
+        CH,
+        SESSION_SELF,
+        Date.now() - 60_000,
+        new Date(Date.now() - 60_000).toISOString(),
+      );
+      // A >3KB body shunts to a body_ref sidecar at send AND records a
+      // single-line body_preview. The deliverer should show that preview
+      // content (fenced), not the bare "body via body_ref" pointer fallback.
+      const big = "PREVIEW_SENTINEL_START important peer note ".repeat(120);
+      await appendPeer(CH, SESSION_BRAVO, big);
+      const result = await check(inputFor(SESSION_SELF));
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("PREVIEW_SENTINEL_START");
+      expect(result.stdout).not.toContain("body via body_ref");
+      expect(result.stdout).toContain("preview — channels read");
+    });
+  });
+
   describe("input validation", () => {
     it("passes silently when session_id is missing from input", async () => {
       const result = await check(inputFor(undefined));
