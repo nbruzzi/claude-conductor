@@ -66,6 +66,7 @@ import { sessionLivePrefixSource } from "../../active-sessions/session-liveness.
 import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
+  isSidPrefixWorktreeId,
   listWorktrees,
   removeWorktree,
   worktreeUncommittedPaths,
@@ -118,6 +119,24 @@ export async function check(input: HookInput): Promise<HookResult> {
     const byDotfilesRoot = mapByDotfilesRoot(anchors);
 
     for (const wt of worktrees) {
+      // G6-P1 reaper-coverage (subtract-only scope filter; CG5-exempt). Only
+      // AUTO-provisioned sid-prefix worktrees are safely sid-attributable. A
+      // MANUAL named worktree (slug tail, not 8-hex) can't be sid-attributed AND
+      // removeWorktree's slice(0,8) truncates its slug to a wrong path → a silent
+      // no-op this reaper re-logged `worktree-cleanup-incomplete` EVERY boot.
+      // Skip it (operator-sweep territory) until G6-P2's safe-by-content
+      // named-reap. This only ADDS a skip — it can never enable a reap.
+      if (!isSidPrefixWorktreeId(wt.sessionId)) {
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          sessionId,
+          source: "dispatcher",
+          kind: "worktree-gc-skipped-named",
+          artifactPath: wt.path,
+          detail: `[dotfiles-worktree-gc] ${wt.sessionId} is a named (non-sid-prefix) worktree — outside the reaper's sid-prefix model; left to operator-sweep until G6-P2`,
+        });
+        continue;
+      }
       const matched = byDotfilesRoot.get(wt.path);
       const heartbeatAge = matched?.ageMs ?? null;
       const isStale =
