@@ -1207,3 +1207,122 @@ describe("teammate-idle-reminder — clock-skew breadcrumb EMISSION (L191)", () 
     expect(ev?.detail ?? "").toContain("peer Bravo");
   });
 });
+
+// ─── Lane A — harness-status PRIMARY idle-suppress (Charlie, 2026-06-07) ──────
+//
+// The harness `sessions/<pid>.json` status becomes the PRIMARY "is this peer
+// working?" signal: a channel-quiet (mtime-idle) peer whose harness status is
+// ACTIVE (busy/shell/waiting) with a LIVE pid is WORKING, not idle -> suppress.
+// HOME is sandboxed so buildHarnessStatusIndex reads this test's fake sessions
+// dir and the breadcrumb log is hermetic.
+describe("teammate-idle-reminder — harness-status PRIMARY suppress (Lane A)", () => {
+  let prevHomeLA: string | undefined;
+  let homeLA: string | undefined;
+
+  function writeHarnessPidfile(
+    pid: number,
+    sessionId: string,
+    status: string,
+    updatedAt: number,
+  ): void {
+    const dir = join(process.env["HOME"] as string, ".claude", "sessions");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${pid}.json`),
+      JSON.stringify({ pid, sessionId, status, updatedAt }),
+      "utf-8",
+    );
+  }
+
+  async function setupIdlePeer(channelId: string): Promise<void> {
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId,
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId,
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat(channelId, SESSION_SELF);
+    // Peer channel-mtime 6 min stale (> 5 min default threshold) => idle CANDIDATE.
+    backdateHeartbeat(channelId, SESSION_BRAVO, 6 * 60 * 1000);
+  }
+
+  beforeEach(() => {
+    sandbox();
+    prevHomeLA = process.env["HOME"];
+    homeLA = mkdtempSync(join(tmpdir(), "teammate-idle-harness-home-"));
+    process.env["HOME"] = homeLA;
+  });
+
+  afterEach(() => {
+    if (prevHomeLA === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = prevHomeLA;
+    if (homeLA !== undefined && existsSync(homeLA)) {
+      rmSync(homeLA, { recursive: true, force: true });
+      homeLA = undefined;
+    }
+    cleanup();
+  });
+
+  // §5 CENTERPIECE (Alpha lens: the load-bearing detector-validation). A busy
+  // peer with a STALE updatedAt + live pid STILL suppresses — proving the gate
+  // trusts the status, NOT the pidfile age (the obvious ageMs-staleness gate
+  // would degrade here and re-fire the false-idle bug; the index entry omits
+  // ageMs entirely so the only guard is the live pid).
+  it("busy + STALE updatedAt + live pid => STILL suppresses (trust status, not ageMs)", async () => {
+    await setupIdlePeer("ch-ha-busy");
+    writeHarnessPidfile(
+      process.pid,
+      SESSION_BRAVO,
+      "busy",
+      Date.now() - 60 * 60 * 1000, // 1h stale — must NOT matter
+    );
+
+    const result = await check(inputFor(SESSION_SELF));
+
+    expect(result.stdout).toBe(""); // suppressed despite stale updatedAt
+    const ev = readPresenceFailures().filter(
+      (e) => e.kind === "harness-active-suppressed",
+    );
+    expect(ev.length).toBeGreaterThanOrEqual(1);
+    expect(ev[ev.length - 1]?.detail ?? "").toContain("peer Bravo");
+    expect(ev[ev.length - 1]?.detail ?? "").toContain("status=busy");
+  });
+
+  it("waiting (active) + live pid also suppresses", async () => {
+    await setupIdlePeer("ch-ha-waiting");
+    writeHarnessPidfile(process.pid, SESSION_BRAVO, "waiting", Date.now());
+    expect((await check(inputFor(SESSION_SELF))).stdout).toBe("");
+  });
+
+  it("idle harness status does NOT suppress => peer flagged (degrade past the gate)", async () => {
+    await setupIdlePeer("ch-ha-idle");
+    writeHarnessPidfile(process.pid, SESSION_BRAVO, "idle", Date.now());
+    expect((await check(inputFor(SESSION_SELF))).stdout).toContain(
+      "Peer Bravo",
+    );
+  });
+
+  it("busy status but DEAD pid does NOT suppress => degrade => flagged", async () => {
+    await setupIdlePeer("ch-ha-dead");
+    writeHarnessPidfile(2_147_483_646, SESSION_BRAVO, "busy", Date.now());
+    expect((await check(inputFor(SESSION_SELF))).stdout).toContain(
+      "Peer Bravo",
+    );
+  });
+
+  it("no harness pidfile (absent / cross-host) => degrade to mtime => flagged", async () => {
+    await setupIdlePeer("ch-ha-absent");
+    expect((await check(inputFor(SESSION_SELF))).stdout).toContain(
+      "Peer Bravo",
+    );
+  });
+});
