@@ -842,27 +842,32 @@ export async function runChannelsCli(
         let claim:
           | Awaited<ReturnType<typeof claimIdentity>>
           | Awaited<ReturnType<typeof claimIdentityNamed>>;
+        // Parse + validate --role once, ahead of the --as / bare-join split,
+        // so BOTH claim paths honor it. Previously this lived inside the --as
+        // branch, so a bare `join --role pen` (next-available letter — the
+        // path /handoff-resume Step 4a uses) silently dropped --role and
+        // defaulted the claimant to queue.
+        let defaultRole: ChannelRole | undefined;
+        if (flags.role !== undefined) {
+          if (!VALID_ROLES.includes(flags.role as ChannelRole)) {
+            die(
+              ctx,
+              `--role: invalid role "${flags.role}" — must be one of ${VALID_ROLES.join(", ")}`,
+              { code: 2, category: "VALIDATION" },
+            );
+          }
+          defaultRole = flags.role as ChannelRole;
+        }
         if (flags.as !== undefined) {
-          // --as path: validate NATO + role at verb-level (parser is
-          // value-extraction only). isValidIdentity returns the type
-          // predicate `s is NatoIdentity` so the cast on success is sound.
+          // --as path: validate NATO at verb-level (parser is value-extraction
+          // only). isValidIdentity returns the type predicate `s is
+          // NatoIdentity` so the cast on success is sound.
           if (!isValidIdentity(flags.as)) {
             die(
               ctx,
               `--as: invalid identity "${flags.as}" — must be a NATO letter (Alpha..Zulu)`,
               { code: 2, category: "VALIDATION" },
             );
-          }
-          let defaultRole: ChannelRole | undefined;
-          if (flags.role !== undefined) {
-            if (!VALID_ROLES.includes(flags.role as ChannelRole)) {
-              die(
-                ctx,
-                `--role: invalid role "${flags.role}" — must be one of ${VALID_ROLES.join(", ")}`,
-                { code: 2, category: "VALIDATION" },
-              );
-            }
-            defaultRole = flags.role as ChannelRole;
           }
           if (flags.fromSession !== undefined) {
             if (!isValidSessionId(flags.fromSession)) {
@@ -932,7 +937,14 @@ export async function runChannelsCli(
             throw err;
           }
         } else {
-          claim = await claimIdentity({ channelId, sessionId });
+          // Bare-join (next-available letter) now forwards --role too —
+          // claimIdentity already accepts defaultRole (defaults to queue when
+          // absent), so the role-flag-drop fix is a one-line forward here.
+          claim = await claimIdentity({
+            channelId,
+            sessionId,
+            ...(defaultRole !== undefined ? { defaultRole } : {}),
+          });
         }
         const identityPayload: {
           identity: string;
