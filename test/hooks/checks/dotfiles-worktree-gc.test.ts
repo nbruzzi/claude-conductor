@@ -179,6 +179,39 @@ describe("dotfiles-worktree-gc hook", () => {
     expect(skipBreadcrumb).toBeDefined();
   });
 
+  it("G6-P1: skips a MANUAL named (non-sid-prefix) worktree — preserved, skipped-named breadcrumb, never reaped/incomplete", async () => {
+    // A named worktree (slug tail, not an 8-hex sid-prefix) — the worktree-debt
+    // class. Pre-G6-P1 the reaper attempted it, removeWorktree's slice(0,8)
+    // no-op'd on the wrong path, and it re-logged "worktree-cleanup-incomplete"
+    // EVERY boot. The scope-filter now skips it (operator-sweep territory).
+    const wtPath = provisionRawWorktree("golf-item3");
+    expect(existsSync(wtPath)).toBe(true);
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // Subtract-only: a named worktree is NEVER reaped — preserved on disk.
+    expect(existsSync(wtPath)).toBe(true);
+
+    const events = readPresenceFailures();
+    // The scope-filter breadcrumb fired for this named worktree ...
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "worktree-gc-skipped-named" &&
+          e.detail.includes("golf-item3"),
+      ),
+    ).toBe(true);
+    // ... and the misleading no-op breadcrumbs did NOT (never attempted).
+    expect(
+      events.some(
+        (e) =>
+          e.artifactPath === wtPath &&
+          (e.kind === "worktree-cleanup-incomplete" ||
+            e.kind === "worktree-gc-reaped"),
+      ),
+    ).toBe(false);
+  });
+
   it("index.lock active (RE-103) → skip + breadcrumb", async () => {
     const wtPath = provisionRawWorktree("cc00cc00");
     // Create a fresh index.lock at <worktree>/.git/index.lock — the guard
