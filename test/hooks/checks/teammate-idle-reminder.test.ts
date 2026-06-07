@@ -37,6 +37,7 @@ import {
   touchHeartbeat,
 } from "../../../src/channels/index.ts";
 import { claimIdentity } from "../../../src/channels/identity.ts";
+import { readPresenceFailures } from "../../../src/shared/presence-failure-log.ts";
 import { GC_WINDOW_MS } from "../../../src/active-sessions/index.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
@@ -1131,5 +1132,78 @@ describe("teammate-idle-reminder hook", () => {
     const result = await check(inputFor(SESSION_SELF));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Peer Bravo");
+  });
+});
+
+// ─── L191 (TA-7) — clock-skew breadcrumb EMISSION assertion ───────────
+//
+// The backlog specified L191 as a smoke-phase-2.sh "scenario 28", but
+// smoke-phase-2.sh defers ALL hook-firing to in-process bun:test by design (the
+// plugin binary has no dispatcher), and clock-skew SUPPRESSION (tests 6–9 above)
+// + the kind:clock-skew substrate round-trip (presence-failure-log.test.ts) are
+// already covered. The genuine residual: nothing asserts the hook EMITS the
+// breadcrumb. Test 7 is named for it but only asserts suppression — it cannot
+// read the HOME-based presence-failure-log hermetically (the file's sandbox
+// doesn't redirect HOME). This sibling describe sandboxes HOME so
+// readPresenceFailures sees only this test's events, then asserts the emission.
+describe("teammate-idle-reminder — clock-skew breadcrumb EMISSION (L191)", () => {
+  let prevHomeL191: string | undefined;
+  let homeL191: string | undefined;
+
+  beforeEach(() => {
+    sandbox(); // channels + active-sessions sandboxes (reused)
+    prevHomeL191 = process.env["HOME"];
+    homeL191 = mkdtempSync(join(tmpdir(), "teammate-idle-skew-home-"));
+    process.env["HOME"] = homeL191; // redirect the HOME-based presence-failure-log
+  });
+
+  afterEach(() => {
+    if (prevHomeL191 === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = prevHomeL191;
+    if (homeL191 !== undefined && existsSync(homeL191)) {
+      rmSync(homeL191, { recursive: true, force: true });
+      homeL191 = undefined;
+    }
+    cleanup(); // restore channels + active-sessions env (reused)
+  });
+
+  it("emits a kind:clock-skew breadcrumb when a peer body-ts diverges from mtime beyond the threshold", async () => {
+    await createChannel({
+      channelId: "ch-skew-emit",
+      handoffId: "ch-skew-emit",
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId: "ch-skew-emit",
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId: "ch-skew-emit",
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat("ch-skew-emit", SESSION_SELF);
+    // Peer: mtime 6 min old (idle window); body-ts a further 6 min behind, so
+    // |mtime − body| = 6 min > the 5-min CLOCK_SKEW_THRESHOLD_MS (mirrors test 7,
+    // whose suppression proves this setup reaches the clock-skew gate).
+    const mtimeMs = Date.now() - 6 * 60 * 1000;
+    backdateHeartbeat(
+      "ch-skew-emit",
+      SESSION_BRAVO,
+      6 * 60 * 1000,
+      mtimeMs - 6 * 60 * 1000,
+    );
+
+    const result = await check(inputFor(SESSION_SELF));
+
+    // Suppression is already covered (test 7); the NEW assertion is that the
+    // hook WROTE the clock-skew breadcrumb (teammate-idle-reminder.ts:318-326).
+    expect(result.stdout).toBe("");
+    const skew = readPresenceFailures().filter((e) => e.kind === "clock-skew");
+    expect(skew.length).toBeGreaterThanOrEqual(1);
+    const ev = skew[skew.length - 1];
+    expect(ev?.artifactPath).toBe("ch-skew-emit");
+    expect(ev?.detail ?? "").toContain("peer Bravo");
   });
 });
