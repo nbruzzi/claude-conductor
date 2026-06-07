@@ -4,11 +4,11 @@
 /**
  * C1 S2 — session-pid PROTECT foundation (S1-independent).
  *
- * Covers the two foundation primitives:
- *   - `isOsPidAlive` — the same-host `kill(pid, 0)` probe, with the
- *     ESRCH-vs-EPERM discriminator the pid-spike pinned: a dead pid → ESRCH →
- *     false; an alive-but-unsignalable pid (e.g. pid 1) → EPERM → true; an
- *     absent/invalid pid → false (an ABSENT signal, never a protect).
+ * Covers the session-pid PROTECT primitives:
+ *   - `isOsPidAlive` — re-export SMOKE only. The canonical probe suite (own-pid
+ *     / EPERM / ESRCH / invalid) was lifted to `test/shared/os-pid.test.ts`
+ *     (Lane B unify, 2026-06-07); this file keeps one re-export contract smoke
+ *     because `reconcile-boot` imports the probe from the active-sessions barrel.
  *   - `PID_PROTECT_CEILING_MS` — the ceiling MUST be strictly greater than
  *     `GC_WINDOW_MS`, or the protect is a no-op (gc_eligible already gates on
  *     age > GC_WINDOW_MS). This locks that load-bearing invariant.
@@ -18,7 +18,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,34 +37,14 @@ import { resolveSessionOsPid } from "../../src/shared/session-id-discovery.ts";
 const SID = "b1d2c3e4-0000-4000-8000-000000000001";
 const SID2 = "b1d2c3e4-0000-4000-8000-000000000002";
 
-describe("isOsPidAlive (same-host kill(pid,0) probe)", () => {
-  it("returns true for the current process (own pid is alive)", () => {
+// `isOsPidAlive` was lifted to the shared leaf `src/shared/os-pid.ts` (Lane B
+// unify, 2026-06-07); its canonical suite (own-pid / EPERM / ESRCH / invalid)
+// now lives in `test/shared/os-pid.test.ts`. This single smoke guards the
+// re-export contract: `reconcile-boot` imports `isOsPidAlive` from the
+// active-sessions barrel, so the barrel MUST keep re-exporting it.
+describe("isOsPidAlive (re-exported from the active-sessions barrel)", () => {
+  it("is re-exported and probes the live test process as alive", () => {
     expect(isOsPidAlive(process.pid)).toBe(true);
-  });
-
-  it("returns true for an alive-but-unsignalable pid (EPERM, e.g. pid 1)", () => {
-    // pid 1 (launchd / init) exists on macOS + Linux. As a normal user
-    // kill(1, 0) throws EPERM (alive-unsignalable → true); as root it succeeds
-    // (→ true). Either way the process is ALIVE, so the probe reports true.
-    expect(isOsPidAlive(1)).toBe(true);
-  });
-
-  it("returns false for a pid that has exited (ESRCH)", () => {
-    // Spawn a trivial child and wait for exit + reap; its pid is then gone, so
-    // kill(pid, 0) throws ESRCH → not alive.
-    const child = spawnSync(process.execPath, ["--version"]);
-    const pid = child.pid;
-    if (typeof pid !== "number") {
-      throw new Error("spawnSync returned no pid");
-    }
-    expect(isOsPidAlive(pid)).toBe(false);
-  });
-
-  it("returns false for an absent / invalid pid (no signal, never a protect)", () => {
-    expect(isOsPidAlive(0)).toBe(false); // 0 targets the process group — never probe it
-    expect(isOsPidAlive(-1)).toBe(false);
-    expect(isOsPidAlive(Number.NaN)).toBe(false);
-    expect(isOsPidAlive(1.5)).toBe(false);
   });
 });
 

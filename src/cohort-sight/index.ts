@@ -35,6 +35,7 @@ import {
   readMetadata,
   type ChannelMetadata,
 } from "../channels/index.ts";
+import { isOsPidAlive } from "../shared/os-pid.ts";
 
 /** Harness-declared activity status, or "unknown" when absent/unreadable. */
 export type CohortSightStatus = "busy" | "idle" | "unknown";
@@ -80,26 +81,6 @@ export type CohortSight = {
  */
 function defaultSessionsDir(): string {
   return join(process.env["HOME"] ?? homedir(), ".claude", "sessions");
-}
-
-/**
- * Same-host OS-pid existence probe. `process.kill(pid, 0)` sends NO signal — it
- * only tests existence/permission. EPERM => exists but not ours => alive
- * (protect-safe); ESRCH / invalid => not alive. POSIX, portable (macOS+Linux),
- * no /proc, no fork.
- *
- * NOTE: mirrors S2's `isOsPidAlive` (active-sessions); a candidate to unify into
- * one shared probe once S2 lands. Kept local here so cohort-sight stays
- * independent of the (separate, in-flight) S2 slice.
- */
-function isPidSignalable(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 type SessionPidfile = {
@@ -224,7 +205,7 @@ export function buildCohortSight(
       cwd: result.cwd,
       ageMs:
         result.updatedAt === null ? null : Math.max(0, now - result.updatedAt),
-      pidAlive: isPidSignalable(result.pid),
+      pidAlive: isOsPidAlive(result.pid),
     });
   }
 
