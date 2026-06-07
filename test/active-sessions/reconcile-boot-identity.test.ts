@@ -36,6 +36,7 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalClaudeHomeArtifactId,
+  LIVE_WINDOW_MS,
   runReconcileBoot,
 } from "../../src/active-sessions/index.ts";
 import { claimIdentity } from "../../src/channels/identity.ts";
@@ -95,6 +96,19 @@ function writeHeartbeat(
       ...(opts.pausedAt !== undefined ? { pausedAt: opts.pausedAt } : {}),
     }),
   );
+  const mtime = new Date(NOW - ageMs);
+  utimesSync(path, mtime, mtime);
+}
+
+/** Plant a coordination-CHANNEL heartbeat for `sessionId`, mtime back-dated
+ *  `ageMs` from NOW. Mirrors reconcile-boot-channel-consult.test.ts — the body
+ *  is irrelevant (isSidPrefixLiveOnChannel reads mtime only). Models a
+ *  coordination-only session: channel-live with NO presence heartbeat. */
+function writeChannelHeartbeat(sessionId: string, ageMs: number): void {
+  const dir = join(channelsDir, "coordination", "heartbeats");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, sessionId);
+  writeFileSync(path, String(NOW - ageMs));
   const mtime = new Date(NOW - ageMs);
   utimesSync(path, mtime, mtime);
 }
@@ -223,5 +237,57 @@ describe("runReconcileBoot — identity report-only enumeration (§2)", () => {
     expect(out.candidates.every((c) => c.artifact_class === "presence")).toBe(
       true,
     );
+  });
+
+  // ── G2 report-fix: alive-anywhere channel consult in the ORPHAN path ──
+  // A coordination-only session (cohort `cli.ts send` refreshes ONLY the channel
+  // store) has an identity claim + a FRESH coordination heartbeat but ZERO
+  // presence heartbeats. Pre-G2 it was mislabeled a `stale` orphan; the channel
+  // consult reclassifies it `live`. Report-only: gc_eligible stays false.
+  it("an orphan-by-presence claim whose session is coordination-channel-live → classification live, NOT a stale orphan (G2)", async () => {
+    const creator = "dddddddd-0000-4000-8000-00000000000d";
+    const liveSid = "eeeeeeee-0000-4000-8000-00000000000e";
+    await createChannel({
+      channelId: "coordination",
+      handoffId: "coordination",
+      sessionId: creator,
+    });
+    await claimIdentity({ channelId: "coordination", sessionId: liveSid });
+    writeChannelHeartbeat(liveSid, 0); // fresh coordination HB; NO presence HB
+
+    const out = runReconcileBoot({ now: NOW, scope: "identity" });
+    const idc = out.candidates.find(
+      (c) => c.artifact_class === "identity" && c.session_id === liveSid,
+    );
+    expect(idc).toBeDefined();
+    expect(idc?.classification).toBe("live"); // channel-live → live (was "stale")
+    expect(idc?.failed_signals).toEqual([]); // not an orphan (was ["no-presence-heartbeat"])
+    expect(idc?.gc_eligible).toBe(false); // report-only — unchanged
+    // A coordination-only session has no presence anchor, so readSessionPausedAt
+    // returns null → paused false (a paused such session is not detectable here).
+    expect(idc?.paused).toBe(false);
+  });
+
+  // Window-choice lock: the classification consult uses LIVE_WINDOW_MS (the
+  // "actively coordinating" threshold, matching classifySessionLiveness), NOT
+  // the GC-protect GC_WINDOW_MS used by enumeratePresence. A coordination HB
+  // aged past LIVE_WINDOW_MS is no longer actively coordinating → still orphan.
+  it("an orphan-by-presence claim whose coordination HB is past LIVE_WINDOW_MS → still a stale orphan", async () => {
+    const creator = "ffffffff-0000-4000-8000-00000000000f";
+    const sid = "a0a0a0a0-0000-4000-8000-0000000000a0";
+    await createChannel({
+      channelId: "coordination",
+      handoffId: "coordination",
+      sessionId: creator,
+    });
+    await claimIdentity({ channelId: "coordination", sessionId: sid });
+    writeChannelHeartbeat(sid, LIVE_WINDOW_MS + 60_000); // channel-stale; NO presence HB
+
+    const out = runReconcileBoot({ now: NOW, scope: "identity" });
+    const idc = out.candidates.find(
+      (c) => c.artifact_class === "identity" && c.session_id === sid,
+    );
+    expect(idc?.classification).toBe("stale");
+    expect(idc?.failed_signals).toEqual(["no-presence-heartbeat"]);
   });
 });

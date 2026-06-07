@@ -35,19 +35,29 @@ import { runReconcileBoot } from "../../src/active-sessions/index.ts";
 
 const CONFIG_ENV = "CLAUDE_CONDUCTOR_WORKTREE_PROVISIONER_CONFIG";
 const SESSIONS_ENV = "CLAUDE_CONDUCTOR_ACTIVE_SESSIONS_DIR";
+const CHANNELS_ENV = "CLAUDE_CONDUCTOR_CHANNELS_DIR";
 const NOW = 1_800_000_000_000;
 
 let tmpHome: string;
 let sessionsDir: string;
+let channelsDir: string;
 let prevConfig: string | undefined;
 let prevSessions: string | undefined;
+let prevChannels: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), "reconcile-wt-"));
   sessionsDir = mkdtempSync(join(tmpdir(), "reconcile-wt-sessions-"));
+  channelsDir = mkdtempSync(join(tmpdir(), "reconcile-wt-channels-"));
   prevConfig = process.env[CONFIG_ENV];
   prevSessions = process.env[SESSIONS_ENV];
+  prevChannels = process.env[CHANNELS_ENV];
   process.env[SESSIONS_ENV] = sessionsDir;
+  // Isolate the channel store: the G2 orphan-path consult
+  // (isSidPrefixLiveOnChannel on COORDINATION_CHANNEL_ID) would otherwise read
+  // the real ~/.claude/channels. An empty sandbox → fail-soft not-live, so an
+  // orphan worktree with no planted coordination HB stays a stale orphan.
+  process.env[CHANNELS_ENV] = channelsDir;
   delete process.env[CONFIG_ENV];
 });
 
@@ -56,7 +66,9 @@ afterEach(() => {
   else process.env[CONFIG_ENV] = prevConfig;
   if (prevSessions === undefined) delete process.env[SESSIONS_ENV];
   else process.env[SESSIONS_ENV] = prevSessions;
-  for (const d of [tmpHome, sessionsDir]) {
+  if (prevChannels === undefined) delete process.env[CHANNELS_ENV];
+  else process.env[CHANNELS_ENV] = prevChannels;
+  for (const d of [tmpHome, sessionsDir, channelsDir]) {
     try {
       rmSync(d, { recursive: true, force: true });
     } catch {
@@ -129,6 +141,18 @@ function writeHeartbeat(
   utimesSync(path, mtime, mtime);
 }
 
+/** Plant a coordination-CHANNEL heartbeat for `sessionId` (full sid), mtime
+ *  back-dated `ageMs` from NOW. The G2 orphan-path consult prefix-matches it, so
+ *  a worktree path's 8-char prefix can resolve channel-live. */
+function writeChannelHeartbeat(sessionId: string, ageMs: number): void {
+  const dir = join(channelsDir, "coordination", "heartbeats");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, sessionId);
+  writeFileSync(path, String(NOW - ageMs));
+  const mtime = new Date(NOW - ageMs);
+  utimesSync(path, mtime, mtime);
+}
+
 function worktreeCandidates(scope: "worktree" | "all") {
   return runReconcileBoot({ now: NOW, scope }).candidates.filter(
     (c) => c.artifact_class === "worktree",
@@ -188,5 +212,28 @@ describe("runReconcileBoot — worktree report-only enumeration (§2)", () => {
     writeHeartbeat("work", "abcd1234-0000-4000-8000-000000000001", 0);
 
     expect(worktreeCandidates("worktree").length).toBe(0);
+  });
+
+  // ── G2 report-fix: alive-anywhere channel consult in the ORPHAN path ──
+  // A worktree whose prefix has NO presence session but a FRESH coordination
+  // heartbeat belongs to a coordination-only session — alive, NOT an orphan. The
+  // prefix-match channel consult reclassifies it `live` (was a stale orphan).
+  // Report-only: gc_eligible stays false; `paused` stays false (prefix-only).
+  it("an orphan-by-prefix worktree whose prefix is coordination-channel-live → classification live, NOT a stale orphan (G2)", () => {
+    const repo = join(tmpHome, "repo-a");
+    initRepo(repo);
+    const livePrefix = "beadface"; // no presence session for it ...
+    addWorktree(repo, livePrefix);
+    writeConfig(repo, true);
+    // ... but a FRESH coordination HB whose full sid starts with the prefix.
+    writeChannelHeartbeat(`${livePrefix}-0000-4000-8000-00000000beef`, 0);
+
+    const [wt] = worktreeCandidates("worktree");
+    expect(wt).toBeDefined();
+    expect(wt?.session_id).toBe(livePrefix); // only the prefix is recoverable
+    expect(wt?.classification).toBe("live"); // channel-live by prefix → live
+    expect(wt?.failed_signals).toEqual([]); // not an orphan
+    expect(wt?.gc_eligible).toBe(false); // report-only — unchanged
+    expect(wt?.paused).toBe(false); // prefix-only → paused unresolved → false
   });
 });
