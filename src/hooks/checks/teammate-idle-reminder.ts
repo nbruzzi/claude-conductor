@@ -53,6 +53,10 @@ import {
 import { readHeartbeatBody, resolveChannelsDir } from "../../channels/index.ts";
 import { getMostRecentPeerKind } from "../../channels/peer-recent-message.ts";
 import { isSessionLiveByPrefix } from "../../active-sessions/index.ts";
+import {
+  buildHarnessStatusIndex,
+  isActiveHarnessStatus,
+} from "../../cohort-sight/index.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import { getWallClockNow } from "../../shared/clock.ts";
 import { extractValidSessionId } from "../session-id.ts";
@@ -270,6 +274,10 @@ export async function check(input: HookInput): Promise<HookResult> {
 
     const idleThreshold = readIdleThresholdMs();
     const now = getWallClockNow();
+    // INDEX-ONCE (Alpha Lane-A lens Q3): build the harness sessions/<pid>.json
+    // status map a single time per check, then do O(1) per-peer lookups below
+    // (vs N scandirs). ADVISORY-OBSERVE-ONLY; fail-soft to an empty map.
+    const harnessIndex = buildHarnessStatusIndex();
     const blocks: string[] = [];
 
     for (const ctx of contexts) {
@@ -281,6 +289,38 @@ export async function check(input: HookInput): Promise<HookResult> {
         if (peer.heartbeat_mtime_ms === null) continue;
         const idleMs = now - peer.heartbeat_mtime_ms;
         if (idleMs <= idleThreshold) continue;
+
+        // Harness-status PRIMARY suppress (Lane A). The mtime-idle test above is
+        // only the CANDIDATE filter (channel-quiet); the harness
+        // `sessions/<pid>.json` status is the most DIRECT "is this peer actually
+        // working?" signal, so it is consulted FIRST — before the heavier
+        // active-sessions mirror below. If the peer's harness status is ACTIVE
+        // (busy/shell/waiting) AND its pid is alive, it is WORKING, not idle ->
+        // suppress. THE CRUX (CG1): trust the ACTIVE status REGARDLESS of the
+        // pidfile `updatedAt` ageMs — updatedAt FREEZES multi-minute during active
+        // work (a /compact is indistinguishable from a long busy turn), so the
+        // staleness guard is `isOsPidAlive` (the `pidAlive` field), NEVER ageMs.
+        // The obvious ageMs-staleness gate would RE-INTRODUCE the false-idle bug.
+        // CG3: additive-for-idle — only QUIETS a would-be idle warn, never promotes
+        // a peer to idle. CG6: ADVISORY-OBSERVE-ONLY — never gates a reaper
+        // (cohort-sight is off the LGC allowlist). Same-host only (Q4): a peer with
+        // no local pidfile degrades to the mtime path (cross-host is CG7-deferred).
+        const harness = harnessIndex.get(peer.session_id);
+        if (
+          harness &&
+          isActiveHarnessStatus(harness.status) &&
+          harness.pidAlive
+        ) {
+          appendPresenceFailure({
+            timestamp: new Date().toISOString(),
+            source: "channels-identity",
+            kind: "harness-active-suppressed",
+            sessionId,
+            artifactPath: ctx.channelId,
+            detail: `${SOURCE}: peer ${peer.identity} suppressed (channel-idle ${formatRelativeTime(idleMs)} but harness status=${harness.status} pid=${harness.pid} alive)`,
+          });
+          continue;
+        }
 
         // Alive-anywhere consult (A1 Slice 2; the contract-with-qualifier). The
         // idle gate above is CHANNEL-store-only (heartbeat_mtime_ms). teammate-idle

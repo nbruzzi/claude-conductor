@@ -109,15 +109,19 @@ describe("LIVENESS_TRANSITIONS — formalized lifecycle (RFC §3.5 S4-slim)", ()
     expect(classifiable.every((t) => !touchesIdle(t))).toBe(true);
   });
 
-  it("observe (idle) edges are marked DEFERRED and reference the harness OBSERVE-NOT-INFER rung", () => {
+  it("observe (idle) edges reference the harness status rung, realized advisory-only by Lane A (no longer DEFERRED)", () => {
     const observe = LIVENESS_TRANSITIONS.filter((t) => t.kind === "observe");
     expect(observe.length).toBeGreaterThan(0);
     expect(observe.every((t) => touchesIdle(t))).toBe(true);
+    // Lane A (2026-06-07) realized the READ side (teammate-idle advisory suppress
+    // via cohort-sight), so the edges now reference the harness sessions/<pid>.json
+    // status directly and are no longer DEFERRED stubs.
     expect(
       observe.every(
         (t) =>
-          t.signal.includes("DEFERRED") &&
-          t.signal.includes("OBSERVE-NOT-INFER"),
+          t.signal.includes("harness") &&
+          t.signal.includes("status") &&
+          !t.signal.includes("DEFERRED"),
       ),
     ).toBe(true);
   });

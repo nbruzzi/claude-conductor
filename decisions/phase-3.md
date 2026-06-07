@@ -2322,17 +2322,56 @@ affects:
 
 ```yaml
 ---
+ts: 2026-06-07T23:05:00Z
+kind: architecture
+severity: moderate
+phase: 3
+affects:
+  [
+    src/cohort-sight/index.ts,
+    src/hooks/checks/teammate-idle-reminder.ts,
+    src/shared/presence-failure-log.ts,
+    src/active-sessions/session-liveness.ts,
+    docs/conventions/liveness-gate-store-contract.md,
+  ]
+---
+```
+
+**Context:** Lane A (backlog L137 P4; the 2026-06-06 roadmap headline). `teammate-idle-reminder` decided idle from channel-heartbeat MTIME age — a mtime-INFERENCE that false-fires on a channel-quiet-but-working peer (dogfooded ~4x this cohort). The harness already PUBLISHES per-session activity at `~/.claude/sessions/<pid>.json` `{status, updatedAt}`; consult that STATUS as the PRIMARY idle signal, with mtime + the shipped #197 active-sessions consult as the DEGRADE-fallback. CG1-spike characterization: status has 4 values (`busy`/`idle`/`waiting`/`shell`); `updatedAt` is EVENT-DRIVEN and freezes 7–10 min during active work (a `/compact` is indistinguishable from a long busy turn).
+
+**Options considered:**
+
+1. **[CHOSEN] Harness-status as a SUPPRESS gate, FIRST** (after the mtime candidate filter, before the active-sessions mirror). Minimal; matches the existing #197 suppress-gate shape; behaviorally equivalent to "harness PRIMARY" (proven across all status×mtime cases — the mtime test is only the candidate filter, harness-active is the corrector).
+2. **Replace the mtime-idle entry test with a harness-first decision tree.** More restructuring, behaviorally identical, higher risk.
+3. **ageMs-staleness gate** (degrade to mtime when the pidfile `updatedAt` is stale). REJECTED — CG1 proved `updatedAt` freezes during active work, so this RE-INTRODUCES the false-idle bug. The index entry deliberately OMITS ageMs so the gate structurally cannot use it; the staleness guard is `isOsPidAlive`, never age.
+
+**Chosen:** Option 1 — harness-status PRIMARY suppress gate, trusted regardless of pidfile age, guarded by `isOsPidAlive`.
+
+**Reason:** the §5 load-bearing call (Alpha lens CONFIRMED): trust the ACTIVE status (`busy`/`shell`/`waiting`) + live pid REGARDLESS of `updatedAt` ageMs. The detector-validation test (busy + STALE updatedAt + live pid STILL suppresses) proves the design beat the obvious-but-wrong ageMs trap. Index-once per check (Alpha Q3: one scandir → `sessionId→{status,pid,pidAlive}` map → O(N) lookups). CG3: observe is ADDITIVE-for-idle — only QUIETS a would-be warn, never promotes-to-idle / never a liveness demotion. CG6: ADVISORY-OBSERVE-ONLY — `buildHarnessStatusIndex` is off the LGC allowlist; no reaper gates on it (new Gate class C in `liveness-gate-store-contract.md`). The >5-min-compaction edge self-heals (the harness stays `busy` through a compaction it runs); the `compaction-notify` channel-HB consult stays SECONDARY belt-and-suspenders (Alpha Q2).
+
+**Verification:** typecheck + format + lint clean; 18 cohort-sight + 38 teammate-idle tests (incl. the §5 centerpiece + degrade cases: idle / dead-pid / absent → flagged). Caught + fixed the type-only-erases-at-runtime trap (added `harness-active-suppressed` to BOTH the `PresenceFailureKind` type union AND the runtime `isPresenceFailureKind` validator — the breadcrumb wrote but dropped on read). CI run-id + conclusion appended on the PR before any shipped-claim.
+
+**Supersedes / superseded_by:** realizes the DEFERRED idle-rung observe edges in `session-liveness.ts` `LIVENESS_TRANSITIONS` (the harness-status read was stubbed "not re-derived this slice"). No architectural supersede.
+
+— Lane A harness-status PRIMARY re-layer authored by Charlie (Axis-1); design-seed → Alpha lens (+ Nick visibility) → PR to Alpha 2-lens merge-gate (roadmap execution).
+
+---
+
+```yaml
+---
 ts: 2026-06-07T23:06:56Z
 kind: architectural
 severity: major
 phase: 3
 affects:
-  [
-    src/channels/index.ts,
-    src/channels/cli.ts,
-    test/channels/join-or-create.test.ts,
-  ]
+[
+src/channels/index.ts,
+src/channels/cli.ts,
+test/channels/join-or-create.test.ts,
+]
+
 ---
+
 ```
 
 **Context:** L171 channel-growth — channel metadata `participants: string[]` (index.ts:338) is APPEND-ONLY (pushed on join at index.ts:1018, never pruned). On the eternal `coordination` channel it grows unbounded (~27 entries, ~25 dead, observed live) — a DISTINCT unbounded file from the messages.jsonl rotation. Owner: Bravo (A3 metadata-surface). Alpha-lensed, then a primary-source RE-LENS reshaped the placement.
@@ -2355,4 +2394,10 @@ affects:
 
 — participants-prune authored by Bravo (Axis-3); Alpha design-lens + primary-source cycle-blocker re-lens (DI shape blessed, GC_WINDOW withdrawn) + PR to Alpha merge-gate.
 
+> > > > > > > origin/main
+
 ---
+
+```
+
+```

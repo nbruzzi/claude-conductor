@@ -123,6 +123,15 @@ export type PresenceFailureKind =
   // of `standby-suppressed`: the only forensic record if the active-sessions
   // liveness mis-reads fresh. Source: `channels-identity`.
   | "active-sessions-live-suppressed"
+  // Lane A (Charlie, 2026-06-07) — forensic signal when `teammate-idle-reminder`
+  // suppresses a reminder because the peer's HARNESS status
+  // (`~/.claude/sessions/<pid>.json`) is ACTIVE (busy/shell/waiting) with a live
+  // pid. The PRIMARY observe-rung suppress, consulted before the active-sessions
+  // mirror. The crux: trusted REGARDLESS of pidfile `updatedAt` ageMs — CG1 proved
+  // updatedAt freezes during active work, so `isOsPidAlive` is the staleness
+  // guard, never age. ADVISORY-OBSERVE-ONLY (CG6): never gates a reaper. Source:
+  // `channels-identity`.
+  | "harness-active-suppressed"
   // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan
   // v1.4 = v1.3's 6 instrumentation points + new Point 7 for
   // `resetArtifactRegistry` rmSync-bypass). Consumed exclusively by
@@ -440,6 +449,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "standby-suppressed" ||
     // A1 Slice 2 (Bravo) — teammate-idle active-sessions-live suppression.
     k === "active-sessions-live-suppressed" ||
+    // Lane A (Charlie, 2026-06-07) — teammate-idle harness-status PRIMARY suppression.
+    k === "harness-active-suppressed" ||
     // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan v1.4).
     k === "sentinel-dotfilesroot-set" ||
     k === "sentinel-dotfilesroot-cleared" ||

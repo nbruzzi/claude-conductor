@@ -37,8 +37,16 @@ import {
 } from "../channels/index.ts";
 import { isOsPidAlive } from "../shared/os-pid.ts";
 
-/** Harness-declared activity status, or "unknown" when absent/unreadable. */
-export type CohortSightStatus = "busy" | "idle" | "unknown";
+/** Harness-declared activity status, or "unknown" when absent/unreadable. The
+ *  harness publishes 4 values empirically (CG1 spike 2026-06-07): `busy` /
+ *  `shell` / `waiting` are ACTIVE (see {@link isActiveHarnessStatus}), `idle` is
+ *  idle; anything else (or absent/unreadable) collapses to `"unknown"`. */
+export type CohortSightStatus =
+  | "busy"
+  | "shell"
+  | "waiting"
+  | "idle"
+  | "unknown";
 
 /** One session's fused observation row. */
 export type CohortSightRow = {
@@ -131,7 +139,12 @@ function readSessionPidfile(
     sessionId,
     cwd: typeof cwdRaw === "string" ? cwdRaw : null,
     status:
-      statusRaw === "busy" || statusRaw === "idle" ? statusRaw : "unknown",
+      statusRaw === "busy" ||
+      statusRaw === "shell" ||
+      statusRaw === "waiting" ||
+      statusRaw === "idle"
+        ? statusRaw
+        : "unknown",
     updatedAt: typeof updatedAtRaw === "number" ? updatedAtRaw : null,
   };
 }
@@ -221,4 +234,67 @@ export function buildCohortSight(
   });
 
   return { generatedAt: now, channel, rows, blindSpots };
+}
+
+/** One session's harness-observed activity, for the idle-suppress index lookup. */
+export type HarnessStatusEntry = {
+  status: CohortSightStatus;
+  /** The session's real OS pid (the `<pid>.json` stem == the embedded pid). */
+  pid: number;
+  /** `isOsPidAlive(pid)` — the OS ground-truth the active-status trust hangs on.
+   *  CG1 proved `updatedAt` freezes multi-minute during active work, so the
+   *  pidfile age is NOT a reliable staleness signal; the live-pid probe is. */
+  pidAlive: boolean;
+};
+
+/**
+ * ACTIVE harness states — the session is doing work, NOT idle. Deliberately
+ * includes `waiting`: in the cohort case a live-pid `waiting` session is
+ * alive-not-abandoned (waiting-for-tool is active; waiting-for-user is
+ * blocked-but-alive), and the consumer's `pidAlive` guard makes trusting it
+ * safe (Alpha Lane-A lens, 2026-06-07). `idle` / `unknown` are NOT active.
+ */
+export function isActiveHarnessStatus(status: CohortSightStatus): boolean {
+  return status === "busy" || status === "shell" || status === "waiting";
+}
+
+/**
+ * INDEX-ONCE reader (Alpha Lane-A lens Q3): scan `~/.claude/sessions/` ONCE and
+ * return a `sessionId -> {status, pid, pidAlive}` map, so a per-peer consumer
+ * (teammate-idle-reminder) does O(N) lookups instead of N scandirs. Reuses the
+ * same `readSessionPidfile` parse as `buildCohortSight` (numeric `<pid>.json`
+ * stems only; UUID telemetry skipped). Fail-soft: a missing/unreadable dir
+ * yields an empty index; an unparseable pidfile is skipped (advisory read — no
+ * blind-spot surfacing here, unlike the operator board).
+ *
+ * ADVISORY-OBSERVE-ONLY (CG6): a consumer may SUPPRESS an idle warn from this,
+ * but NO reaper/GC path may EVER gate on it — the harness pidfile is an
+ * undocumented, CC-version-coupled artifact (the C1 pid-spike caveat).
+ */
+export function buildHarnessStatusIndex(
+  opts: { sessionsDirOverride?: string } = {},
+): Map<string, HarnessStatusEntry> {
+  const dir = opts.sessionsDirOverride ?? defaultSessionsDir();
+  const index = new Map<string, HarnessStatusEntry>();
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return index; // missing/unreadable sessions dir => empty index (degrade-safe)
+  }
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const stem = entry.slice(0, -".json".length);
+    if (!/^\d+$/.test(stem)) continue; // numeric <pid>.json only (skip UUID telemetry)
+    const result = readSessionPidfile(join(dir, entry));
+    if ("error" in result) continue; // skip unreadable (advisory index)
+    index.set(result.sessionId, {
+      status: result.status,
+      pid: result.pid,
+      pidAlive: isOsPidAlive(result.pid),
+    });
+  }
+  return index;
 }

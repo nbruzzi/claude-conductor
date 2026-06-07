@@ -317,19 +317,24 @@ export const LIVENESS_TRANSITIONS: readonly LivenessTransition[] = [
     signal:
       "the reclaiming session's first heartbeat / channel send re-enters the live state",
   },
-  // ── idle: DEFERRED observe rung (harness status; OBSERVE-NOT-INFER) ──
+  // ── idle: observe rung (harness status; OBSERVE-NOT-INFER). Lane A
+  //    (2026-06-07) wired the READ side: teammate-idle-reminder consults the
+  //    harness status via cohort-sight.buildHarnessStatusIndex as an
+  //    ADVISORY-OBSERVE-ONLY idle suppress (CG6 — off the LGC allowlist; never a
+  //    reaper gate). These edges document the topology; no GC path classifies
+  //    `idle`. ──
   {
     from: "live",
     to: "idle",
     kind: "observe",
     signal:
-      "DEFERRED — harness-published session status flips busy->idle (the harness `sessions/<pid>.json` status field); OBSERVE-NOT-INFER, not re-derived from a heartbeat split this slice",
+      "harness-published session status flips busy->idle (the harness `sessions/<pid>.json` status field). Lane A consumes it ADVISORY-ONLY in teammate-idle-reminder (suppress a would-be idle warn, never reap): active = busy/shell/waiting, idle = idle.",
   },
   {
     from: "idle",
     to: "live",
     kind: "observe",
     signal:
-      "DEFERRED — harness-published session status flips idle->busy (the harness `sessions/<pid>.json` status field); OBSERVE-NOT-INFER, not re-derived this slice",
+      "harness-published session status flips idle->busy (the harness `sessions/<pid>.json` status field). Lane A: an ACTIVE status + a live pid suppresses the idle reminder REGARDLESS of pidfile updatedAt age — updatedAt freezes during active work (CG1), so isOsPidAlive is the staleness guard, never the age.",
   },
 ];
