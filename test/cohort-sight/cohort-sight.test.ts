@@ -22,6 +22,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildCohortSight,
+  buildHarnessStatusIndex,
+  isActiveHarnessStatus,
   type CohortSight,
   type CohortSightRow,
 } from "../../src/cohort-sight/index.ts";
@@ -233,5 +235,84 @@ describe("cohort-sight CLI rendering (fmtAge / renderTable) + arg handling", () 
 
   it("CLI rejects an unexpected positional arg with exit 2 (NIT-1)", () => {
     expect(runCohortSightCli(["unexpected"])).toBe(2);
+  });
+});
+
+describe("Lane A — harness-status taxonomy + index-once reader", () => {
+  it("buildCohortSight passes through the 4-value taxonomy (waiting/shell no longer collapse)", () => {
+    writePidfile(701, {
+      pid: 701,
+      sessionId: SID_A,
+      status: "waiting",
+      updatedAt: NOW,
+    });
+    writePidfile(702, {
+      pid: 702,
+      sessionId: SID_B,
+      status: "shell",
+      updatedAt: NOW,
+    });
+    writePidfile(703, {
+      pid: 703,
+      sessionId: SID_X,
+      status: "nonsense",
+      updatedAt: NOW,
+    });
+    const { rows } = build();
+    expect(rowBySid(rows, SID_A)?.status).toBe("waiting");
+    expect(rowBySid(rows, SID_B)?.status).toBe("shell");
+    expect(rowBySid(rows, SID_X)?.status).toBe("unknown"); // unrecognized still collapses
+  });
+
+  it("isActiveHarnessStatus: busy/shell/waiting active; idle/unknown not", () => {
+    expect(isActiveHarnessStatus("busy")).toBe(true);
+    expect(isActiveHarnessStatus("shell")).toBe(true);
+    expect(isActiveHarnessStatus("waiting")).toBe(true);
+    expect(isActiveHarnessStatus("idle")).toBe(false);
+    expect(isActiveHarnessStatus("unknown")).toBe(false);
+  });
+
+  it("buildHarnessStatusIndex maps sessionId -> {status, pid, pidAlive} via kill(pid,0)", () => {
+    writePidfile(process.pid, {
+      pid: process.pid,
+      sessionId: SID_A,
+      status: "busy",
+      updatedAt: NOW,
+    });
+    writePidfile(2_147_483_646, {
+      pid: 2_147_483_646,
+      sessionId: SID_B,
+      status: "idle",
+      updatedAt: NOW,
+    });
+    const index = buildHarnessStatusIndex({ sessionsDirOverride: tmpDir });
+    expect(index.get(SID_A)).toEqual({
+      status: "busy",
+      pid: process.pid,
+      pidAlive: true,
+    });
+    expect(index.get(SID_B)).toEqual({
+      status: "idle",
+      pid: 2_147_483_646,
+      pidAlive: false,
+    });
+  });
+
+  it("buildHarnessStatusIndex skips UUID telemetry + non-json; missing dir => empty", () => {
+    writeRaw(`${SID_A}.json`, JSON.stringify({ session_id: SID_A })); // uuid telemetry
+    writeRaw("notes.txt", "hello");
+    writePidfile(801, {
+      pid: 801,
+      sessionId: SID_B,
+      status: "busy",
+      updatedAt: NOW,
+    });
+    const index = buildHarnessStatusIndex({ sessionsDirOverride: tmpDir });
+    expect(index.size).toBe(1);
+    expect(index.has(SID_B)).toBe(true);
+    expect(
+      buildHarnessStatusIndex({ sessionsDirOverride: join(tmpDir, "nope") })
+        .size,
+    ).toBe(0);
   });
 });
