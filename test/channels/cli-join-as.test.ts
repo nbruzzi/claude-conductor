@@ -153,6 +153,49 @@ describe("channels CLI — join --as (P2 channel-as-flag plan)", () => {
     expect(parsed.identity.role).toBe("pen");
   });
 
+  // ─── bare-join --role (next-available path; role-flag-drop regression) ──
+
+  it("bare join --role pen (next-available path) → identity.role='pen'", async () => {
+    await createChannel({
+      channelId: "c-cja-role-bare",
+      handoffId: "c-cja-role-bare",
+      sessionId: SESSION_NEW,
+    });
+    // Regression: the bare-join (no --as, next-available letter) else-branch
+    // dropped --role entirely, so the claimant always landed role=queue.
+    // Live repro this cycle: Alpha/Charlie/Delta ran `join coordination
+    // --role pen` (no --as) via /handoff-resume Step 4a and every one landed
+    // queue. The next-available path must honor --role like the --as path.
+    const result = runJoin(["join", "c-cja-role-bare", "--role", "pen"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const parsed = JSON.parse(result.stdout) as JoinOutput;
+    expect(parsed.identity.role).toBe("pen");
+  });
+
+  it("bare join with no --role → identity.role='queue' (default preserved)", async () => {
+    await createChannel({
+      channelId: "c-cja-role-default",
+      handoffId: "c-cja-role-default",
+      sessionId: SESSION_NEW,
+    });
+    const result = runJoin(["join", "c-cja-role-default"]);
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as JoinOutput;
+    expect(parsed.identity.role).toBe("queue");
+  });
+
+  it("bare join --role bogus → exit 2 (validation applies to bare path too)", async () => {
+    await createChannel({
+      channelId: "c-cja-role-bad",
+      handoffId: "c-cja-role-bad",
+      sessionId: SESSION_NEW,
+    });
+    const result = runJoin(["join", "c-cja-role-bad", "--role", "bogus"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("invalid role");
+  });
+
   // ─── Force takeover (Decision §4) ──────────────────────────────
 
   it("force takeover: prior holder + --as Alpha --force → exitCode 0, takeover_displaced_session_id set", async () => {
