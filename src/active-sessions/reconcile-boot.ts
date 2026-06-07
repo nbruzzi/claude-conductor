@@ -376,12 +376,16 @@ function buildSessionLivenessMap(
  * Enumerate identity sentinels across all channels as REPORT-ONLY candidates.
  * A sentinel has no heartbeat of its own (joined_at is not refreshed → not a
  * liveness signal), so a claim's liveness IS its session's presence liveness
- * (cross-ref {@link buildSessionLivenessMap}). A claim whose session left NO
- * presence heartbeat is an ORPHAN sentinel — the meaningful signal this
- * surfaces: classified `stale`, `failed_signals:["no-presence-heartbeat"]`, and
- * an INFORMATIONAL age (how long the orphan has existed, NOT a liveness age).
- * `gc_eligible` is ALWAYS false — identity GC (unlinkIdentitySentinelOrLogOrphan)
- * is deferred to a later increment. N1: a bad channel/listing is skipped, not
+ * (cross-ref {@link buildSessionLivenessMap}). A claim whose session has NO
+ * presence heartbeat is NOT automatically an orphan (G2 alive-anywhere): the
+ * coordination CHANNEL store is consulted (a coordination-only session is
+ * channel-live with zero presence heartbeats) — channel-live → classified
+ * `live`, `failed_signals:[]`; otherwise a genuine ORPHAN sentinel, classified
+ * `stale`, `failed_signals:["no-presence-heartbeat"]`, with an INFORMATIONAL age
+ * (how long the orphan has existed, NOT a liveness age). `gc_eligible` is ALWAYS
+ * false — identity GC (unlinkIdentitySentinelOrLogOrphan) is deferred to a later
+ * increment, so the channel consult is REPORT-ONLY + subtract-only (it can only
+ * downgrade a false orphan to live). N1: a bad channel/listing is skipped, not
  * fatal (blast-radius isolation, mirroring enumeratePresence).
  */
 function enumerateIdentity(
@@ -421,9 +425,32 @@ function enumerateIdentity(
           age_ms: live.age_ms,
         });
       } else {
-        // ORPHAN: the session left no presence heartbeat. age_ms is the claim's
-        // own age (now - joined_at) — INFORMATIONAL (how long the orphan has
-        // lingered), NOT a session-liveness age. Unparseable joined_at → 0.
+        // No presence heartbeat for this session. G2 alive-anywhere report-fix:
+        // a coordination-only session (cohort `cli.ts send` refreshes ONLY the
+        // channel store) is channel-LIVE with ZERO presence heartbeats — alive,
+        // NOT an orphan. OR-in the coordination channel before declaring an
+        // orphan; without it the live cohort captain (presence-absent,
+        // coordination-only) is mislabeled a `stale` orphan. The full sid is
+        // EFFECTIVELY an exact match here — channel HB filenames ARE the full
+        // UUID, so startsWith(fullSid) matches only that one session. Window =
+        // LIVE_WINDOW_MS, the "actively coordinating" threshold (matching
+        // classifySessionLiveness) — it drives the CLASSIFICATION axis, NOT a
+        // GC-protect (enumeratePresence floors at GC_WINDOW_MS, and
+        // sessionLivePrefixSource widens reaper windows to it); we deliberately
+        // do NOT widen, because a 30-60min-band false-stale here is a cosmetic
+        // mis-report, never data loss — gc_eligible stays false either way
+        // (identity GC deferred) → REPORT-ONLY + subtract-only: can ONLY
+        // downgrade a false orphan to live, never enable a GC. `paused` (computed
+        // above) reads the presence anchor — null/false for a coordination-only
+        // session, so a paused such session is not detectable as paused here
+        // (mirrors the worktree branch). age_ms is the claim's own age
+        // (now - joined_at) — INFORMATIONAL, NOT a liveness age; unparseable → 0.
+        const channelLive = isSidPrefixLiveOnChannel(
+          sessionId,
+          COORDINATION_CHANNEL_ID,
+          now,
+          LIVE_WINDOW_MS,
+        );
         const joinedMs = Date.parse(claim.joined_at);
         const orphanAgeMs = Number.isNaN(joinedMs)
           ? 0
@@ -432,11 +459,11 @@ function enumerateIdentity(
           artifact_class: "identity",
           artifact_id: channel.id,
           session_id: sessionId,
-          classification: "stale",
+          classification: channelLive ? "live" : "stale",
           split_brain: false,
           gc_eligible: false,
           paused,
-          failed_signals: ["no-presence-heartbeat"],
+          failed_signals: channelLive ? [] : ["no-presence-heartbeat"],
           age_ms: orphanAgeMs,
         });
       }
@@ -478,10 +505,14 @@ function worktreeAgeMs(now: number, worktreePath: string): number {
  * REPORT-ONLY candidates. A worktree has no heartbeat of its own; its path
  * encodes only the 8-char sid-PREFIX, so liveness is cross-ref'd by prefix-match
  * against the presence sessions ({@link findSessionByPrefix}). A worktree with
- * no live presence session for its prefix is an ORPHAN (stale +
- * ["no-presence-heartbeat"]) — the disk-consuming residue this surfaces.
- * `gc_eligible` is ALWAYS false — worktree GC (removeWorktree) is deferred.
- * Fail-soft: readRepoConfig + listWorktrees both return empty/absent on error.
+ * no live presence session for its prefix is NOT automatically an orphan (G2
+ * alive-anywhere): the coordination CHANNEL store is consulted by prefix — a
+ * coordination-only session is channel-live with no presence heartbeat — so
+ * channel-live → `live`, otherwise an ORPHAN (stale + ["no-presence-heartbeat"]),
+ * the disk-consuming residue this surfaces. `gc_eligible` is ALWAYS false —
+ * worktree GC (removeWorktree) is deferred, so the channel consult is
+ * REPORT-ONLY + subtract-only. Fail-soft: readRepoConfig + listWorktrees both
+ * return empty/absent on error.
  */
 function enumerateWorktree(
   now: number,
@@ -510,19 +541,33 @@ function enumerateWorktree(
           age_ms: match.live.age_ms,
         });
       } else {
-        // ORPHAN: no live session for this prefix. The path yields ONLY the
-        // 8-char prefix (the full sid is unrecoverable), so session_id is the
-        // prefix and paused cannot be resolved (readSessionPausedAt needs the
-        // full sid) → false. age_ms is the worktree dir's own age (informational).
+        // No live presence session for this prefix (findSessionByPrefix miss).
+        // G2 alive-anywhere report-fix: consult the coordination channel by
+        // prefix before declaring an orphan — a coordination-only session is
+        // channel-LIVE with no presence HB. The path yields ONLY the 8-char
+        // prefix (full sid unrecoverable), so this is a prefix-match channel
+        // probe and `paused` cannot be resolved (readSessionPausedAt needs the
+        // full sid) → false. LIVE_WINDOW_MS (the classification axis, matching
+        // classifySessionLiveness), NOT the GC-protect GC_WINDOW_MS and NOT
+        // sessionLivePrefixSource's reaper floor — a 30-60min-band false-stale
+        // here is a cosmetic mis-report, never data loss, since gc_eligible
+        // stays false (worktree GC deferred) → REPORT-ONLY + subtract-only.
+        // age_ms is the worktree dir's own age (informational), never a liveness age.
+        const channelLive = isSidPrefixLiveOnChannel(
+          wt.sessionId,
+          COORDINATION_CHANNEL_ID,
+          now,
+          LIVE_WINDOW_MS,
+        );
         out.push({
           artifact_class: "worktree",
           artifact_id: wt.path,
           session_id: wt.sessionId,
-          classification: "stale",
+          classification: channelLive ? "live" : "stale",
           split_brain: false,
           gc_eligible: false,
           paused: false,
-          failed_signals: ["no-presence-heartbeat"],
+          failed_signals: channelLive ? [] : ["no-presence-heartbeat"],
           age_ms: worktreeAgeMs(now, wt.path),
         });
       }
