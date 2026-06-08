@@ -2098,23 +2098,32 @@ export function readMessagesAfter(
  *  constant IS that documentation. */
 export const ROTATION_THRESHOLD_BYTES = 4 * 1024 * 1024;
 
-/** Control file gating the AUTOMATIC (SessionStart gc-reaper) rotation trigger:
- *  a bare flag file in the channels root. ABSENT by default → no automatic
- *  rotation (the `rotateChannelMessages` primitive stays directly callable for
- *  tests + manual ops regardless of this flag). Default-off is deliberate
- *  live-substrate sequencing: a `tail -f` Monitor follows the file by
- *  DESCRIPTOR, so a rename would leave live Monitors silently tailing the
- *  sealed archive. Enable only once the cohort's Monitors follow by NAME
- *  (`tail -F`); removing the flag is the emergency kill-switch. */
-function channelRotationEnabledFlagPath(): string {
-  return join(resolveChannelsDir(), ".rotation-enabled");
+/** Kill-switch file DISABLING the AUTOMATIC (SessionStart gc-reaper) rotation
+ *  trigger: a bare flag file in the channels root. PRESENT → no automatic
+ *  rotation; ABSENT (the default) → rotate. The `rotateChannelMessages` primitive
+ *  stays directly callable for tests + manual ops regardless of this flag.
+ *
+ *  Default-ON is the G4-flip (was opt-in `.rotation-enabled`, default-off). The
+ *  default-off was deliberate live-substrate sequencing for the `tail -f` blocker
+ *  — a `tail -f` Monitor follows the file by DESCRIPTOR, so a rename leaves it
+ *  silently tailing the sealed archive. That precondition is now MET: PR-1
+ *  (dotfiles #198) converted the last `tail -f` reader to `tail -F` (name-follow,
+ *  re-opens across the rename), and every other consumer is rotation-survivable —
+ *  Monitor recipes use `tail -F`, and the substrate read APIs span the archive
+ *  (`readMessages{,Tail,After}` with archive-awareness). `touch .rotation-disabled`
+ *  is the emergency kill-switch (inverted polarity from the old opt-in flag). */
+function channelRotationDisabledFlagPath(): string {
+  return join(resolveChannelsDir(), ".rotation-disabled");
 }
 
-/** True when the automatic rotation trigger is opted-in (flag file present).
- *  Consulted by the SessionStart gc-reaper trigger, NOT by the primitive. */
+/** True when the automatic rotation trigger is active. Default-ON: rotation runs
+ *  unless the `.rotation-disabled` kill-switch flag is present. Consulted by the
+ *  SessionStart gc-reaper trigger, NOT by the primitive (always callable). On a
+ *  stat error we fail to `false` (skip rotation this cycle) — conservative: never
+ *  rotate when the kill-switch cannot be confirmed absent. */
 export function isChannelRotationAutoEnabled(): boolean {
   try {
-    return existsSync(channelRotationEnabledFlagPath());
+    return !existsSync(channelRotationDisabledFlagPath());
   } catch {
     return false;
   }
@@ -2214,16 +2223,34 @@ export async function rotateChannelMessages(
  *  Implementation note: byte-level scan for `0x0A` (LF). UTF-8-correct by
  *  construction — LF (0x0A) does not appear as a continuation byte in
  *  any multi-byte UTF-8 sequence, so the count is identical to the JS-
- *  string `\n` count without requiring full file decode. */
+ *  string `\n` count without requiring full file decode.
+ *
+ *  Archive-aware (G4 default-ON rotation): sums complete records across the
+ *  live file AND every sealed `messages.<seq>.archive.jsonl`, so the count is
+ *  the TOTAL channel history — not just the post-rotation live tail. Mirrors the
+ *  archive-span of `readMessagesTail` / `readMessagesAfter`; pre-rotation (no
+ *  archives) it is identical to the prior live-only count. */
 export async function messageCount(channelId: string): Promise<number> {
   if (!isValidArtifactId(channelId)) {
     throw new Error(
       `[channels] messageCount: invalid channelId "${channelId}" — must match isValidArtifactId pattern`,
     );
   }
-  const path = messagesPath(channelId);
-  if (!existsSync(path)) return 0;
+  // Live file + every sealed archive seq — the TOTAL across the rotated span.
+  // A missing live file (the post-rotation window before the next append) still
+  // counts the archives, so the total never drops at the rotation boundary.
+  let total = await countCompleteLines(messagesPath(channelId));
+  for (const seq of listMessageArchiveSeqs(channelId)) {
+    total += await countCompleteLines(messageArchivePath(channelId, seq));
+  }
+  return total;
+}
 
+/** Count complete (LF-terminated) records in ONE JSONL file; 0 for a missing
+ *  file. Byte-level LF scan (UTF-8-correct: 0x0A never appears as a continuation
+ *  byte). `messageCount` sums this across the live file + every sealed archive. */
+function countCompleteLines(path: string): Promise<number> {
+  if (!existsSync(path)) return Promise.resolve(0);
   return new Promise<number>((resolve, reject) => {
     let count = 0;
     const stream = createReadStream(path);

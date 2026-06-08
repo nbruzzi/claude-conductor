@@ -22,7 +22,8 @@
  *     stay correct across the rotation boundary.
  *   - verdict-chain integrity: a real DSSE-signed verdict chain split across
  *     archive + live still fully verifies (the verifier reads `includeArchive`).
- *   - opt-in gate: `isChannelRotationAutoEnabled` is OFF by default.
+ *   - default-ON gate: `isChannelRotationAutoEnabled` is ON by default; the
+ *     `.rotation-disabled` kill-switch flag turns it off (G4-flip).
  *
  * Setup writes raw JSONL lines (sibling to `test/audit/verify.test.ts`) so the
  * tests control ts + body exactly; rotation + the readers do not depend on how
@@ -377,12 +378,12 @@ describe("verifyChannelAuditChain — chain verifies across the rotation boundar
   });
 });
 
-describe("isChannelRotationAutoEnabled — opt-in gate (default OFF)", () => {
-  it("is false by default and true once the flag file exists", () => {
-    expect(isChannelRotationAutoEnabled()).toBe(false);
-    mkdirSync(channelsDirAbs, { recursive: true });
-    writeFileSync(join(channelsDirAbs, ".rotation-enabled"), "", "utf-8");
+describe("isChannelRotationAutoEnabled — default-ON gate (G4-flip)", () => {
+  it("is true by default and false once the .rotation-disabled kill-switch exists", () => {
     expect(isChannelRotationAutoEnabled()).toBe(true);
+    mkdirSync(channelsDirAbs, { recursive: true });
+    writeFileSync(join(channelsDirAbs, ".rotation-disabled"), "", "utf-8");
+    expect(isChannelRotationAutoEnabled()).toBe(false);
   });
 });
 

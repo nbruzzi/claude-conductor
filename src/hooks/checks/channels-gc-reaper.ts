@@ -380,11 +380,12 @@ async function reapChannel(channelId: string): Promise<string[]> {
     });
   }
 
-  // messages.jsonl rotation — opt-in via the `.rotation-enabled` flag (default
-  // OFF: a `tail -f` Monitor follows by descriptor and would go silent after
-  // the rename; enable only once cohort Monitors follow by name with `tail -F`).
-  // Bounded + zero-loss (atomic rename); a failure is breadcrumbed and never
-  // breaks the SessionStart chain.
+  // messages.jsonl rotation — DEFAULT-ON (G4-flip); `.rotation-disabled` is the
+  // kill-switch. The old default-off precondition (a `tail -f` Monitor follows by
+  // descriptor and goes silent after the rename) is now MET: every Monitor follows
+  // by name (`tail -F`, re-opens across the rename) since dotfiles #198, and the
+  // substrate read APIs span the archive. Bounded + zero-loss (atomic rename); a
+  // failure is breadcrumbed and never breaks the SessionStart chain.
   if (isChannelRotationAutoEnabled()) {
     try {
       const rotated = await rotateChannelMessages(channelId);

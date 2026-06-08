@@ -65,6 +65,19 @@ function writeRawMessagesJsonl(channelId: string, content: string): void {
   writeFileSync(join(channelDir, "messages.jsonl"), content);
 }
 
+/** Write a sealed archive seq (`messages.<seq>.archive.jsonl`) — the file shape
+ *  `rotateChannelMessages` produces — to exercise the archive-aware `messageCount`
+ *  span without driving a real rotation. */
+function writeRawArchive(
+  channelId: string,
+  seq: number,
+  content: string,
+): void {
+  const channelDir = join(tmpRoot, "channels", channelId);
+  mkdirSync(channelDir, { recursive: true });
+  writeFileSync(join(channelDir, `messages.${seq}.archive.jsonl`), content);
+}
+
 describe("messageCount — semantic contract", () => {
   it("returns 0 for a missing channel file (no createChannel call)", async () => {
     expect(await messageCount("absent-channel")).toBe(0);
@@ -164,5 +177,26 @@ describe("messageCount — semantic contract", () => {
       caught = e;
     }
     expect(isInvalidChannelIdError(caught, "name with space")).toBe(true);
+  });
+});
+
+describe("messageCount — archive-aware total (G4 default-ON rotation)", () => {
+  it("sums the live file + all sealed archives", async () => {
+    writeRawArchive("arc-c", 1, "a\nb\nc\n"); // 3 archived
+    writeRawArchive("arc-c", 2, "d\ne\n"); //    2 archived
+    writeRawMessagesJsonl("arc-c", "f\ng\n"); //  2 live
+    expect(await messageCount("arc-c")).toBe(7);
+  });
+
+  it("counts the archives when the live file is absent (post-rotation window)", async () => {
+    // rotateChannelMessages renames the live file away; it is absent until the
+    // next append. The total must NOT drop at that boundary.
+    writeRawArchive("arc-empty-live", 1, "a\nb\nc\n");
+    expect(await messageCount("arc-empty-live")).toBe(3);
+  });
+
+  it("equals the live-only count when there are no archives (pre-rotation parity)", async () => {
+    writeRawMessagesJsonl("arc-none", "a\nb\n");
+    expect(await messageCount("arc-none")).toBe(2);
   });
 });
