@@ -649,6 +649,45 @@ describe("resolveSessionId — worktree tier (DiscoveryResult variant: worktree)
     expect(result.kind).toBe("ppid");
     if (result.kind === "ppid") expect(result.sessionId).toBe(VALID_UUID_3);
   });
+
+  it("retries the worktree tier across the cold-start window — resolves when the eager <pid>.json lands late", () => {
+    // SPAWN-3 (Bravo #220 NIT): a true first-action cold spawn can run resolve BEFORE
+    // the CC binary has written its eager <pid>.json. The worktree tier must RETRY (not
+    // read once) — mirroring the ppid cold-start grace, on the SHARED budget. Here the
+    // pidfile is absent on attempt 0; the onColdStartRetry hook writes it before the
+    // first retry, so attempt 1 resolves. Pre-fix (single read) this fell to → missing.
+    let wrote = false;
+    const result = resolveSessionId({
+      retryCount: 2,
+      retryDelayMs: 1,
+      sessionsDir: tmpSessionsDir,
+      startDir: worktreeDirFor(VALID_UUID_1),
+      onColdStartRetry: () => {
+        if (!wrote) {
+          writeCCFile(process.pid, VALID_UUID_1); // eager pidfile lands during the cold-start window
+          wrote = true;
+        }
+      },
+    });
+    expect(result.kind).toBe("worktree");
+    if (result.kind === "worktree") expect(result.sessionId).toBe(VALID_UUID_1);
+  });
+
+  it("exhausts the retry budget and falls through when the pidfile never lands (retry never fabricates a match)", () => {
+    // Negative: no pidfile ever → the retry budget exhausts and the tier falls through
+    // (no telemetry → missing). Pins the inter-attempt retry COUNT (retryCount=2 → 2
+    // retries between 3 attempts) and that retry does not invent a match.
+    const attempts: number[] = [];
+    const result = resolveSessionId({
+      retryCount: 2,
+      retryDelayMs: 1,
+      sessionsDir: tmpSessionsDir,
+      startDir: worktreeDirFor(VALID_UUID_1),
+      onColdStartRetry: (n) => attempts.push(n),
+    });
+    expect(result.kind).toBe("missing");
+    expect(attempts).toEqual([0, 1]);
+  });
 });
 
 describe("formatRecoveryHint / describeSource — worktree variant", () => {

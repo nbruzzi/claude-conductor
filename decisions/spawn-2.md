@@ -66,3 +66,31 @@ files:
 **Audit cadence:** Charlie build (P6 PR) — TDD: foreign/dead-worktree → rejected; cold-spawn own-telemetry-absent → resolves (the precondition the original suite never set up); + Bravo's 2 NITs folded (startDir env-ladder branch, ppid-precedence). Bravo decision-assess (#218 F1) + re-lens on this delta; Alpha captain ruling = land A+B unified.
 
 **Supersedes / superseded_by:** Supersedes Decision A's **reasoning** (the SE-2-drop justification); A's tier-placement and `worktree`-variant decisions stand. Additive to the env/ppid/mtime branches.
+
+---
+
+## 2026-06-08 — Decision C: the worktree tier shares the ppid cold-start retry budget (explicit grace; SPAWN-3 follow-up to B)
+
+```yaml
+---
+ts: 2026-06-08T23:30:00Z
+kind: architectural
+severity: minor
+phase: spawn-2-p6-followup
+files:
+  - src/shared/session-id-discovery.ts
+  - test/shared/session-id-discovery.test.ts
+---
+```
+
+**Context:** Decision B switched the worktree tier to match the EAGER `<pid>.json`, but the tier read it ONCE (no retry). It inherited cold-start grace only INCIDENTALLY — it runs after `ppidWalkWithRetry` burns ~`retryCount×retryDelayMs` of wall-clock, by which time the eager pidfile has landed. Bravo's #220 re-lens NIT: that grace is IMPLICIT cross-tier coupling — reduce `retryCount` to 0 (or reorder/remove the ppid tier) and the worktree tier silently loses its startup grace, re-inerting the headline for a true first-action cold spawn that runs before the CC binary writes the pidfile. The original suite never reproduced that not-yet-written-at-join window (tests planted the pidfile present) — the same fixture-confidence class P6 exists to kill.
+
+**Chosen:** Replace `ppidWalkWithRetry` with `resolveViaPpidOrWorktree`, which tries ppid (authoritative) THEN the worktree tier each attempt, retrying BOTH on ONE SHARED budget (`retryCount` attempts × `retryDelayMs`). The worktree tier's cold-start grace is now EXPLICIT (it retries on its own, independent of ppid's elapsed time). New `ResolveOptions.onColdStartRetry` (observability + deterministic test seam; must-not-throw) fires before each inter-attempt sleep.
+
+**Reason:** Sharing ONE loop (vs giving the worktree tier its own retry loop after ppid's) is Bravo's preferred fix: it makes the grace explicit WITHOUT doubling the genuine-missing wall-clock (the sleep budget — the dominant cost — stays `retryCount` sleeps, not `2×`). ppid precedence is preserved (ppid before worktree within each attempt; a ppid hit returns before the worktree tier runs). The institutionalized adversarial-subagent execution-trace (today's C1 lesson) confirmed: no precedence inversion, no off-by-one in the attempt/sleep counts, retry never fabricates a match (exhaust → null → mtime fallback), no C1-class short-circuit, no silent-failure abort of the loop.
+
+**Tests:** the not-yet-written-window test (pidfile absent on attempt 0, written via `onColdStartRetry` before attempt 1, resolves `worktree`) + a negative budget-exhaustion test (no pidfile ever → retries `[0,1]` → `missing`, never fabricates). The pre-existing ppid-precedence + cohort tests pass unchanged (behavior-preserving refactor).
+
+**Residual / out of scope:** the `^`-anchored-telemetry-weakens-other-consumers thread (Decision B's "out of scope") remains the separate SPAWN-3 investigate-first item.
+
+**Supersedes / superseded_by:** Additive to Decision B — hardens the same worktree tier; `resolveSessionId`'s exported signature is unchanged (a new optional `ResolveOptions` field).

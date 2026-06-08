@@ -101,6 +101,13 @@ export type ResolveOptions = {
   retryCount?: number;
   /** Injectable worktree start path for the SPAWN-2 worktree-path tier (test seam + explicit override). */
   startDir?: string;
+  /**
+   * Invoked before each cold-start retry sleep (after a ppid + worktree miss), with the
+   * 0-based attempt index. Observability + test seam: a test writes the eager `<pid>.json`
+   * here to exercise the not-yet-written-at-join window the worktree tier retries across.
+   * MUST NOT throw — it runs inside the resolver, ahead of the mtime fallback.
+   */
+  onColdStartRetry?: (attempt: number) => void;
 };
 
 type CCBinaryFile = { pid: number; sessionId: string };
@@ -211,15 +218,58 @@ function sleepSync(ms: number): void {
   Atomics.wait(ia, 0, 0, ms);
 }
 
-function ppidWalkWithRetry(
+/**
+ * Tiers 2–3b (ppid-tree walk, then the worktree-path tier) on a SHARED cold-start
+ * retry budget. Both tiers read the EAGER `<pid>.json` the CC binary writes at
+ * session start; a true first-action cold spawn can run BEFORE that write lands, so
+ * each attempt tries ppid (authoritative) then worktree, retrying up to `retryCount`
+ * times (× `retryDelayMs`). Sharing ONE loop — rather than giving the worktree tier
+ * its own retry after ppid's — keeps its cold-start grace EXPLICIT (it no longer
+ * relies on ppid's retries having incidentally elapsed first) WITHOUT doubling the
+ * wall-clock on the genuine-missing path. Returns the first hit (ppid before worktree
+ * within an attempt) or null once the budget exhausts. `onColdStartRetry` fires before
+ * each inter-attempt sleep (observability + test seam).
+ */
+function resolveViaPpidOrWorktree(
   sessionsDir: string,
+  startDirs: Array<string | undefined>,
   retryCount: number,
   retryDelayMs: number,
-): { pid: number; sessionId: string } | null {
+  onColdStartRetry?: (attempt: number) => void,
+): DiscoveryResult | null {
   for (let attempt = 0; attempt <= retryCount; attempt++) {
-    const found = walkPpidTree(sessionsDir);
-    if (found !== null) return found;
-    if (attempt < retryCount) sleepSync(retryDelayMs);
+    // ppid-tree walk (authoritative) — reads the CC binary file directly.
+    const ppid = walkPpidTree(sessionsDir);
+    if (ppid !== null) {
+      return {
+        kind: "ppid",
+        sessionId: ppid.sessionId,
+        pid: ppid.pid,
+        source: join(sessionsDir, `${ppid.pid}.json`),
+      };
+    }
+    // worktree-path tier — match the worktree dir's 8-hex prefix to a unique LIVE
+    // <pid>.json (resolveViaWorktreePath); try each candidate start path in order.
+    const seenStartDirs = new Set<string>();
+    for (const dir of startDirs) {
+      if (dir === undefined || dir.length === 0 || seenStartDirs.has(dir))
+        continue;
+      seenStartDirs.add(dir);
+      const wt = resolveViaWorktreePath(sessionsDir, dir);
+      if (wt !== null) {
+        return {
+          kind: "worktree",
+          sessionId: wt.sessionId,
+          prefix: wt.prefix,
+          source: wt.source,
+        };
+      }
+    }
+    // Both missed — wait for the eager <pid>.json to land, then retry.
+    if (attempt < retryCount) {
+      onColdStartRetry?.(attempt);
+      sleepSync(retryDelayMs);
+    }
   }
   return null;
 }
@@ -406,27 +456,17 @@ export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
     return { kind: "env", sessionId: envValue };
   }
 
-  // 2. ppid-tree walk + 3. cold-start retry
-  const ppidResult = ppidWalkWithRetry(sessionsDir, retryCount, retryDelayMs);
-  if (ppidResult !== null) {
-    // ppid path reads the CC binary file directly — no separate sanity check needed
-    return {
-      kind: "ppid",
-      sessionId: ppidResult.sessionId,
-      pid: ppidResult.pid,
-      source: join(sessionsDir, `${ppidResult.pid}.json`),
-    };
-  }
-
-  // 3b. worktree-path discovery (SPAWN-2, P6): a spawned cohort session has
-  // CLAUDE_SESSION_ID unset and a broken ppid-tree. The per-session worktree dir
-  // name (`~/.claude-dotfiles-<sid8>`) identifies it; resolveViaWorktreePath maps
-  // that 8-hex prefix to a UNIQUE, LIVE `<pid>.json` (eager at session start, so
-  // present at join — unlike the lazy telemetry the mtime tier matches). Correctness
-  // is enforced by the unique-live-pidfile match (not by trusting any one path
-  // source), so we try each candidate path — explicit opt, else env
-  // CLAUDE_DOTFILES_ROOT_RESOLVED / PWD / cwd — and take the first that resolves
-  // uniquely. After ppid (authoritative), before mtime.
+  // 2–3b. ppid-tree walk (authoritative) + the worktree-path tier (SPAWN-2, P6) on a
+  // SHARED cold-start retry budget. A spawned cohort session has CLAUDE_SESSION_ID
+  // unset and a broken ppid-tree; the per-session worktree dir name
+  // (`~/.claude-dotfiles-<sid8>`) identifies it, and resolveViaWorktreePath maps that
+  // 8-hex prefix to a UNIQUE, LIVE `<pid>.json` (eager at session start, present at
+  // join — unlike the lazy telemetry the mtime tier matches). Both tiers read that
+  // eager pidfile, so they share ONE retry loop: a true first-action cold spawn may
+  // run before the CC binary writes it, and the shared retry lets it land — keeping
+  // the worktree tier's cold-start grace EXPLICIT (not reliant on ppid's retries
+  // having elapsed first). startDir is the explicit opt, else the env ladder
+  // CLAUDE_DOTFILES_ROOT_RESOLVED / PWD / cwd.
   const startDirs =
     opts?.startDir !== undefined
       ? [opts.startDir]
@@ -435,21 +475,14 @@ export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
           process.env["PWD"],
           process.cwd(),
         ];
-  const seenStartDirs = new Set<string>();
-  for (const dir of startDirs) {
-    if (dir === undefined || dir.length === 0 || seenStartDirs.has(dir))
-      continue;
-    seenStartDirs.add(dir);
-    const wt = resolveViaWorktreePath(sessionsDir, dir);
-    if (wt !== null) {
-      return {
-        kind: "worktree",
-        sessionId: wt.sessionId,
-        prefix: wt.prefix,
-        source: wt.source,
-      };
-    }
-  }
+  const ppidOrWorktree = resolveViaPpidOrWorktree(
+    sessionsDir,
+    startDirs,
+    retryCount,
+    retryDelayMs,
+    opts?.onColdStartRetry,
+  );
+  if (ppidOrWorktree !== null) return ppidOrWorktree;
 
   // 4. mtime fallback
   const candidates = listMtimeCandidates(sessionsDir, windowMs, Date.now());
