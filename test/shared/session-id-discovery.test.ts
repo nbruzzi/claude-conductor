@@ -30,21 +30,33 @@ const REAL_SESSIONS_DIR = join(homedir(), ".claude", "sessions");
 let tmpRoot: string;
 let tmpSessionsDir: string;
 let prevEnv: string | undefined;
+let prevPwd: string | undefined;
+let prevDotfilesRoot: string | undefined;
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "session-id-discovery-"));
   tmpSessionsDir = join(tmpRoot, "sessions");
   // mkdir lazily — some tests want it absent
   prevEnv = process.env["CLAUDE_SESSION_ID"];
+  prevPwd = process.env["PWD"];
+  prevDotfilesRoot = process.env["CLAUDE_DOTFILES_ROOT_RESOLVED"];
   delete process.env["CLAUDE_SESSION_ID"];
+  // Deterministic worktree-tier startDir ladder: drop the real PWD +
+  // resolved-root so only a test that sets them drives the ladder (other tests
+  // pass an explicit startDir or rely on the non-matching real cwd).
+  delete process.env["PWD"];
+  delete process.env["CLAUDE_DOTFILES_ROOT_RESOLVED"];
 });
 
 afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
-  if (prevEnv !== undefined) {
-    process.env["CLAUDE_SESSION_ID"] = prevEnv;
-  } else {
-    delete process.env["CLAUDE_SESSION_ID"];
+  for (const [key, prev] of [
+    ["CLAUDE_SESSION_ID", prevEnv],
+    ["PWD", prevPwd],
+    ["CLAUDE_DOTFILES_ROOT_RESOLVED", prevDotfilesRoot],
+  ] as const) {
+    if (prev !== undefined) process.env[key] = prev;
+    else delete process.env[key];
   }
 });
 
@@ -72,6 +84,12 @@ afterAll(() => {
 const VALID_UUID_1 = "ad41f287-c7d2-4b01-a3ad-3aec8eb25d29";
 const VALID_UUID_2 = "f443f023-761d-443b-9714-d563b6fc41ab";
 const VALID_UUID_3 = "5ce7ef0b-3b78-402f-80fa-abf5ebfdf9fe";
+
+// A pid no OS will ever assign: exceeds Linux pid_max (≤ 2^22) and macOS
+// (~10^5), yet is a valid positive int32 (< 2^31-1, so process.kill treats it
+// as a pid, not a process-group). process.kill(this, 0) → ESRCH → "dead".
+// Deterministic across macOS dev + Linux CI without spawning/reaping a child.
+const GUARANTEED_DEAD_PID = 2_000_000_000;
 
 function shortRetry(): {
   retryCount: number;
@@ -300,6 +318,16 @@ describe("sanityCheckHasCCFile", () => {
   });
 });
 
+describe("isPidAlive (INTERNAL — liveness probe via signal-0)", () => {
+  it("returns true for the current process (alive)", () => {
+    expect(INTERNAL.isPidAlive(process.pid)).toBe(true);
+  });
+
+  it("returns false for a pid no OS will assign (ESRCH → dead)", () => {
+    expect(INTERNAL.isPidAlive(GUARANTEED_DEAD_PID)).toBe(false);
+  });
+});
+
 describe("resolveSessionId — env path (DiscoveryResult variant: env)", () => {
   it("kind=env when env set + valid UUID", () => {
     process.env["CLAUDE_SESSION_ID"] = VALID_UUID_1;
@@ -505,12 +533,20 @@ describe("extractSid8FromPath (INTERNAL — worktree basename parse)", () => {
 });
 
 describe("resolveSessionId — worktree tier (DiscoveryResult variant: worktree)", () => {
-  it("disambiguates a cohort that mtime would call ambiguous (no <pid>.json needed)", () => {
-    // The exact mtime-ambiguous setup: two fresh sibling telemetry files, and
-    // deliberately NO CC pidfile — proving the worktree tier does not depend on
-    // the SE-2 sanity check the mtime tier requires.
-    writeTelemetryFile(VALID_UUID_1);
-    writeTelemetryFile(VALID_UUID_2);
+  // SPAWN-2 + P6: the worktree tier matches the EAGER <pid>.json (CC-binary,
+  // embedded sessionId) and requires the pid to be ALIVE — NOT the lazy
+  // <uuid>.json telemetry. Matching the eager pidfile is what makes the tier fire
+  // for a true cold spawn (telemetry is written lazily by a PostToolUse hook and
+  // is absent at join); the alive-check is what closes the foreign/dead-worktree
+  // boundary (a dead session has no live pidfile).
+
+  it("resolves a cold-spawn session whose OWN telemetry is ABSENT at join (the SPAWN-2 headline case)", () => {
+    // REQUIRED regression test — the precondition the original suite never set up.
+    // A freshly-spawned session has its eager <pid>.json but has NOT yet written
+    // any <uuid>.json telemetry. The prior telemetry-matching tier saw 0 matches
+    // here → fell to mtime → missing → sid() threw (the INERT headline). Matching
+    // the live pidfile resolves it.
+    writeCCFile(process.pid, VALID_UUID_1); // eager + alive; NO telemetry written
     const result = resolveSessionId({
       ...shortRetry(),
       startDir: worktreeDirFor(VALID_UUID_1),
@@ -522,9 +558,53 @@ describe("resolveSessionId — worktree tier (DiscoveryResult variant: worktree)
     }
   });
 
-  it("falls through to mtime when startDir has no `-<sid8>` suffix", () => {
+  it("rejects a foreign/dead worktree whose lingering telemetry is prefix-unique but has NO live pidfile (closes the boundary)", () => {
+    // The documented boundary: a solo session sitting in a foreign/DEAD worktree
+    // `.claude-dotfiles-<hexB>`. B exited → its <pid>.json is gone, but its
+    // <uuid>.json telemetry lingers (telemetry is never GC'd). The prior tier
+    // matched that lingering telemetry → resolved B's id (silent misresolution).
+    // The pidfile + alive tier finds no live match → falls through to mtime, which
+    // also rejects (no pidfile → SE-2 sanity fails) → missing.
+    writeTelemetryFile(VALID_UUID_1); // dead B's lingering, prefix-unique telemetry
+    // deliberately NO <pid>.json for UUID_1 — B is dead
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: worktreeDirFor(VALID_UUID_1),
+    });
+    expect(result.kind).toBe("missing");
+  });
+
+  it("rejects a foreign worktree whose only pidfile is STALE (dead pid — crashed session)", () => {
+    // A crashed foreign session can leave a stale <pid>.json with a now-dead pid.
+    // Mere presence (the dropped SE-2 check) would accept it; the alive-check
+    // rejects it. No telemetry → mtime returns nothing → missing.
+    writeCCFile(GUARANTEED_DEAD_PID, VALID_UUID_1); // stale pidfile, dead pid
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: worktreeDirFor(VALID_UUID_1),
+    });
+    expect(result.kind).toBe("missing");
+  });
+
+  it("never guesses on an 8-hex prefix collision across two LIVE sessions — falls through", () => {
+    // Two live sessions whose UUIDs share the worktree's 8-hex prefix. process.pid
+    // and pid 1 are both alive + distinct, and neither is reachable by the ppid
+    // walk (process.pid is our own; pid 1 is never read — the walk stops above 1).
+    // >1 distinct live match → the uniqueness gate returns null → fall through.
+    writeCCFile(process.pid, VALID_UUID_4);
+    writeCCFile(1, VALID_UUID_5); // pid 1 (init/launchd) — always alive (EPERM, not ESRCH)
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: join(tmpRoot, ".claude-dotfiles-abcd1234"),
+    });
+    expect(result.kind).not.toBe("worktree");
+  });
+
+  it("falls through when startDir has no `-<sid8>` suffix (worktree tier never fires)", () => {
+    // No suffix → extractSid8FromPath null → the tier no-ops even with a live
+    // pidfile present. mtime resolves via telemetry + presence-sanity.
     writeTelemetryFile(VALID_UUID_1);
-    writeCCFile(12345, VALID_UUID_1); // sanity passes for the mtime tier
+    writeCCFile(process.pid, VALID_UUID_1); // present + alive (mtime sanity passes)
     const result = resolveSessionId({
       ...shortRetry(),
       startDir: join(tmpRoot, ".claude-dotfiles"),
@@ -533,31 +613,9 @@ describe("resolveSessionId — worktree tier (DiscoveryResult variant: worktree)
     if (result.kind === "mtime") expect(result.sessionId).toBe(VALID_UUID_1);
   });
 
-  it("falls through when the prefix matches zero telemetry files", () => {
-    writeTelemetryFile(VALID_UUID_1);
-    writeCCFile(12345, VALID_UUID_1);
-    const result = resolveSessionId({
-      ...shortRetry(),
-      startDir: join(tmpRoot, ".claude-dotfiles-deadbeef"), // matches no stem
-    });
-    expect(result.kind).toBe("mtime");
-    if (result.kind === "mtime") expect(result.sessionId).toBe(VALID_UUID_1);
-  });
-
-  it("never guesses on an 8-hex prefix collision — falls through to mtime ambiguous", () => {
-    writeTelemetryFile(VALID_UUID_4);
-    writeTelemetryFile(VALID_UUID_5);
-    const result = resolveSessionId({
-      ...shortRetry(),
-      startDir: join(tmpRoot, ".claude-dotfiles-abcd1234"),
-    });
-    // >1 prefix match → worktree tier returns null → mtime sees 2 candidates.
-    expect(result.kind).toBe("ambiguous");
-  });
-
   it("ignores a garbage (non-hex) suffix and falls through", () => {
     writeTelemetryFile(VALID_UUID_1);
-    writeCCFile(12345, VALID_UUID_1);
+    writeCCFile(process.pid, VALID_UUID_1);
     const result = resolveSessionId({
       ...shortRetry(),
       startDir: join(tmpRoot, ".claude-dotfiles-ZZZZZZZZ"),
@@ -565,19 +623,31 @@ describe("resolveSessionId — worktree tier (DiscoveryResult variant: worktree)
     expect(result.kind).toBe("mtime");
   });
 
-  it("requires the embedded session_id to match the filename (SE-1)", () => {
-    // Telemetry file named for UUID_1 but body claims UUID_2 → rejected by the
-    // body===stem guard → 0 worktree matches → mtime also rejects → missing.
-    ensureSessionsDir();
-    writeFileSync(
-      join(tmpSessionsDir, `${VALID_UUID_1}.json`),
-      JSON.stringify({ session_id: VALID_UUID_2 }),
-    );
+  it("resolves via the startDir env-var ladder (PWD) when no explicit startDir is given", () => {
+    // Bravo NIT: the env-var ladder branch (CLAUDE_DOTFILES_ROOT_RESOLVED → PWD →
+    // cwd) was untested — every prior worktree test injected an explicit startDir.
+    // No startDir opt here; PWD names the worktree → the ladder drives resolution.
+    writeCCFile(process.pid, VALID_UUID_1); // eager + alive
+    process.env["PWD"] = worktreeDirFor(VALID_UUID_1);
+    const result = resolveSessionId(shortRetry()); // NO startDir → uses the ladder
+    expect(result.kind).toBe("worktree");
+    if (result.kind === "worktree") expect(result.sessionId).toBe(VALID_UUID_1);
+  });
+
+  it("ppid match takes precedence over the worktree tier", () => {
+    // Bravo NIT: ppid-precedence-over-worktree was untested at resolveSessionId
+    // level. A CC file planted at our real process.ppid resolves via the ppid walk;
+    // a valid worktree match (UUID_1) is also present. ppid must win (it runs first).
+    writeCCFile(process.ppid, VALID_UUID_3); // ppid-tier match (the walk finds it)
+    writeCCFile(process.pid, VALID_UUID_1); // a would-be worktree match
     const result = resolveSessionId({
-      ...shortRetry(),
+      retryCount: 0,
+      retryDelayMs: 1,
+      sessionsDir: tmpSessionsDir,
       startDir: worktreeDirFor(VALID_UUID_1),
     });
-    expect(result.kind).toBe("missing");
+    expect(result.kind).toBe("ppid");
+    if (result.kind === "ppid") expect(result.sessionId).toBe(VALID_UUID_3);
   });
 });
 
