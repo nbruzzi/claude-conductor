@@ -473,21 +473,19 @@ function worktreeDirFor(sessionId: string): string {
 
 describe("extractSid8FromPath (INTERNAL — worktree basename parse)", () => {
   it("extracts the 8-hex prefix from a `.claude-dotfiles-<sid8>` final segment", () => {
-    expect(
-      INTERNAL.extractSid8FromPath("/Users/x/.claude-dotfiles-ad41f287"),
-    ).toBe("ad41f287");
+    expect(INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-ad41f287")).toBe(
+      "ad41f287",
+    );
   });
 
   it("tolerates a trailing slash", () => {
-    expect(
-      INTERNAL.extractSid8FromPath("/Users/x/.claude-dotfiles-deadbeef/"),
-    ).toBe("deadbeef");
+    expect(INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-deadbeef/")).toBe(
+      "deadbeef",
+    );
   });
 
   it("returns null for the canonical (suffix-less) dotfiles dir", () => {
-    expect(
-      INTERNAL.extractSid8FromPath("/Users/x/.claude-dotfiles"),
-    ).toBeNull();
+    expect(INTERNAL.extractSid8FromPath("/x/.claude-dotfiles")).toBeNull();
   });
 
   it("returns null for non-hex / wrong-length / uppercase / empty suffixes", () => {
