@@ -460,3 +460,149 @@ describe("walkPpidTree (integration with current process)", () => {
     }
   });
 });
+
+// Two distinct UUIDs sharing an 8-hex prefix ("abcd1234") — for the
+// prefix-collision safety test.
+const VALID_UUID_4 = "abcd1234-0000-4000-8000-000000000001";
+const VALID_UUID_5 = "abcd1234-0000-4000-8000-000000000002";
+
+// A worktree path whose final segment is `.claude-dotfiles-<sid8>` for a uuid.
+function worktreeDirFor(sessionId: string): string {
+  return join(tmpRoot, `.claude-dotfiles-${sessionId.slice(0, 8)}`);
+}
+
+describe("extractSid8FromPath (INTERNAL — worktree basename parse)", () => {
+  it("extracts the 8-hex prefix from a `.claude-dotfiles-<sid8>` final segment", () => {
+    expect(
+      INTERNAL.extractSid8FromPath("/Users/x/.claude-dotfiles-ad41f287"),
+    ).toBe("ad41f287");
+  });
+
+  it("tolerates a trailing slash", () => {
+    expect(
+      INTERNAL.extractSid8FromPath("/Users/x/.claude-dotfiles-deadbeef/"),
+    ).toBe("deadbeef");
+  });
+
+  it("returns null for the canonical (suffix-less) dotfiles dir", () => {
+    expect(
+      INTERNAL.extractSid8FromPath("/Users/x/.claude-dotfiles"),
+    ).toBeNull();
+  });
+
+  it("returns null for non-hex / wrong-length / uppercase / empty suffixes", () => {
+    expect(
+      INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-ZZZZZZZZ"),
+    ).toBeNull();
+    expect(INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-1234")).toBeNull(); // too short
+    expect(
+      INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-deadbeeff"),
+    ).toBeNull(); // 9 chars
+    expect(
+      INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-AD41F287"),
+    ).toBeNull(); // uppercase (provisioner emits lowercase)
+    expect(INTERNAL.extractSid8FromPath("/x/.claude-dotfiles-")).toBeNull();
+    expect(INTERNAL.extractSid8FromPath("/x/some-other-dir")).toBeNull();
+  });
+});
+
+describe("resolveSessionId — worktree tier (DiscoveryResult variant: worktree)", () => {
+  it("disambiguates a cohort that mtime would call ambiguous (no <pid>.json needed)", () => {
+    // The exact mtime-ambiguous setup: two fresh sibling telemetry files, and
+    // deliberately NO CC pidfile — proving the worktree tier does not depend on
+    // the SE-2 sanity check the mtime tier requires.
+    writeTelemetryFile(VALID_UUID_1);
+    writeTelemetryFile(VALID_UUID_2);
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: worktreeDirFor(VALID_UUID_1),
+    });
+    expect(result.kind).toBe("worktree");
+    if (result.kind === "worktree") {
+      expect(result.sessionId).toBe(VALID_UUID_1);
+      expect(result.prefix).toBe(VALID_UUID_1.slice(0, 8));
+    }
+  });
+
+  it("falls through to mtime when startDir has no `-<sid8>` suffix", () => {
+    writeTelemetryFile(VALID_UUID_1);
+    writeCCFile(12345, VALID_UUID_1); // sanity passes for the mtime tier
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: join(tmpRoot, ".claude-dotfiles"),
+    });
+    expect(result.kind).toBe("mtime");
+    if (result.kind === "mtime") expect(result.sessionId).toBe(VALID_UUID_1);
+  });
+
+  it("falls through when the prefix matches zero telemetry files", () => {
+    writeTelemetryFile(VALID_UUID_1);
+    writeCCFile(12345, VALID_UUID_1);
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: join(tmpRoot, ".claude-dotfiles-deadbeef"), // matches no stem
+    });
+    expect(result.kind).toBe("mtime");
+    if (result.kind === "mtime") expect(result.sessionId).toBe(VALID_UUID_1);
+  });
+
+  it("never guesses on an 8-hex prefix collision — falls through to mtime ambiguous", () => {
+    writeTelemetryFile(VALID_UUID_4);
+    writeTelemetryFile(VALID_UUID_5);
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: join(tmpRoot, ".claude-dotfiles-abcd1234"),
+    });
+    // >1 prefix match → worktree tier returns null → mtime sees 2 candidates.
+    expect(result.kind).toBe("ambiguous");
+  });
+
+  it("ignores a garbage (non-hex) suffix and falls through", () => {
+    writeTelemetryFile(VALID_UUID_1);
+    writeCCFile(12345, VALID_UUID_1);
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: join(tmpRoot, ".claude-dotfiles-ZZZZZZZZ"),
+    });
+    expect(result.kind).toBe("mtime");
+  });
+
+  it("requires the embedded session_id to match the filename (SE-1)", () => {
+    // Telemetry file named for UUID_1 but body claims UUID_2 → rejected by the
+    // body===stem guard → 0 worktree matches → mtime also rejects → missing.
+    ensureSessionsDir();
+    writeFileSync(
+      join(tmpSessionsDir, `${VALID_UUID_1}.json`),
+      JSON.stringify({ session_id: VALID_UUID_2 }),
+    );
+    const result = resolveSessionId({
+      ...shortRetry(),
+      startDir: worktreeDirFor(VALID_UUID_1),
+    });
+    expect(result.kind).toBe("missing");
+  });
+});
+
+describe("formatRecoveryHint / describeSource — worktree variant", () => {
+  it("formatRecoveryHint returns empty for worktree (a successful resolution)", () => {
+    expect(
+      formatRecoveryHint({
+        kind: "worktree",
+        sessionId: VALID_UUID_1,
+        prefix: "ad41f287",
+        source: "/x",
+      }),
+    ).toBe("");
+  });
+
+  it("describeSource labels worktree with the sid-prefix", () => {
+    const s = describeSource({
+      kind: "worktree",
+      sessionId: VALID_UUID_1,
+      prefix: "ad41f287",
+      source: "/x",
+    });
+    expect(s).toContain("worktree");
+    expect(s).toContain("ad41f287");
+  });
+});
