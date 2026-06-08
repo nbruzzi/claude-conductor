@@ -9,6 +9,12 @@
 // false "local-green" confidence and the fix-amend-repush tax it was built to
 // kill would silently return. This asserts parity statically (fast, no suite
 // nesting): every `bun run <gate>` step CI runs MUST be invoked by ci-local.sh.
+//
+// The --fast block additionally guards the pre-push subset BEHAVIORALLY (via the
+// `--list` plan seam, no gates run): --fast must equal the full plan MINUS
+// exactly the slow trio {test, check-coverage-floor, actionlint}. A second
+// gate-list drifting from test.yml is the exact staleness this enforces against
+// (it is what made the CLAUDE.md #202 rationale stale).
 
 import { describe, expect, it } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
@@ -40,6 +46,36 @@ function ciWorkflowGates(): string[] {
   return [...gates].sort();
 }
 
+// Run ci-local.sh in `--list` mode (plan-only, no gates run) and return the
+// planned gate names in run order. Throws on a non-zero exit so a broken plan
+// surfaces loudly rather than as an empty list. The array-form spawn passes no
+// shell — args are literal, not interpolated into a command line.
+function ciLocalPlan(modeArgs: readonly string[]): string[] {
+  const proc = Bun.spawnSync(["bash", CI_LOCAL, ...modeArgs, "--list"], {
+    cwd: REPO_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (proc.exitCode !== 0) {
+    const stderr = proc.stderr.toString();
+    throw new Error(
+      `ci-local.sh --list (${modeArgs.join(" ")}) exit ${proc.exitCode}: ${stderr}`,
+    );
+  }
+  return proc.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line.length > 0);
+}
+
+// The slow trio --fast subtracts (deferred to full ci-local + CI). Plan names
+// match the run_gate display names in ci-local.sh.
+const SLOW_TRIO = [
+  "test",
+  "check-coverage-floor",
+  "lint:workflows (actionlint)",
+];
+
 describe("scripts/ci-local.sh — CI gate parity (drift-guard)", () => {
   it("invokes every `bun run <gate>` step that CI runs", () => {
     const gates = ciWorkflowGates();
@@ -62,5 +98,59 @@ describe("scripts/ci-local.sh — CI gate parity (drift-guard)", () => {
     const [first, second] = ciLocalSrc.split("\n", 2);
     expect(first).toBe("#!/usr/bin/env bash");
     expect(second).toBe("# SPDX-License-Identifier: Apache-2.0");
+  });
+});
+
+describe("scripts/ci-local.sh --fast — pre-push subset (subtraction-guarded)", () => {
+  it("--fast plan is the full plan MINUS exactly the slow trio", () => {
+    const full = ciLocalPlan([]);
+    const fast = ciLocalPlan(["--fast"]);
+    // Strict subset: no fast-only gate (--fast can only ever subtract).
+    for (const g of fast) {
+      expect(full).toContain(g);
+    }
+    const excluded = full.filter((g) => !fast.includes(g));
+    expect([...excluded].sort()).toEqual([...SLOW_TRIO].sort());
+  });
+
+  it("--fast runs every CI `bun run <gate>` EXCEPT the slow coverage-floor gate (anti-drift)", () => {
+    // Cross-check vs test.yml: a NEW CI `bun run` gate auto-flows into --fast
+    // (subtraction), so this stays green only while the fast set tracks CI. The
+    // sole `bun run` gate --fast omits is check-coverage-floor (it needs the
+    // suite); test + actionlint are not `bun run` steps.
+    const fast = ciLocalPlan(["--fast"]);
+    const expectedInFast = ciWorkflowGates().filter(
+      (g) => g !== "check-coverage-floor",
+    );
+    const missing = expectedInFast.filter((g) => !fast.includes(g));
+    expect(missing).toEqual([]);
+  });
+
+  it("--fast defers the slow trio (none of {test, check-coverage-floor, actionlint} in the fast plan)", () => {
+    const fast = ciLocalPlan(["--fast"]);
+    for (const slow of SLOW_TRIO) {
+      expect(fast).not.toContain(slow);
+    }
+  });
+
+  it("--list is side-effect-free: exit 0, plan only, no run-phase markers", () => {
+    const proc = Bun.spawnSync(["bash", CI_LOCAL, "--fast", "--list"], {
+      cwd: REPO_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(proc.exitCode).toBe(0);
+    // `=== <gate> ===` headers are printed only when a gate actually runs.
+    expect(proc.stdout.toString()).not.toContain("===");
+  });
+
+  it("rejects an unknown flag with exit 2 (fails loud, never silently runs full)", () => {
+    const proc = Bun.spawnSync(["bash", CI_LOCAL, "--bogus"], {
+      cwd: REPO_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(proc.exitCode).toBe(2);
+    expect(proc.stderr.toString()).toContain("unknown flag");
   });
 });

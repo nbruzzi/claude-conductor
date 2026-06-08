@@ -2,29 +2,49 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 nbruzzi
 #
-# ci-local — run the FULL CI gate set (.github/workflows/test.yml) locally, in
-# CI order, so a developer gets local-green == CI-green BEFORE pushing.
+# ci-local — run the CI gate set (.github/workflows/test.yml) locally, in CI
+# order, so a developer gets local-green == CI-green BEFORE pushing.
 #
 # Why this exists: the pre-commit gate runs a fast SUBSET (typecheck / format /
-# lint / test). Several CI gates are NOT in that subset — notably
-# check-decision-log (DLOG-001) and the coverage floor — so "local clean" did
-# not imply "CI clean". That gap cost repeated fix-amend-repush cycles. This
-# script closes it: one command that mirrors every CI gate.
+# lint / convention-checks / scope-filtered test). Some CI gates are NOT in that
+# subset — notably check-decision-log (DLOG-001, a PR-RANGE gate pre-commit
+# cannot run per-commit) and verify:drift — so "local clean" did not imply "CI
+# clean". That gap cost repeated fix-amend-repush cycles. This script closes it:
+# one command that mirrors every CI gate.
+#
+# Modes:
+#   (default)        RUN ALL gates — full CI parity (local-green == CI-green).
+#   --fast           RUN the FAST CI gates only. Defined by SUBTRACTION: every
+#   --pre-push         gate EXCEPT the slow trio {test+coverage,
+#                      check-coverage-floor, actionlint} (which need the full
+#                      suite or an external binary). NOT a hand-maintained
+#                      allow-list — a new fast CI gate added below auto-flows into
+#                      --fast unless it is explicitly slow-gated (deny-list
+#                      direction; matches pre-commit.ts CONVENTION_CHECK_DENY_LIST
+#                      + feedback-deny-list-over-allow-list-for-skip-gates). This
+#                      is the set the pre-push hook enforces; the suite stays in CI.
+#   --list           PRINT the gate plan (one name per line, in run order) for the
+#   --list-gates       selected mode, then EXIT 0 WITHOUT running anything.
+#                      Composes with --fast (`--fast --list` prints the fast plan).
+#                      The drift-guard test uses this to assert the --fast
+#                      subtraction BEHAVIORALLY (full plan MINUS the slow trio).
 #
 # Behavior: RUN-ALL, not fail-fast. Every gate runs even if an earlier one
 # fails; results are aggregated into a summary and the script exits non-zero if
 # ANY gate failed. This surfaces ALL failures in a single pass (fix everything
 # once) instead of one-failure-per-run.
 #
-# Gate parity is drift-guarded by test/scripts/ci-local.test.ts, which asserts
-# every `bun run <gate>` step in test.yml is invoked here — so a future CI gate
-# can't be silently omitted (which would resurrect the false-confidence tax).
+# Gate parity is drift-guarded by test/scripts/ci-local.test.ts: every
+# `bun run <gate>` step in test.yml is invoked here (full), AND --fast is asserted
+# to run exactly the full set MINUS the slow trio — so neither a new CI gate nor a
+# mis-scoped fast/slow split can silently resurrect the false-confidence tax.
 #
-# Run:    bun run ci-local
-#         bash scripts/ci-local.sh
-# Exit:   0 = all gates passed
+# Run:    bun run ci-local                  # full CI parity
+#         bash scripts/ci-local.sh --fast   # the pre-push fast subset
+#         bash scripts/ci-local.sh --list   # print the gate plan, run nothing
+# Exit:   0 = all gates passed (or --list / --help)
 #         1 = one or more gates failed (see the summary)
-#         2 = harness error (not a git repo)
+#         2 = harness error (not a git repo / unknown flag)
 #
 # Bash 3.2+ portable (macOS default bash): no associative arrays, portable
 # mktemp template form.
@@ -33,6 +53,25 @@ set -u
 set -o pipefail
 # Deliberately NOT `set -e`: we run every gate and aggregate, so a failing gate
 # must not abort the script.
+
+# --- arg parse: --fast/--pre-push (skip the slow trio), --list (print plan only),
+# --help. Unknown flag fails LOUD (exit 2) rather than silently running full. ---
+FAST=0
+LIST_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --fast | --pre-push) FAST=1 ;;
+    --list | --list-gates) LIST_ONLY=1 ;;
+    --help | -h)
+      grep '^#' "$0" | grep -v '^#!' | sed 's/^# \?//'
+      exit 0
+      ;;
+    *)
+      echo "ci-local: error: unknown flag '$arg' (try --help)" >&2
+      exit 2
+      ;;
+  esac
+done
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ci-local: error: not in a git repo (run from inside the checkout)" >&2
@@ -44,11 +83,18 @@ cd "$REPO_ROOT"
 NAMES=()
 STATUSES=()
 FAILED=0
+# Gate plan in run order — recorded by run_gate + the slow block, printed by --list.
+PLAN=()
+DLOG_ADVISORY=""
 
 run_gate() {
   # $1 = display name; remaining args = the command to run.
   local name="$1"
   shift
+  PLAN+=("$name")
+  if [ "$LIST_ONLY" -eq 1 ]; then
+    return 0
+  fi
   printf '\n=== %s ===\n' "$name"
   if "$@"; then
     NAMES+=("$name")
@@ -60,7 +106,10 @@ run_gate() {
   fi
 }
 
-# --- Gates in test.yml order (the `bun run <gate>` steps) ---
+# --- Fast gates: the SUBTRACTION BASE. Run in BOTH default and --fast modes, in
+# test.yml order (the `bun run <gate>` steps that are fast enough for a pre-push
+# gate). Anything added here automatically runs under --fast too — that is the
+# whole point of subtraction (no allow-list to keep in sync). ---
 run_gate "typecheck" bun run typecheck
 run_gate "verify:drift" bun run verify:drift
 run_gate "format:check" bun run format:check
@@ -75,41 +124,67 @@ run_gate "check-spdx-headers" bun run check-spdx-headers
 # working tree holds staged/unstaged substrate edits — then CI reds post-commit.
 # Captured here so that false pre-commit confidence is surfaced; NEVER folded into
 # FAILED (advisory only — Lane L2). The helper prints its own remedy + always
-# exits 0. See scripts/warn-uncommitted-substrate.sh.
-DLOG_ADVISORY="$(bash "$REPO_ROOT/scripts/warn-uncommitted-substrate.sh")"
-if [ -n "$DLOG_ADVISORY" ]; then
-  printf '\n=== advisory: uncommitted substrate (decision-log) ===\n'
-  printf '%s\n' "$DLOG_ADVISORY"
+# exits 0. See scripts/warn-uncommitted-substrate.sh. Skipped under --list (it
+# inspects the working tree, not the gate plan).
+if [ "$LIST_ONLY" -ne 1 ]; then
+  DLOG_ADVISORY="$(bash "$REPO_ROOT/scripts/warn-uncommitted-substrate.sh")"
+  if [ -n "$DLOG_ADVISORY" ]; then
+    printf '\n=== advisory: uncommitted substrate (decision-log) ===\n'
+    printf '%s\n' "$DLOG_ADVISORY"
+  fi
 fi
 run_gate "check-decision-log" bun run check-decision-log
 run_gate "check-liveness-gate-store-contract" bun run check-liveness-gate-store-contract
 
-# Test + coverage: CI runs `bun test --coverage` ONCE, tees the output, and the
-# floor gate reads it via --from-file (single suite run). Mirror that exactly.
-COV_FILE="$(mktemp "${TMPDIR:-/tmp}/ci-local-coverage.XXXXXX")"
-trap 'rm -f "$COV_FILE"' EXIT
-printf '\n=== test (with coverage) ===\n'
-if bun test --coverage 2>&1 | tee "$COV_FILE"; then
-  NAMES+=("test")
-  STATUSES+=("PASS")
-else
-  NAMES+=("test")
-  STATUSES+=("FAIL")
-  FAILED=1
-fi
-run_gate "check-coverage-floor" bun run check-coverage-floor -- --from-file "$COV_FILE"
+# --- Slow trio: SUBTRACTED by --fast (deferred to full `bun run ci-local` + CI).
+# {test+coverage, check-coverage-floor, actionlint} need the full suite or an
+# external binary — too slow / not-always-present for a pre-push gate. This `if`
+# IS the subtraction boundary: everything ABOVE runs under --fast; only this block
+# is gated off. Adding a fast gate needs no edit here. ---
+if [ "$FAST" -ne 1 ]; then
+  if [ "$LIST_ONLY" -eq 1 ]; then
+    PLAN+=("test")
+    PLAN+=("check-coverage-floor")
+  else
+    # Test + coverage: CI runs `bun test --coverage` ONCE, tees the output, and the
+    # floor gate reads it via --from-file (single suite run). Mirror that exactly.
+    COV_FILE="$(mktemp "${TMPDIR:-/tmp}/ci-local-coverage.XXXXXX")"
+    trap 'rm -f "$COV_FILE"' EXIT
+    printf '\n=== test (with coverage) ===\n'
+    if bun test --coverage 2>&1 | tee "$COV_FILE"; then
+      NAMES+=("test")
+      STATUSES+=("PASS")
+    else
+      NAMES+=("test")
+      STATUSES+=("FAIL")
+      FAILED=1
+    fi
+    run_gate "check-coverage-floor" bun run check-coverage-floor -- --from-file "$COV_FILE"
+  fi
 
-# actionlint (CI "Lint workflows"): a non-bun binary. Run it if installed;
-# otherwise warn + record SKIP. Most PRs don't touch .github/workflows, and CI
-# still enforces it — so a missing local binary must not block the local run.
-if command -v actionlint >/dev/null 2>&1; then
-  run_gate "lint:workflows (actionlint)" actionlint
-else
-  printf '\n=== lint:workflows (actionlint) ===\n'
-  echo "ci-local: actionlint not installed — SKIPPED (CI still runs it)." >&2
-  echo "  install: https://github.com/rhysd/actionlint" >&2
-  NAMES+=("lint:workflows (actionlint)")
-  STATUSES+=("SKIP")
+  # actionlint (CI "Lint workflows"): a non-bun binary. Run it if installed;
+  # otherwise warn + record SKIP. Most PRs don't touch .github/workflows, and CI
+  # still enforces it — so a missing local binary must not block the local run.
+  if [ "$LIST_ONLY" -eq 1 ]; then
+    PLAN+=("lint:workflows (actionlint)")
+  elif command -v actionlint >/dev/null 2>&1; then
+    run_gate "lint:workflows (actionlint)" actionlint
+  else
+    printf '\n=== lint:workflows (actionlint) ===\n'
+    echo "ci-local: actionlint not installed — SKIPPED (CI still runs it)." >&2
+    echo "  install: https://github.com/rhysd/actionlint" >&2
+    NAMES+=("lint:workflows (actionlint)")
+    STATUSES+=("SKIP")
+  fi
+fi
+
+# --- --list: print the gate plan (one per line, run order) + exit. No gate runs;
+# no side effects. This is the behavioral source the drift-guard test reads. ---
+if [ "$LIST_ONLY" -eq 1 ]; then
+  for g in "${PLAN[@]}"; do
+    printf '%s\n' "$g"
+  done
+  exit 0
 fi
 
 # --- Summary ---
@@ -135,6 +210,16 @@ if [ "$FAILED" -ne 0 ]; then
   printf '\nci-local: FAIL — fix the above before pushing (CI will reject otherwise).\n' >&2
   exit 1
 fi
+
+# --fast: ran the fast CI gates only; the slow trio is deferred BY DESIGN. Do NOT
+# assert local-green == CI-green (the deferred gates still gate in CI + full
+# ci-local) — that over-assertion is the exact false-confidence class this tool
+# exists to kill.
+if [ "$FAST" -eq 1 ]; then
+  printf '\nci-local: --fast — all fast CI gates passed. DEFERRED to `bun run ci-local` (full) + CI: test+coverage, check-coverage-floor, actionlint. local-fast-green does NOT assert CI-green for those.\n'
+  exit 0
+fi
+
 # Only assert "== CI-green" when NO gate was SKIPPED locally. A SKIPPED gate
 # (e.g. actionlint absent) still runs in CI, so local-green does NOT prove
 # CI-green for it — caveat rather than over-assert. Asserting it unconditionally
