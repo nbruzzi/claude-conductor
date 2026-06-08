@@ -41,11 +41,17 @@
  *      Empirical 2026-04-26: bun's direct ppid is the bash subprocess
  *      that wrapped the Bash tool call; the CC binary is one hop further.
  *   3. Cold-start retry on the walk (3 × 250ms = <1s budget)
- *   4. mtime fallback on UUID-keyed telemetry-tracker files
+ *   4. Worktree-path tier (SPAWN-2, liveness-hardened in P6): match the
+ *      per-session worktree dir's 8-hex prefix against a UNIQUE, LIVE
+ *      `<pid>.json` (CC-binary, embedded sessionId, `process.kill(pid,0)` alive).
+ *      The `<pid>.json` is eager (written at session start) + present-at-join +
+ *      liveness-bearing — so this fires for a cold spawn (where tier 5's telemetry
+ *      is not yet written) and rejects a foreign/dead worktree (no live pidfile).
+ *   5. mtime fallback on UUID-keyed telemetry-tracker files
  *      (filename must equal embedded session_id; dedupe by sessionId)
- *   5. Sanity check (per SE-2): discovered id must have a matching
+ *   6. Sanity check (per SE-2): discovered id must have a matching
  *      `<pid>.json` from the CC binary; otherwise downgrade to missing
- *   6. fail-loud (kind: "missing" | "ambiguous")
+ *   7. fail-loud (kind: "missing" | "ambiguous")
  *
  * @see src/hooks/session-id.ts — in-hook canonical resolver (different context)
  * @see src/channels/index.ts:resolveSessionId — channels-internal lenient resolver
@@ -289,6 +295,23 @@ function sanityCheckHasCCFile(sessionId: string, sessionsDir: string): boolean {
 }
 
 /**
+ * Liveness probe: does a process with this pid currently exist? Uses the signal-0
+ * trick — `process.kill(pid, 0)` runs the kernel's existence/permission check
+ * WITHOUT delivering a signal. `ESRCH` ("no such process") → dead; success or
+ * `EPERM` (process exists but is not ours to signal) → alive. Biased toward
+ * "alive": only the unambiguous `ESRCH` returns false, so the worktree-tier
+ * liveness gate never falsely rejects a live self-session (must-not-re-break-cohort).
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code !== "ESRCH";
+  }
+}
+
+/**
  * Extract the 8-hex session-id prefix from a worktree path's final segment.
  * The provisioner (`worktrees/index.ts:worktreePathForSession`, SID_PREFIX_LEN=8)
  * names per-session worktrees `~/.claude-dotfiles-<sid8>`. Anchored to that
@@ -302,22 +325,33 @@ function extractSid8FromPath(p: string): string | null {
 }
 
 /**
- * Worktree-path discovery (SPAWN-2). Resolve the FULL session id from a worktree
- * start path by matching its 8-hex prefix against the UNIQUE uuid-stemmed
- * telemetry file in `sessionsDir`. Trust comes from the uniqueness gate + the
- * `session_id === stem` invariant — NOT a `<pid>.json` sanity check: unlike the
- * mtime tier, the worktree path is a strong identity signal, and requiring a live
- * CC pidfile would re-break the cohort case (the broken pid-tree is WHY ppid
- * failed). Returns null (→ fall through to mtime) on 0 or >1 prefix matches.
+ * Worktree-path discovery (SPAWN-2; match-source switched to the live `<pid>.json`
+ * + liveness gate in P6). Resolve the FULL session id from a worktree start path by
+ * matching its 8-hex prefix against the EAGER `<pid>.json` (CC-binary) files in
+ * `sessionsDir` whose embedded `sessionId` shares the prefix AND whose pid is
+ * currently ALIVE (`process.kill(pid, 0)`). Returns null (→ fall through to mtime)
+ * on 0 or >1 DISTINCT live matches.
  *
- * KNOWN BOUNDARY (SPAWN-2 follow-up): trusts the worktree path as a self-identity
- * signal. In the cohort target case each session runs in its OWN worktree, so the
- * match is self and correct. A solo session with env unset + broken ppid whose cwd
- * is a FOREIGN/dead worktree (`.claude-dotfiles-<hexB>`) could resolve B's id if
- * B's telemetry is prefix-unique — a silent misresolution the dropped SE-2 liveness
- * check would have caught. Closing it needs liveness corroboration (a matching
- * `<pid>.json` OR a freshness gate) verified against real spawned-session pidfile
- * semantics; tracked as a backlog follow-up.
+ * Why the `<pid>.json`, not the `<uuid>.json` telemetry this tier originally
+ * matched: empirically the telemetry file is written LAZILY (a PostToolUse hook,
+ * only on a memory-dir op or a `bun run test|typecheck|...` command) and is
+ * therefore ABSENT at a true cold-spawn join — so a telemetry-keyed tier could not
+ * fire for the very case SPAWN-2 targets (a spawned session resolving its own id at
+ * `join` before it has touched memory). The `<pid>.json` is written EAGERLY by the
+ * CC binary at session start, so it is present at join; it carries the embedded
+ * `sessionId`; and its pid IS a liveness signal. Matching it does three things at
+ * once: (1) fires for the cold-spawn headline case, (2) is liveness-bearing, and
+ * (3) closes the foreign/dead-worktree boundary below.
+ *
+ * Boundary CLOSED (was a tracked SPAWN-2 follow-up): a solo session with env unset
+ * + broken ppid whose cwd is a FOREIGN/DEAD worktree (`.claude-dotfiles-<hexB>`) no
+ * longer resolves B's id — a dead B has no LIVE pidfile (clean exit → the CC binary
+ * removes it; crash → a stale pidfile with a dead pid → the alive-check rejects it).
+ * The cohort/self case still resolves (its own pidfile is eager + alive). Residual
+ * (narrow, by design — consistent with the module's no-`procStart` convention): pid
+ * RECYCLING — if a crashed B's pid is reassigned to an unrelated live process, the
+ * alive-check passes; defending that would require comparing the recorded process
+ * start time against the live process, which no resolver in this module does.
  */
 function resolveViaWorktreePath(
   sessionsDir: string,
@@ -337,17 +371,20 @@ function resolveViaWorktreePath(
   for (const entry of entries) {
     if (!entry.endsWith(".json")) continue;
     const stem = entry.slice(0, -5);
-    if (!isStrictUUID(stem)) continue; // uuid-stemmed telemetry only (skip <pid>.json)
-    if (!stem.startsWith(prefix)) continue;
+    if (!/^\d+$/.test(stem)) continue; // CC-binary <pid>.json only (skip uuid telemetry)
     const fullPath = join(sessionsDir, entry);
-    const body = readTelemetryFile(fullPath);
-    if (body === null) continue;
-    if (body.session_id !== stem) continue; // SE-1: filename must match embedded id
-    matches.push({ sessionId: stem, source: fullPath });
+    const cc = readCCBinaryFile(fullPath);
+    if (cc === null) continue;
+    if (!cc.sessionId.startsWith(prefix)) continue;
+    if (!isPidAlive(cc.pid)) continue; // liveness: a dead/foreign session is rejected
+    matches.push({ sessionId: cc.sessionId, source: fullPath });
   }
 
-  // Uniqueness gate — only a single unambiguous prefix match is trustworthy.
-  if (matches.length !== 1) return null;
+  // Uniqueness gate — only a single unambiguous LIVE session is trustworthy. Dedupe
+  // by sessionId so a session with a stale + live pidfile (or a restart) is still
+  // unambiguous; distinct live sessionIds sharing the prefix → null (never guess).
+  const distinctIds = new Set(matches.map((m) => m.sessionId));
+  if (distinctIds.size !== 1) return null;
   const only = matches[0];
   if (only === undefined) return null;
   return { sessionId: only.sessionId, prefix, source: only.source };
@@ -381,14 +418,15 @@ export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
     };
   }
 
-  // 3b. worktree-path discovery (SPAWN-2): a spawned cohort session has
-  // CLAUDE_SESSION_ID unset and a broken ppid-tree, so mtime would return
-  // `ambiguous` across sibling telemetry files. The per-session worktree dir
-  // name (`~/.claude-dotfiles-<sid8>`) disambiguates. Correctness is enforced by
-  // the unique-telemetry-match (not by trusting any one path source), so we try
-  // each candidate path — explicit opt, else env PWD / resolved-root / cwd — and
-  // take the first that resolves uniquely. After ppid (authoritative), before
-  // mtime (ambiguous in a cohort).
+  // 3b. worktree-path discovery (SPAWN-2, P6): a spawned cohort session has
+  // CLAUDE_SESSION_ID unset and a broken ppid-tree. The per-session worktree dir
+  // name (`~/.claude-dotfiles-<sid8>`) identifies it; resolveViaWorktreePath maps
+  // that 8-hex prefix to a UNIQUE, LIVE `<pid>.json` (eager at session start, so
+  // present at join — unlike the lazy telemetry the mtime tier matches). Correctness
+  // is enforced by the unique-live-pidfile match (not by trusting any one path
+  // source), so we try each candidate path — explicit opt, else env
+  // CLAUDE_DOTFILES_ROOT_RESOLVED / PWD / cwd — and take the first that resolves
+  // uniquely. After ppid (authoritative), before mtime.
   const startDirs =
     opts?.startDir !== undefined
       ? [opts.startDir]
@@ -527,6 +565,7 @@ export function describeSource(result: DiscoveryResult): string {
 export const INTERNAL = {
   truncateId,
   isStrictUUID,
+  isPidAlive,
   walkPpidTree,
   listMtimeCandidates,
   sanityCheckHasCCFile,
