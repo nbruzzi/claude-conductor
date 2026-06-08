@@ -81,6 +81,7 @@ export type DiscoveryResult =
   | { kind: "env"; sessionId: string }
   | { kind: "ppid"; sessionId: string; pid: number; source: string }
   | { kind: "mtime"; sessionId: string; mtime: number; source: string }
+  | { kind: "worktree"; sessionId: string; prefix: string; source: string }
   | { kind: "missing" }
   | {
       kind: "ambiguous";
@@ -92,6 +93,8 @@ export type ResolveOptions = {
   sessionsDir?: string;
   retryDelayMs?: number;
   retryCount?: number;
+  /** Injectable worktree start path for the SPAWN-2 worktree-path tier (test seam + explicit override). */
+  startDir?: string;
 };
 
 type CCBinaryFile = { pid: number; sessionId: string };
@@ -285,6 +288,71 @@ function sanityCheckHasCCFile(sessionId: string, sessionsDir: string): boolean {
   return false;
 }
 
+/**
+ * Extract the 8-hex session-id prefix from a worktree path's final segment.
+ * The provisioner (`worktrees/index.ts:worktreePathForSession`, SID_PREFIX_LEN=8)
+ * names per-session worktrees `~/.claude-dotfiles-<sid8>`. Anchored to that
+ * literal basename — NOT a `.claude-*-` wildcard (zero real coverage, wider
+ * false-match surface). Returns the lowercase 8-hex prefix, or null.
+ */
+function extractSid8FromPath(p: string): string | null {
+  const seg = p.replace(/\/+$/, "").split("/").pop() ?? "";
+  const m = seg.match(/^\.claude-dotfiles-([0-9a-f]{8})$/);
+  return m === null ? null : (m[1] ?? null);
+}
+
+/**
+ * Worktree-path discovery (SPAWN-2). Resolve the FULL session id from a worktree
+ * start path by matching its 8-hex prefix against the UNIQUE uuid-stemmed
+ * telemetry file in `sessionsDir`. Trust comes from the uniqueness gate + the
+ * `session_id === stem` invariant — NOT a `<pid>.json` sanity check: unlike the
+ * mtime tier, the worktree path is a strong identity signal, and requiring a live
+ * CC pidfile would re-break the cohort case (the broken pid-tree is WHY ppid
+ * failed). Returns null (→ fall through to mtime) on 0 or >1 prefix matches.
+ *
+ * KNOWN BOUNDARY (SPAWN-2 follow-up): trusts the worktree path as a self-identity
+ * signal. In the cohort target case each session runs in its OWN worktree, so the
+ * match is self and correct. A solo session with env unset + broken ppid whose cwd
+ * is a FOREIGN/dead worktree (`.claude-dotfiles-<hexB>`) could resolve B's id if
+ * B's telemetry is prefix-unique — a silent misresolution the dropped SE-2 liveness
+ * check would have caught. Closing it needs liveness corroboration (a matching
+ * `<pid>.json` OR a freshness gate) verified against real spawned-session pidfile
+ * semantics; tracked as a backlog follow-up.
+ */
+function resolveViaWorktreePath(
+  sessionsDir: string,
+  startDir: string,
+): { sessionId: string; prefix: string; source: string } | null {
+  const prefix = extractSid8FromPath(startDir);
+  if (prefix === null) return null;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(sessionsDir);
+  } catch {
+    return null;
+  }
+
+  const matches: Array<{ sessionId: string; source: string }> = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const stem = entry.slice(0, -5);
+    if (!isStrictUUID(stem)) continue; // uuid-stemmed telemetry only (skip <pid>.json)
+    if (!stem.startsWith(prefix)) continue;
+    const fullPath = join(sessionsDir, entry);
+    const body = readTelemetryFile(fullPath);
+    if (body === null) continue;
+    if (body.session_id !== stem) continue; // SE-1: filename must match embedded id
+    matches.push({ sessionId: stem, source: fullPath });
+  }
+
+  // Uniqueness gate — only a single unambiguous prefix match is trustworthy.
+  if (matches.length !== 1) return null;
+  const only = matches[0];
+  if (only === undefined) return null;
+  return { sessionId: only.sessionId, prefix, source: only.source };
+}
+
 export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
   const sessionsDir = effectiveSessionsDir(opts);
   const windowMs = opts?.windowMs ?? DEFAULT_WINDOW_MS;
@@ -311,6 +379,38 @@ export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
       pid: ppidResult.pid,
       source: join(sessionsDir, `${ppidResult.pid}.json`),
     };
+  }
+
+  // 3b. worktree-path discovery (SPAWN-2): a spawned cohort session has
+  // CLAUDE_SESSION_ID unset and a broken ppid-tree, so mtime would return
+  // `ambiguous` across sibling telemetry files. The per-session worktree dir
+  // name (`~/.claude-dotfiles-<sid8>`) disambiguates. Correctness is enforced by
+  // the unique-telemetry-match (not by trusting any one path source), so we try
+  // each candidate path — explicit opt, else env PWD / resolved-root / cwd — and
+  // take the first that resolves uniquely. After ppid (authoritative), before
+  // mtime (ambiguous in a cohort).
+  const startDirs =
+    opts?.startDir !== undefined
+      ? [opts.startDir]
+      : [
+          process.env["CLAUDE_DOTFILES_ROOT_RESOLVED"],
+          process.env["PWD"],
+          process.cwd(),
+        ];
+  const seenStartDirs = new Set<string>();
+  for (const dir of startDirs) {
+    if (dir === undefined || dir.length === 0 || seenStartDirs.has(dir))
+      continue;
+    seenStartDirs.add(dir);
+    const wt = resolveViaWorktreePath(sessionsDir, dir);
+    if (wt !== null) {
+      return {
+        kind: "worktree",
+        sessionId: wt.sessionId,
+        prefix: wt.prefix,
+        source: wt.source,
+      };
+    }
   }
 
   // 4. mtime fallback
@@ -388,6 +488,7 @@ export function formatRecoveryHint(result: DiscoveryResult): string {
     case "env":
     case "ppid":
     case "mtime":
+    case "worktree":
       return "";
     case "missing":
       return "CLAUDE_SESSION_ID not set and no recent session telemetry found. Set explicitly: export CLAUDE_SESSION_ID=<your-session-id> and re-run.";
@@ -411,6 +512,8 @@ export function describeSource(result: DiscoveryResult): string {
       return `process tree (resolved at pid ${result.pid})`;
     case "mtime":
       return `mtime fallback (touched ${new Date(result.mtime).toISOString()})`;
+    case "worktree":
+      return `worktree path (sid-prefix ${result.prefix})`;
     case "missing":
       return "missing";
     case "ambiguous":
@@ -429,4 +532,6 @@ export const INTERNAL = {
   sanityCheckHasCCFile,
   readCCBinaryFile,
   readTelemetryFile,
+  extractSid8FromPath,
+  resolveViaWorktreePath,
 };

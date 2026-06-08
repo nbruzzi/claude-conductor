@@ -391,7 +391,8 @@ function sid(): string {
   if (
     discovered.kind === "env" ||
     discovered.kind === "ppid" ||
-    discovered.kind === "mtime"
+    discovered.kind === "mtime" ||
+    discovered.kind === "worktree"
   ) {
     if (process.env["VERBOSE"] !== undefined) {
       process.stderr.write(
