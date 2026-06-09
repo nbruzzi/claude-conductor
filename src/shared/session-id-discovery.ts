@@ -484,7 +484,17 @@ export function resolveSessionId(opts?: ResolveOptions): DiscoveryResult {
   );
   if (ppidOrWorktree !== null) return ppidOrWorktree;
 
-  // 4. mtime fallback
+  // 4. mtime fallback — LAST resort, on the LAZY UUID-keyed telemetry. SPAWN-3a
+  // investigation (document+defer): the <uuid>.json telemetry is written lazily (a
+  // PostToolUse hook, ^-anchored so a compound `cd && bun test` never fires it), so a
+  // session with absent telemetry can't resolve HERE. NARROW residual: mtime is reached
+  // only after env → ppid → worktree(eager <pid>.json, P6) all miss — i.e. a non-worktree
+  // session with a broken ppid-tree + unset env + absent telemetry (worktree sessions
+  // resolve at the eager-pidfile tier; the ppid-break is worktree-shell-specific). The
+  // eager <pid>.json would be the better signal here too; adding that fallback is deferred
+  // (SPAWN-3 backlog) until the case manifests — a moderate critical-path change for a rare
+  // unmanifested residual is gold-plating. (Other telemetry consumers are unaffected:
+  // active-sessions liveness composes the heartbeat + channel stores, NOT this telemetry.)
   const candidates = listMtimeCandidates(sessionsDir, windowMs, Date.now());
   if (candidates.length === 0) return { kind: "missing" };
   if (candidates.length === 1) {
