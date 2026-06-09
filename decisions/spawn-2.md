@@ -94,3 +94,34 @@ files:
 **Residual / out of scope:** the `^`-anchored-telemetry-weakens-other-consumers thread (Decision B's "out of scope") remains the separate SPAWN-3 investigate-first item.
 
 **Supersedes / superseded_by:** Additive to Decision B — hardens the same worktree tier; `resolveSessionId`'s exported signature is unchanged (a new optional `ResolveOptions` field).
+
+---
+
+## 2026-06-08 — Decision D: SPAWN-3a investigation — lazy telemetry does NOT weaken liveness; the mtime residual is documented + deferred (NO resolver change)
+
+```yaml
+---
+ts: 2026-06-09T00:00:00Z
+kind: investigation
+severity: minor
+phase: spawn-2-p6-followup
+files:
+  - src/shared/session-id-discovery.ts
+---
+```
+
+**Context:** The `<uuid>.json` telemetry is written LAZILY (the dotfiles `session-telemetry-tracker.ts` PostToolUse hook; its patterns are `^`-anchored, so a compound `cd … && bun test` never fires it). SPAWN-3a asked whether that lazy absence weakens OTHER consumers: (a) the mtime fallback (tier 5 of `resolveSessionId`) and (b) active-sessions liveness.
+
+**Investigated (primary-source-traced, not reasoned):**
+
+- **(b) active-sessions liveness — NOT weakened.** `classifySessionLiveness` (`active-sessions/session-liveness.ts`) OR-composes the active-sessions HEARTBEAT store (`~/.claude/active-sessions/`, via `activeSessionsDir`) + the channel store + the pause marker, with an explicit "NO pid lane." It does NOT read the `<uuid>.json` telemetry — a live session is detected via heartbeat + channel presence, telemetry-independent.
+- **(c) handoff-body-parser — benign.** It reads the telemetry to emit handoff frontmatter; lazy absence → a less-rich handoff (empty `entries_touched` / `verifications_run`), not a resolution or liveness gap.
+- **(a) mtime fallback — NARROWLY weakened.** `listMtimeCandidates` reads the lazy telemetry, so a session with absent telemetry can't resolve via mtime. But mtime is the LAST resort (env → ppid → worktree(eager `<pid>.json`, P6) → mtime); the residual is the unmanifested 4-way combo {non-worktree + broken-ppid + unset-env + absent-telemetry} (worktree sessions resolve at the eager-pidfile tier pre-mtime; the ppid-break is worktree-shell-specific).
+
+**Chosen:** DOCUMENT + DEFER (Alpha ruling). NO resolver code change. The mtime residual is documented precisely in the `// 4. mtime fallback` comment; the fix (give the mtime tier an eager-`<pid>.json` fallback — the better signal there too) is deferred to a SPAWN-3 backlog item, built only IF the residual ever manifests.
+
+**Reason:** No-known-gaps-compliant: the gap is PRE-EXISTING + unmanifested + bounded (no NEW break is activated by this cycle, unlike a behavior flip). A moderate critical-path change to the resolver for a rare last-resort residual is gold-plating, not warranted (the ceiling-standard call is sometimes NOT building). Investigate-first's value here was BOUNDING the feared cross-consumer problem to this single narrow residual.
+
+**Audit cadence:** Charlie investigate-first (deep-lane SPAWN-3a); findings surfaced on `coordination` BEFORE building; Alpha ruling = document+defer. Doc-only deliverable → light lens (no adversarial pass, per the captain's call).
+
+**Supersedes / superseded_by:** Additive — records an investigation outcome; no code/behavioral change.
