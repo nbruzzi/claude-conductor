@@ -2394,10 +2394,38 @@ test/channels/join-or-create.test.ts,
 
 — participants-prune authored by Bravo (Axis-3); Alpha design-lens + primary-source cycle-blocker re-lens (DI shape blessed, GC_WINDOW withdrawn) + PR to Alpha merge-gate.
 
-> > > > > > > origin/main
+<!-- NOTE: a leftover merge-conflict marker (`>>>>>>> origin/main`, prettier-spaced)
+     + an empty trailing scaffold were removed here while appending the G4-flip entry
+     below — a pre-existing botched-merge artifact, surfaced to the cohort. -->
 
 ---
 
+## 2026-06-08 — Decision: G4-flip — channel-log rotation DEFAULT-ON + archive-aware messageCount
+
+```yaml
+---
+ts: 2026-06-08T23:30:00Z
+kind: architectural
+severity: major
+phase: phase-3-g4
+files:
+  - src/channels/index.ts
+  - src/hooks/checks/channels-gc-reaper.ts
+  - test/channels/messages-rotation.test.ts
+  - test/channels/message-count.test.ts
+---
 ```
 
-```
+**Context:** the `messages.jsonl` rotation auto-trigger (`isChannelRotationAutoEnabled`, index.ts) was opt-in — default-OFF, enabled by a `.rotation-enabled` flag. Default-off was deliberate live-substrate sequencing for the `tail -f` blocker: a `tail -f` Monitor follows the file by DESCRIPTOR, so the rotation `renameSync` would leave it tailing the sealed archive. The gate's own comment named the activation precondition: "enable only once the cohort's Monitors follow by NAME (`tail -F`)." PR-1 (dotfiles #198) converted the last `tail -f` reader to `tail -F`, so the precondition is now MET.
+
+**Chosen:** invert the gate to DEFAULT-ON — `isChannelRotationAutoEnabled()` returns `!existsSync(channelRotationDisabledFlagPath())` (the `.rotation-disabled` kill-switch, inverted polarity); `touch .rotation-disabled` is the emergency off. The reaper (channels-gc-reaper.ts) only READS the gate, so this is a pure gate-fn change (no reaper logic edit). **BUNDLED:** `messageCount` (index.ts) made ARCHIVE-AWARE — it sums complete records across the live file + every sealed `messages.<seq>.archive.jsonl` (mirroring `readMessagesTail`'s span; extracted the LF-scan to a `countCompleteLines` helper). Pre-rotation (no archives) it is identical to the prior live-only count.
+
+**Reason:** the flip was gated on a blast-radius check run as an ADVERSARIAL reader-trace subagent (the institutionalized C1-lesson: trace ACTUAL consumers, not the happy path). It confirmed every reader survives rotation — Monitor recipes use `tail -F` (re-opens across the rename), the 6 CLIs pass `includeArchive:true`, the 4 raw-path scanners (peer-recent-message, audit-verdict-auto-wrap, pattern-trace, lexicon) span `listChannelArchiveFilePaths`, `lastMessageTs`→`listChannels` uses archive-aware `readMessagesTail` — EXCEPT two: (a) the OPERATING-MANUAL §5 "decode an audit-verdict" recipe greps the live file only (doc-caveat, a separate dotfiles PR — cross-repo); (b) `messageCount` was live-only, which the flip ACTIVATES into an under-report on the rotating eternal `coordination` channel — so bundling its fix is no-known-gaps (Alpha scope-ruling). The dashboard (the named `messageCount` consumer) was verified to want a TOTAL count (it replaced `readMessages.length`, displays the channel total; message-loading is independently archive-aware) — so archive-aware is the FIX, not a break.
+
+**Cross-edge:** `cross_edge_consumers_verified` = (1) the dotfiles `src/channels/cli.ts` passthrough shim — unaffected (the gate is reaper-internal). (2) `claude-conductor-dashboard` — consumes `messageCount` as a total stat; verified no live-only dependency; picks up the archive-aware fix on its next conductor dep-bump. The §5 decode-recipe caveat ships as a separate dotfiles PR (a PR cannot span repos).
+
+**Verification:** typecheck + format + lint clean; the gate test flipped to default-ON (false-when-`.rotation-disabled`); +3 archive-aware `messageCount` tests (sums live+archives / counts-archives-when-live-absent / pre-rotation parity); the reaper + test-header rotation comments updated (cross-artifact fold). Adversarial-subagent reader-trace + ci-local + the #205 pre-push gate dogfooded. CI run-id + conclusion on the PR. ACTIVATION: zero live impact until the post-cohort dep-refresh (by then Monitors re-arm `-F`).
+
+**Supersedes / superseded_by:** supersedes the default-off rotation rationale in `decisions/cluster-6.md` (PR #189; annotated there with the back-pointer) — the `tail -f` precondition it named is now met (dotfiles #198). The `rotateChannelMessages` primitive + `ROTATION_THRESHOLD_BYTES` are unchanged. Unblocks channel-retention (the deferred follow-on).
+
+— G4-flip authored by Bravo (reaper/governance lane); adversarial-subagent blast-radius pass; Alpha scope-ruling (bundle the archive-aware messageCount fix) + 2-lens merge-gate.
