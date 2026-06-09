@@ -28,16 +28,25 @@ import {
   mkdirSync,
   readlinkSync,
   realpathSync,
+  rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
+  formatNamedWorktreeReapCandidate,
   isSidPrefixWorktreeId,
+  isWorktreeStale,
   linkCanonicalNodeModules,
   listWorktrees,
+  NAMED_WORKTREE_STALE_FLOOR_MS,
+  namedWorktreeReapCandidates,
+  type NamedWorktreeReapCandidate,
   provisionWorktree,
   removeWorktree,
+  removeWorktreeByPath,
+  worktreeLastActivityMs,
   worktreePathForSession,
 } from "../../src/worktrees/index.ts";
 import { makeTmpRepo, type TmpRepo } from "../../test-utils/index.ts";
@@ -599,5 +608,200 @@ describe("linkCanonicalNodeModules", () => {
     expect(lstatSync(join(worktreePath, "node_modules")).isSymbolicLink()).toBe(
       true,
     );
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// G6-P2 — named-worktree reap: enumeration + path-correct removal + staleness.
+//
+// The G6-P1 reaper SKIPS named (non-sid-prefix) worktrees because
+// removeWorktree's slice(0,8) truncates a slug to a WRONG path → a silent
+// no-op. G6-P2 adds the path-correct primitives (removeWorktreeByPath) + a PURE
+// network-free enumerator (namedWorktreeReapCandidates) the opt-in reaper
+// REPORTS and the dotfiles --apply consumes. These prove: the clean+stale
+// filter + its exclusions (DIRTY / FRESH / sid-prefix), the path-correct remove
+// with actual-branch delete + detached-HEAD skip, and the fail-safe floor.
+// ───────────────────────────────────────────────────────────────────────────
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function addNamedWorktree(
+  r: TmpRepo,
+  slug: string,
+  branch: string,
+  opts: { commitAhead?: boolean } = {},
+): string {
+  const path = `${r.dir}-${slug}`;
+  r.git("worktree", "add", path, "-b", branch);
+  if (opts.commitAhead === true) {
+    // An empty commit puts the branch one ahead of main without dirtying the
+    // tree — the squash-debt shape (content ahead, clean working copy).
+    r.git("-C", path, "commit", "--allow-empty", "-q", "-m", `work-${slug}`);
+  }
+  return path;
+}
+
+describe("namedWorktreeReapCandidates — PURE network-free enumerator", () => {
+  it("lists a named + clean + stale worktree with its local landed-signals", () => {
+    const r = getRepo();
+    r.addBareRemote(); // origin/main exists → is-ancestor / commits-ahead resolve
+    const now = Date.now() + 2 * HOUR_MS;
+
+    addNamedWorktree(r, "bravo-keep", "bravo-keep-branch", {
+      commitAhead: true,
+    });
+
+    const cands = namedWorktreeReapCandidates(r.dir, now, {
+      staleFloorMs: HOUR_MS,
+    });
+    expect(cands.length).toBe(1);
+    expect(cands[0]?.slug).toBe("bravo-keep");
+    expect(cands[0]?.branch).toBe("bravo-keep-branch");
+    expect(cands[0]?.path.endsWith("-bravo-keep")).toBe(true);
+    // Squash-debt reality: a commit ahead, NOT an ancestor of origin/main — the
+    // exact signal that makes the cheap "merged" check unreliable (model-b why).
+    expect(cands[0]?.isAncestorOfMain).toBe(false);
+    expect(cands[0]?.commitsAheadOfMain).toBe(1);
+  });
+
+  it("EXCLUDES dirty / fresh / sid-prefix worktrees (only clean+stale+named pass)", () => {
+    const r = getRepo();
+    r.addBareRemote();
+    const now = Date.now() + 2 * HOUR_MS;
+
+    // (A) named + clean + stale → INCLUDED.
+    addNamedWorktree(r, "bravo-keep", "bravo-keep-branch", {
+      commitAhead: true,
+    });
+    // (B) named + DIRTY (an uncommitted file) + stale → excluded.
+    const dirty = addNamedWorktree(r, "bravo-dirty", "bravo-dirty-branch");
+    writeFileSync(join(dirty, "wip.txt"), "uncommitted");
+    // (C) named + clean + FRESH (mtime bumped to `now`) → excluded.
+    const fresh = addNamedWorktree(r, "bravo-fresh", "bravo-fresh-branch");
+    utimesSync(fresh, now / 1000, now / 1000);
+    // (D) SID-PREFIX + clean + stale → excluded (the sid-prefix path owns it).
+    addNamedWorktree(r, "94a8058c", "sid-branch");
+
+    const cands = namedWorktreeReapCandidates(r.dir, now, {
+      staleFloorMs: HOUR_MS,
+    });
+    expect(cands.map((c) => c.slug)).toEqual(["bravo-keep"]);
+  });
+
+  it("EXCLUDES a worktree whose `git status` errors — fail-CLOSED on unverifiable cleanliness", () => {
+    const r = getRepo();
+    const now = Date.now() + 2 * HOUR_MS;
+    // A named worktree with UNCOMMITTED WIP, then sever its `.git` link so its
+    // own `git status` errors (unverifiable cleanliness). It still enumerates in
+    // `git worktree list` (the canonical's admin dir is intact), so it reaches
+    // the gate — and must be EXCLUDED, never reported: the report could
+    // otherwise misdirect a destructive apply at a worktree whose WIP the tool
+    // never managed to read. Closes the adversarial-pass fail-OPEN dirty gate.
+    const broken = addNamedWorktree(r, "bravo-broken", "bravo-broken-branch");
+    writeFileSync(join(broken, "secret-wip.txt"), "un-pushed work");
+    rmSync(join(broken, ".git"), { force: true });
+
+    const cands = namedWorktreeReapCandidates(r.dir, now, {
+      staleFloorMs: HOUR_MS,
+    });
+    expect(cands.map((c) => c.slug)).not.toContain("bravo-broken");
+  });
+
+  it("returns [] for a canonical with no worktrees", () => {
+    const r = getRepo();
+    expect(
+      namedWorktreeReapCandidates(r.dir, Date.now(), { staleFloorMs: HOUR_MS }),
+    ).toEqual([]);
+  });
+});
+
+describe("removeWorktreeByPath — path-correct remove (the G6-P1 root-cause fix)", () => {
+  it("removes a NAMED worktree by full path + deletes its actual branch", () => {
+    const r = getRepo();
+    const path = addNamedWorktree(r, "bravo-rm", "bravo-rm-branch");
+    expect(existsSync(path)).toBe(true);
+
+    const res = removeWorktreeByPath(path, { dotfilesCanonical: r.dir });
+    expect(res.kind).toBe("removed");
+    expect(existsSync(path)).toBe(false);
+    // The ACTUAL branch (resolved pre-removal) is deleted — not a slug-truncated
+    // wrong ref. This is precisely what removeWorktree's slice(0,8) could not do.
+    expect(r.git("branch", "--list", "bravo-rm-branch").trim()).toBe("");
+  });
+
+  it("skips the branch-delete for a detached HEAD (branch === 'HEAD')", () => {
+    const r = getRepo();
+    const path = addNamedWorktree(r, "bravo-detach", "bravo-detach-branch");
+    r.git("-C", path, "checkout", "--detach");
+
+    const res = removeWorktreeByPath(path, { dotfilesCanonical: r.dir });
+    expect(res.kind).toBe("removed");
+    expect(existsSync(path)).toBe(false);
+    // We did NOT ride-along delete a detached "HEAD" — the branch survives.
+    expect(r.git("branch", "--list", "bravo-detach-branch").trim()).not.toBe(
+      "",
+    );
+  });
+
+  it("is idempotent — an absent path returns kind: 'absent'", () => {
+    const r = getRepo();
+    const res = removeWorktreeByPath(`${r.dir}-never-existed`, {
+      dotfilesCanonical: r.dir,
+    });
+    expect(res.kind).toBe("absent");
+  });
+});
+
+describe("isWorktreeStale + worktreeLastActivityMs — staleness floor (fail-safe)", () => {
+  it("reads fresh just after creation, stale past the floor", () => {
+    const r = getRepo();
+    const path = addNamedWorktree(r, "bravo-age", "bravo-age-branch");
+    const activity = worktreeLastActivityMs(path, Date.now());
+    expect(isWorktreeStale(path, activity, HOUR_MS)).toBe(false); // 0 < 1h
+    expect(isWorktreeStale(path, activity + 2 * HOUR_MS, HOUR_MS)).toBe(true);
+  });
+
+  it("fail-safe: a stat error yields `now` → NEVER stale (never a reap candidate)", () => {
+    const missing = "/nonexistent/worktree/path/xyz";
+    expect(worktreeLastActivityMs(missing, 123_456)).toBe(123_456);
+    expect(isWorktreeStale(missing, 999_999, HOUR_MS)).toBe(false);
+  });
+
+  it("pins the default stale floor at 48h (Alpha's conservative ruling)", () => {
+    expect(NAMED_WORKTREE_STALE_FLOOR_MS).toBe(48 * 60 * 60 * 1000);
+  });
+});
+
+describe("formatNamedWorktreeReapCandidate — landed-signal one-liner", () => {
+  const base: NamedWorktreeReapCandidate = {
+    path: "/x/repo-bravo-keep",
+    slug: "bravo-keep",
+    branch: "bravo-keep-branch",
+    isAncestorOfMain: false,
+    localRemoteRefExists: true,
+    commitsAheadOfMain: 3,
+    lastActivityMs: 0,
+  };
+  const now = 50 * HOUR_MS;
+
+  it("flags a NON-ancestor (squash?) candidate to VERIFY before apply", () => {
+    const s = formatNamedWorktreeReapCandidate(base, now);
+    expect(s).toContain("bravo-keep-branch");
+    expect(s).toContain("VERIFY its PR merged");
+    expect(s).toContain("3 commit(s) ahead");
+    expect(s).toContain("remote-ref present");
+  });
+
+  it("marks a true-merge (ancestor) candidate as safe", () => {
+    const s = formatNamedWorktreeReapCandidate(
+      { ...base, isAncestorOfMain: true },
+      now,
+    );
+    expect(s).toContain("branch IS in main");
+  });
+
+  it("renders a detached-HEAD candidate (branch === null)", () => {
+    const s = formatNamedWorktreeReapCandidate({ ...base, branch: null }, now);
+    expect(s).toContain("detached-HEAD");
   });
 });

@@ -35,6 +35,7 @@
  */
 
 import { decodeStdio, runGit } from "../git/index.ts";
+import { effectiveHome } from "../shared/home.ts";
 import {
   existsSync,
   lstatSync,
@@ -242,6 +243,73 @@ export function removeWorktree(
 }
 
 /**
+ * Remove a worktree by its FULL path (the G6-P2 named-worktree-reap path).
+ *
+ * {@link removeWorktree} derives the path from a sid-prefix via
+ * `worktreePathForSession`'s `slice(0, SID_PREFIX_LEN)` — correct ONLY for an
+ * AUTO-provisioned `<canonical>-<sid8>` worktree. For a MANUAL named worktree
+ * (`<canonical>-<nato>-<slug>`) that slice truncates the slug to a WRONG path (a
+ * silent no-op — the G6-P1 root cause). This variant removes the path VERBATIM,
+ * and deletes the worktree's ACTUAL checked-out branch (resolved before removal),
+ * not a `worktree/<sid8>` sentinel.
+ *
+ * Idempotent (`absent` when already gone). A detached HEAD skips the branch
+ * delete. The CALLER owns the safety gates (clean + landed + stale + not-live)
+ * before invoking this destructive primitive — this is the path-correct remover,
+ * not a policy gate.
+ */
+export function removeWorktreeByPath(
+  worktreePath: string,
+  opts: { readonly dotfilesCanonical: string },
+): RemoveResult {
+  if (!existsSync(worktreePath)) {
+    return { kind: "absent", path: worktreePath };
+  }
+
+  // Resolve the actual branch BEFORE removal (the worktree is gone after).
+  const headResult = runGit(worktreePath, [
+    "rev-parse",
+    "--abbrev-ref",
+    "HEAD",
+  ]);
+  const branch =
+    headResult.status === 0 ? decodeStdio(headResult.stdout).trim() : "";
+
+  const result = runGit(opts.dotfilesCanonical, [
+    "worktree",
+    "remove",
+    "--force",
+    worktreePath,
+  ]);
+  if (result.status !== 0) {
+    const stderr = decodeStdio(result.stderr) || decodeStdio(result.stdout);
+    return {
+      kind: "error",
+      path: worktreePath,
+      detail: stderr || `git worktree remove exited ${String(result.status)}`,
+    };
+  }
+
+  // Branch-cleanup ride-along (fail-soft); skip a detached HEAD ("HEAD").
+  if (branch !== "" && branch !== "HEAD") {
+    const branchResult = runGit(opts.dotfilesCanonical, [
+      "branch",
+      "-D",
+      branch,
+    ]);
+    if (branchResult.status !== 0) {
+      const stderr =
+        decodeStdio(branchResult.stderr) || decodeStdio(branchResult.stdout);
+      process.stderr.write(
+        `[worktrees.removeWorktreeByPath] branch-delete failed for ${branch}: ${stderr.trim()}\n`,
+      );
+    }
+  }
+
+  return { kind: "removed", path: worktreePath };
+}
+
+/**
  * Paths in a worktree that carry uncommitted work a `--force` removal would
  * destroy. Runs `git status --porcelain` in the worktree and ignores the
  * provisioner-created `node_modules` symlink (which always shows as untracked
@@ -286,6 +354,178 @@ export function worktreeUncommittedPaths(
         (path) => path !== "node_modules" && !path.startsWith("node_modules/"),
       )
   );
+}
+
+/**
+ * Most-recent-activity signal for a worktree (unix ms): the later of its
+ * directory mtime and its HEAD commit time. Conservative — ANY recent signal
+ * reads fresh. Fail-safe for a DESTRUCTIVE caller: a stat error yields `now` (so
+ * the worktree reads NOT stale → never a reap candidate). All-local, no network.
+ */
+export function worktreeLastActivityMs(
+  worktreePath: string,
+  now: number,
+): number {
+  let latest: number;
+  try {
+    latest = lstatSync(worktreePath).mtimeMs;
+  } catch {
+    return now;
+  }
+  const head = runGit(worktreePath, ["log", "-1", "--format=%ct"]);
+  if (head.status === 0) {
+    const ct = Number.parseInt(decodeStdio(head.stdout).trim(), 10);
+    if (Number.isFinite(ct)) latest = Math.max(latest, ct * 1000);
+  }
+  return latest;
+}
+
+/** True when a worktree has had no activity (commit OR dir-mtime) for `floorMs`. */
+export function isWorktreeStale(
+  worktreePath: string,
+  now: number,
+  floorMs: number,
+): boolean {
+  return now - worktreeLastActivityMs(worktreePath, now) >= floorMs;
+}
+
+/**
+ * A NAMED (non-sid-prefix) worktree that is CLEAN + STALE — a G6-P2 report
+ * candidate. Carries informational landed-SIGNALS, NOT a verdict: the cohort
+ * SQUASH-merge makes every cheap "merged" signal unreliable (`is-ancestor`=NO
+ * because squash makes a NEW commit; the remote ref may still exist), so the
+ * HUMAN confirms "landed" from these signals before an explicit apply (model-b,
+ * decisions/phase-3 G6-P2). All signals are LOCAL git — the reaper stays
+ * network-free (the fail-safe substrate tier).
+ */
+export type NamedWorktreeReapCandidate = {
+  readonly path: WorktreePath;
+  readonly slug: string;
+  readonly branch: string | null;
+  readonly isAncestorOfMain: boolean;
+  readonly localRemoteRefExists: boolean;
+  readonly commitsAheadOfMain: number;
+  readonly lastActivityMs: number;
+};
+
+/**
+ * Enumerate the NAMED worktrees that are CLEAN (no uncommitted) and STALE (no
+ * activity for `staleFloorMs`) with their local landed-signals. PURE enumeration
+ * — it NEVER reaps. Network-free + fail-safe: a DIRTY, FRESH, or stat/git-error
+ * worktree is EXCLUDED. The caller (report or explicit apply) decides; the user
+ * confirms LANDED. Used by both the opt-in reaper report and the apply path.
+ *
+ * STALENESS IS AN ACTIVITY HEURISTIC, NOT A LIVENESS VERDICT (Architecture-lens
+ * fold): the named path has no sid-prefix to liveness-match, and `isWorktreeStale`
+ * keys on max(dir-mtime, HEAD commit-time). A LIVE session working >floor in a
+ * named worktree but editing only sub-directory files (no new commit, parent-dir
+ * mtime unbumped) reads STALE — a false candidate. The landed-signals are
+ * ADVISORY, not proof: `localRemoteRefExists` resolves a real remote ref for a
+ * local branch coincidentally named after one (e.g. a branch literally `main`).
+ * So a candidate is NOT "safe to delete" — it is a REPORT row a human vets. The
+ * destructive apply MUST gate on liveness (a live-idle session is NOT caught by
+ * the clean+stale TOCTOU re-verify) or per-candidate human confirm — see
+ * `decisions/phase-3.md` G6-P2.
+ */
+export function namedWorktreeReapCandidates(
+  dotfilesCanonical: string,
+  now: number,
+  opts: { readonly staleFloorMs: number },
+): readonly NamedWorktreeReapCandidate[] {
+  const out: NamedWorktreeReapCandidate[] = [];
+  for (const wt of listWorktrees(dotfilesCanonical)) {
+    if (isSidPrefixWorktreeId(wt.sessionId)) continue; // sid-prefix path owns those
+    // Fail-CLOSED cleanliness probe (adversarial-pass finding): a worktree whose
+    // own `git status` errors (severed .git link, unstattable cwd) has
+    // UNVERIFIABLE cleanliness — `worktreeUncommittedPaths` fails OPEN (returns
+    // [] = reads clean), which for a MANUAL named worktree (likely to hold
+    // un-pushed WIP) would surface it as a reap candidate the tool never actually
+    // checked. Exclude it — fail toward NOT-reporting (matching
+    // `worktreeLastActivityMs` / `isNamedWorktreeReapReportEnabled`). Honors this
+    // fn's JSDoc "a DIRTY, FRESH, or stat/git-error worktree is EXCLUDED".
+    if (runGit(wt.path, ["status", "--porcelain"]).status !== 0) continue;
+    if (worktreeUncommittedPaths(wt.path).length > 0) continue; // not DIRTY
+    if (!isWorktreeStale(wt.path, now, opts.staleFloorMs)) continue; // not FRESH
+    const head = decodeStdio(
+      runGit(wt.path, ["rev-parse", "HEAD"]).stdout,
+    ).trim();
+    // Orphan/unborn HEAD (RE-lens NIT): `git rev-parse HEAD` fails but prints the
+    // literal "HEAD" to stdout, so `head` is non-empty — skip rather than emit a
+    // candidate whose landed-signals are all meaningless. (Such a worktree is
+    // normally DIRTY → already excluded; belt-and-suspenders for the clean case.)
+    if (head === "" || head === "HEAD") continue;
+    const isAncestor =
+      head.length > 0 &&
+      runGit(dotfilesCanonical, [
+        "merge-base",
+        "--is-ancestor",
+        head,
+        "origin/main",
+      ]).status === 0;
+    const localRemoteRefExists =
+      wt.branch !== null &&
+      runGit(dotfilesCanonical, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/origin/${wt.branch}`,
+      ]).status === 0;
+    const aheadStr = decodeStdio(
+      runGit(dotfilesCanonical, ["rev-list", "--count", head, "^origin/main"])
+        .stdout,
+    ).trim();
+    const ahead = Number.parseInt(aheadStr, 10);
+    out.push({
+      path: wt.path,
+      slug: wt.sessionId,
+      branch: wt.branch,
+      isAncestorOfMain: isAncestor,
+      localRemoteRefExists,
+      commitsAheadOfMain: Number.isFinite(ahead) ? ahead : -1,
+      lastActivityMs: worktreeLastActivityMs(wt.path, now),
+    });
+  }
+  return out;
+}
+
+/**
+ * Default stale floor for the G6-P2 named-worktree-reap report (48h) — Alpha's
+ * conservative ruling: a longer floor shrinks the live-idle-but-clean residual.
+ */
+export const NAMED_WORKTREE_STALE_FLOOR_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * The opt-in flag gating the G6-P2 named-worktree-reap REPORT. ABSENT by default
+ * (anti-default per CLAUDE.md — NEVER default-on a destructive-adjacent
+ * capability): with no flag the reaper stays SILENT and nothing changes. Present
+ * → the reaper EMITS the clean+stale named candidates (it still NEVER reaps; the
+ * destructive apply is always user-driven via the dotfiles apply path).
+ */
+export function isNamedWorktreeReapReportEnabled(): boolean {
+  try {
+    return existsSync(
+      join(effectiveHome(), ".claude", ".flags", "named-worktree-reap-enabled"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One-line human report for a named-worktree reap candidate — the landed-SIGNALS
+ * (is-ancestor / local-remote-ref / commits-ahead / idle-age) the USER reviews
+ * before an explicit apply. NOT a verdict: the cohort SQUASH-merge breaks cheap
+ * landed-detection (is-ancestor=NO on a squashed branch), so the human confirms.
+ */
+export function formatNamedWorktreeReapCandidate(
+  c: NamedWorktreeReapCandidate,
+  now: number,
+): string {
+  const ageH = Math.floor((now - c.lastActivityMs) / (60 * 60 * 1000));
+  const landed = c.isAncestorOfMain
+    ? "branch IS in main (true-merge — safe)"
+    : `branch NOT in main (squash? ${c.commitsAheadOfMain} commit(s) ahead, remote-ref ${c.localRemoteRefExists ? "present" : "gone"}) — VERIFY its PR merged before apply`;
+  return `${c.path} [${c.branch ?? "detached-HEAD"}]: clean + idle ${ageH}h — ${landed}`;
 }
 
 /**

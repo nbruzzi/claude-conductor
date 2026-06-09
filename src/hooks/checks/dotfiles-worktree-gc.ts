@@ -66,8 +66,12 @@ import { sessionLivePrefixSource } from "../../active-sessions/session-liveness.
 import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
+  formatNamedWorktreeReapCandidate,
+  isNamedWorktreeReapReportEnabled,
   isSidPrefixWorktreeId,
   listWorktrees,
+  namedWorktreeReapCandidates,
+  NAMED_WORKTREE_STALE_FLOOR_MS,
   removeWorktree,
   worktreeUncommittedPaths,
 } from "../../worktrees/index.ts";
@@ -256,6 +260,26 @@ export async function check(input: HookInput): Promise<HookResult> {
         artifactPath: wt.path,
         detail: `reaped ${wt.sessionId}${fullSid !== null ? ` (sid=${fullSid})` : " (orphan; no anchor)"} — no live heartbeat on any artifact within window`,
       });
+    }
+
+    // G6-P2 named-worktree-reap REPORT (opt-in, default-off = silent; NEVER
+    // reaps). The loop above SKIPS named worktrees; when opted-in, surface the
+    // clean+stale ones with their landed-signals for the user to review +
+    // explicitly apply-reap (user-driven destructive apply — dotfiles
+    // named-worktree-reap --apply).
+    if (isNamedWorktreeReapReportEnabled()) {
+      for (const c of namedWorktreeReapCandidates(dotfilesCanonical, now, {
+        staleFloorMs: NAMED_WORKTREE_STALE_FLOOR_MS,
+      })) {
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          sessionId,
+          source: "dispatcher",
+          kind: "worktree-gc-named-reap-candidate",
+          artifactPath: c.path,
+          detail: `[dotfiles-worktree-gc] named-reap CANDIDATE (report-only): ${formatNamedWorktreeReapCandidate(c, now)}`,
+        });
+      }
     }
 
     touchCursor(cursorPath);
