@@ -2429,3 +2429,45 @@ files:
 **Supersedes / superseded_by:** supersedes the default-off rotation rationale in `decisions/cluster-6.md` (PR #189; annotated there with the back-pointer) — the `tail -f` precondition it named is now met (dotfiles #198). The `rotateChannelMessages` primitive + `ROTATION_THRESHOLD_BYTES` are unchanged. Unblocks channel-retention (the deferred follow-on).
 
 — G4-flip authored by Bravo (reaper/governance lane); adversarial-subagent blast-radius pass; Alpha scope-ruling (bundle the archive-aware messageCount fix) + 2-lens merge-gate.
+
+---
+
+## 2026-06-09 — Decision: G6-P2 — named-worktree reap via opt-in REPORT + path-correct primitives (model-b, network-free)
+
+```yaml
+---
+ts: 2026-06-09T01:03:35Z
+kind: architectural
+severity: major
+phase: phase-3-g6
+files:
+  - src/worktrees/index.ts
+  - src/hooks/checks/repo-worktree-gc.ts
+  - src/hooks/checks/dotfiles-worktree-gc.ts
+  - src/shared/presence-failure-log.ts
+  - test/worktrees/index.test.ts
+---
+```
+
+**Context:** G6-P1 made the worktree reaper SKIP every NAMED (non-sid-prefix) worktree — `removeWorktree`'s `slice(0,8)` truncates a slug (`<canonical>-bravo-nudge-kind`) to a WRONG path (`<canonical>-bravo-nud`), so the `--force` removal was a silent no-op that re-logged `worktree-cleanup-incomplete` every boot. The skip stopped the false alarm but left the debt unreaped (19+ named worktrees, the original G6 motivation). G6-P2 makes named worktrees reapable — SAFELY.
+
+**Merged-check fork (the load-bearing empirical):** a safe reap needs a "this branch landed" signal. Building it surfaced a re-plan-on-divergence: the cohort SQUASH-merge breaks EVERY cheap landed-signal. Checked at primary source — `bravo/l409-body-preview`, `delta/g2-report-fix`, `charlie/p3-test-ground` are ALL `merge-base --is-ancestor`=NO (squash makes a NEW commit; the branch tip is never in `main`), remote-ref STILL-EXISTS (they weren't `--delete-branch`'d), and `commits-ahead`>0. The content landed; no commit- or remote-level check sees it.
+
+**Options considered:**
+
+1. **(a) Autonomous reap + `gh pr list --state merged` signal** — accurate for squash, but a NETWORK call inside the SessionStart reaper, which today is git + node-builtins ONLY (the fail-safe substrate tier that survives conductor loss). Network = latency + offline-fragility in the one path that must never hang. _Rejected._
+2. **(b) Report-then-USER-APPLY** (the `memory-archive.ts --apply` pattern) — the reaper only REPORTS clean+stale named candidates + their local landed-signals (default-OFF = silent); the USER confirms "landed" and runs an explicit apply. No autonomous deletion → no merged-check-in-reaper → the reaper stays network-free. _Chosen._
+
+**Chosen (b).** The CONDUCTOR PR ships the network-free half: `removeWorktreeByPath` (the G6-P1 root-cause fix — remove by FULL path + resolve+delete the ACTUAL branch via `rev-parse --abbrev-ref HEAD`, detached-HEAD skip, fail-soft branch delete); `namedWorktreeReapCandidates` (a PURE enumerator — `listWorktrees` → exclude sid-prefix / DIRTY (`worktreeUncommittedPaths`) / FRESH (`isWorktreeStale`, 48h floor) → per-candidate LOCAL signals: is-ancestor / local-remote-ref / commits-ahead / idle-age — DATA, never a verdict); and an OPT-IN report at BOTH reaper named-skip sites (`repo-worktree-gc.ts` + `dotfiles-worktree-gc.ts`), gated on `~/.claude/.flags/named-worktree-reap-enabled` (ABSENT by default = silent, the current skip unchanged; the reaper NEVER reaps). The destructive `--apply` (`scripts/named-worktree-reap.ts`, importing these primitives via the shim) is a SEPARATE dotfiles PR — user-driven, after this merges + the dep-refresh.
+
+**Reason:** (b) sidesteps squash-merged-detection entirely — the human confirms "landed", which is exactly the judgment a network/heuristic check approximates. It keeps the reaper network-free (preserves the fail-safe substrate tier the SessionStart path depends on), is strictly safer than autonomous deletion (a human gates EVERY reap, not just opts into a heuristic), and still ships the full capability (the report + the `removeWorktreeByPath` bugfix + the explicit apply path). The opt-in flag is anti-default per CLAUDE.md — a destructive-adjacent capability is NEVER default-on. The 48h stale floor (vs the 24h sid-prefix floor) is Alpha's conservative ruling: a longer floor shrinks the live-idle-but-clean false-candidate residual.
+
+**Cross-edge:** `presence-failure-log.ts` gains the `worktree-gc-named-reap-candidate` kind — added ATOMICALLY to BOTH the `PresenceFailureKind` union AND the `isPresenceFailureKind` runtime validator (atomic-wiring discipline; a union-only add would log a kind the validator rejects). The dotfiles `--apply` (separate PR) consumes `removeWorktreeByPath` + `namedWorktreeReapCandidates` via the package-export shim — gated behind the same opt-in flag.
+
+**Verification:** typecheck + format + lint clean; +13 tests (`test/worktrees/index.test.ts`) — enumerator lists clean+stale+named with correct landed-signals (is-ancestor=NO, ahead=1) and EXCLUDES DIRTY / FRESH / sid-prefix / git-status-error (fail-CLOSED); `removeWorktreeByPath` removes by full path + deletes the actual branch (the slice(0,8) the old path could not) + skips a detached "HEAD" + idempotent-absent; `isWorktreeStale`/`worktreeLastActivityMs` fail-safe (stat error → `now` → NEVER stale → never a candidate); the formatter's ancestor/non-ancestor/detached branches. The adversarial silent-failure-hunter pass over the diff CAUGHT a fail-OPEN in the dirty-exclusion gate (a broken-git worktree's `git status` errors → `worktreeUncommittedPaths` returns `[]` → reads CLEAN → reported, contradicting this fn's own JSDoc) — FIXED pre-merge with a fail-CLOSED `git status` probe guard + a regression test (dogfooding the adversarial-subagent mandate on my own build). ci-local 13/13 gates green; CI run-id + conclusion on the PR; Charlie 2-lens cross-gate.
+
+**2-lens folds (Charlie SHIP-WITH-FOLDS B0/F1/N2 — RE+Architecture+Security; Alpha captain-PASS):** the core design (network-free / report-only / default-off / NEVER-reaps) held under adversarial tracing — zero blockers. Folded before merge: **F1 (Architecture) — staleness ≠ liveness.** The named path has no sid-prefix to liveness-match (named slugs are operator-chosen), and `isWorktreeStale` keys on max(dir-mtime, HEAD commit-time) — so a LIVE session idle >floor on a clean branch (editing only sub-dir files, no new commit) reads STALE: a false candidate. The JSDoc + this entry now frame clean+stale as a CONSERVATIVE CANDIDATE-HEURISTIC, NOT a liveness guarantee — precisely the RATIONALE for report-then-user-apply: the human supplies the liveness judgment the named-slug heuristic structurally cannot. This reinforces the design, not weakens it. **NIT (RE) orphan/unborn-HEAD** — `git rev-parse HEAD` on an unborn HEAD prints the literal `HEAD` to stdout (non-empty), so the candidate was pushed with `head==="HEAD"`; folded a `continue` (such worktrees are normally DIRTY→excluded; belt-and-suspenders for the clean case). **NIT (RE) localRemoteRefExists false-positive** — a local branch coincidentally named after a remote ref (e.g. literally `main`) resolves `refs/remotes/origin/main`; advisory-only + cohort branches are nato-slugs, so documented as ADVISORY in the JSDoc rather than code-fixed (the human vets the signal). **F1(b) — apply-PR liveness gate:** the destructive apply MUST gate on liveness (or per-candidate human confirm) — a live-idle clean+stale named worktree is NOT caught by Delta's clean+stale TOCTOU re-verify; the two are COMPLEMENTARY load-bearing invariants, with the human-gate as the liveness backstop (recorded as the apply-PR's #2 safety invariant alongside the TOCTOU).
+
+**Supersedes / superseded_by:** extends G6-P1 (PR #199, the named-skip) — the skip was a stopgap that stopped the false alarm; G6-P2 converts it into a safe opt-in report + the reaper-side path-correct primitives. The skip itself is UNCHANGED when the flag is absent (default). `removeWorktree` (the sid-prefix path) is untouched.
+
+— G6-P2 authored by Bravo (reaper/governance lane); the merged-check fork surfaced empirically at primary source + Alpha's model-b ruling (report-then-user-apply, network-free); adversarial silent-failure-hunter pass; Charlie 2-lens merge-gate.

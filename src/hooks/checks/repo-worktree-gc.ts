@@ -65,8 +65,12 @@ import { getWallClockNow } from "../../shared/clock.ts";
 import { effectiveHome } from "../../shared/home.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
+  formatNamedWorktreeReapCandidate,
+  isNamedWorktreeReapReportEnabled,
   isSidPrefixWorktreeId,
   listWorktrees,
+  namedWorktreeReapCandidates,
+  NAMED_WORKTREE_STALE_FLOOR_MS,
   removeWorktree,
 } from "../../worktrees/index.ts";
 import {
@@ -257,6 +261,25 @@ function reapRepo(args: {
       artifactPath: wt.path,
       detail: `[${source}] reaped sid-prefix ${wt.sessionId} — no live heartbeat on any artifact within window`,
     });
+  }
+
+  // G6-P2 named-worktree-reap REPORT (opt-in, default-off = silent; NEVER reaps).
+  // The loop above SKIPS named worktrees; when opted-in, surface the clean+stale
+  // ones with their landed-signals so the user can review + explicitly apply-reap
+  // (the destructive apply is user-driven — dotfiles named-worktree-reap --apply).
+  if (isNamedWorktreeReapReportEnabled()) {
+    for (const c of namedWorktreeReapCandidates(repo.canonical, now, {
+      staleFloorMs: NAMED_WORKTREE_STALE_FLOOR_MS,
+    })) {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        source: "dispatcher",
+        kind: "worktree-gc-named-reap-candidate",
+        artifactPath: c.path,
+        detail: `[${source}] named-reap CANDIDATE (report-only): ${formatNamedWorktreeReapCandidate(c, now)}`,
+      });
+    }
   }
 
   touchCursor(cursorPath);
