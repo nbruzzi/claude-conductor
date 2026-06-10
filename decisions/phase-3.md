@@ -2471,3 +2471,44 @@ files:
 **Supersedes / superseded_by:** extends G6-P1 (PR #199, the named-skip) — the skip was a stopgap that stopped the false alarm; G6-P2 converts it into a safe opt-in report + the reaper-side path-correct primitives. The skip itself is UNCHANGED when the flag is absent (default). `removeWorktree` (the sid-prefix path) is untouched.
 
 — G6-P2 authored by Bravo (reaper/governance lane); the merged-check fork surfaced empirically at primary source + Alpha's model-b ruling (report-then-user-apply, network-free); adversarial silent-failure-hunter pass; Charlie 2-lens merge-gate.
+
+## 2026-06-10 — Decision: SPAWN-3 — named-worktree machine-liveness via attachment tiers + deep-activity gate (Option-C mechanism superseded by evidence)
+
+```yaml
+---
+ts: 2026-06-10T13:20:00Z
+kind: architectural
+severity: major
+phase: phase-3-g6
+files:
+  - src/active-sessions/session-liveness.ts
+  - src/worktrees/liveness.ts
+  - src/worktrees/index.ts
+  - src/hooks/checks/dotfiles-worktree-gc.ts
+  - src/hooks/checks/repo-worktree-gc.ts
+  - src/shared/presence-failure-log.ts
+  - test/active-sessions/worktree-path-liveness.test.ts
+  - test/worktrees/liveness.test.ts
+---
+```
+
+**Context:** G6-P2 shipped the named-worktree reaper HONEST + human-gated, deferring machine-liveness to a conductor-side shared helper (SPAWN-3; F1(b) recorded the destructive apply MUST gate on liveness). The deferred design sketch ("Option C") proposed a candidate-own-artifact heartbeat scan: "a session active in a named worktree heartbeats on artifactIdFromPath(candidate) through walkUpForGit".
+
+**The load-bearing empirical (Option-C premise is FALSE at HEAD):** `artifactIdFromPath` (RE-1 canonicalization, 4ab733b 2026-04-30) maps any path inside a git working tree to the CANONICAL toplevel via `git rev-parse --git-common-dir` — so a session active in a LINKED named worktree heartbeats on the CANONICAL repo artifact, never a candidate-own artifact. Three confirmations at primary source (2026-06-10): a live `--git-common-dir` probe from a worktree returns the canonical `.git`; the registry holds ZERO per-worktree artifacts post-RE-1 (the one named-worktree artifact is 2026-04-30 residue with an EMPTY heartbeats dir); all 10 live harness pidfiles carry `cwd=$HOME` (launch cwd — the cohort works in worktrees via absolute paths). A literal Option-C scan is therefore either structurally EMPTY (raw-path hash → always "not live" → reap-a-live-worktree, the exact fail-direction class that produced four G6-P2 build incidents — the would-be 5th instance, caught at DESIGN time) or attribution-less (folded hash → any repo activity blocks every candidate). Captain independently verified + ratified the supersession (board thread 2026-06-10T12:51Z).
+
+**Chosen mechanism (all signals LOCAL — the G6-P2 network-free constraint holds):**
+
+1. **`isWorktreePathLive(path, now, windowMs, opts?)`** in `active-sessions/session-liveness.ts` (the canonical liveness module — the liveness-gate-store-contract home). THREE-VALUED verdict (`live` / `not-live` / `indeterminate`) — cohort Decision 5 (pre-ratified): **indeterminate == NOT reapable**; collapsing it into not-live would launder "could not check" into "nobody is there". OR-composed ATTACHMENT tiers: **T1 pidfile-cwd** (harness eager `<pid>.json`, filename-gated `/^\d+\.json$/` against the ~15:1 foreign `<uuid>.json` telemetry files sharing the dir; reads cwd+pid ONLY, never harness `status` — CG6 stays observe-only; deliberately UN-ceilinged vs `PID_PROTECT_CEILING_MS` because over-protect here is benign-linger, not unreclaimable state); **T2 sentinel-dotfilesRoot** (scanHeartbeats across artifacts; LIVE evidence accepted from ANY artifact; fresh-malformed entries route to indeterminate but ONLY on the plausible-attribution artifacts — anchor + candidate repo-family — so one poison file in an unrelated repo cannot vacuous-block all reaping globally; stale malformed is residue); **T3 sid-prefix tail** via `sessionLivePrefixSource` (the canonical OR-composer). Subtract-only-protect: a verdict can only PREVENT a reap.
+2. **`gatedNamedWorktreeReapCandidates`** in NEW `worktrees/liveness.ts` → `{candidates, excluded[{path,slug,reason}]}` — composes the UNTOUCHED pure enumerator with (i) a **deep-activity probe** (closes the G6-P2 F1 staleness blind spot: newest lstat mtime over the tree, `.git`+`node_modules` excluded, no symlink-follow, entry-capped with cap-hit → indeterminate; PLUS the worktree's PRIVATE gitdir probed by SPECIFIC FILES ONLY — HEAD/ORIG_HEAD/FETCH_HEAD/MERGE_HEAD/COMMIT_EDITMSG/logs/**/refs/** — never `index`, `*.lock`, or any DIRECTORY mtime, because the enumerator's own `git status` probe rewrites the index and bumps the gitdir dir-mtime: the self-pollution would otherwise vacuous-block every sweep, regression-pinned by a run-twice test) and (ii) the attachment verdict. Deep-activity keys on `staleFloorMs` (it deepens STALENESS); attachment keys on `livenessWindowMs` (default GC_WINDOW_MS).
+3. **Both conductor report sites** (`dotfiles-worktree-gc` + `repo-worktree-gc`) consume the gated wrapper; withheld rows surface as `worktree-gc-named-reap-excluded` breadcrumbs (kind added atomically to union + validator). The dotfiles apply script consumes the wrapper for its TOCTOU re-verify + an explicit per-path `isWorktreePathLive` immediately before each remove (separate dotfiles PR — substrate-import-first sequencing).
+4. **Future-mtime discipline:** all freshness probes drop the `age >= 0` lower bound — a future-dated mtime (clock skew, sync restore, just-written race) routes to the PROTECTIVE direction (fresh / indeterminate), mirroring `defensiveAgeMs`'s treatment of future-mtime as suspect. Caught by the tier-matrix tests pre-push.
+
+**HONESTY BOUND (the residual, stated so nobody over-claims):** for a MANUAL named worktree worked from a home-launched session, NO attachment tier can structurally fire (heartbeats fold to the canonical; pidfile cwd is the launch dir; no sentinel; slug ≠ sid) — machine-liveness for that class degrades to the deep-activity probe, and a fully-idle attached session (zero writes past the floor) is machine-INVISIBLE. The explicit human slug-confirm therefore REMAINS the load-bearing final liveness gate (G6-P2 F1(b) unchanged); the tier-applicability matrix lives on the helper's JSDoc and consumer-facing language keeps saying "best-effort".
+
+**Rejected:** literal Option-C candidate-own-artifact scan (premise false at HEAD — above); repo-level folded-artifact activity as a block signal (vacuous-block under a normally-active cohort); NATO-slug → channel-identity attribution (identity letters are reclaimed across cycles — a live current holder would protect a dead prior holder's worktree forever); harness `status`-field gating (CG6 observe-only bound).
+
+**Verification:** typecheck + format + lint clean; 26 new tests (tier matrix incl. RE-1 foreign-file ignore / RE-4 blast-radius scoping / RE-5 unverifiable-target / Decision-5 precedence; wrapper matrix incl. deep-activity, gitdir-activity, live-exclusion, indeterminate-exclusion, RE-3 self-pollution run-twice regression, walk-cap fail-safe, exports-map paired test); full suite 2853 pass / 0 fail; design pre-ratified by captain + adversarial RE design-audit (SOUND-WITH-FOLDS, all six folds absorbed: RE-1 filename gate, RE-2 tier-matrix honesty, RE-3 file-specific gitdir probes, RE-4 indeterminate scoping, RE-5 realpath-both-sides → indeterminate, RE-6 un-ceilinged-pid rationale documented).
+
+**Supersedes / superseded_by:** extends G6-P2 (the deferred machine-liveness half); supersedes the Option-C mechanism sketch recorded in the 2026-06-09 handoff. The pure enumerator, the human-gate, the opt-in flag, and the sid-prefix reaper path are all UNCHANGED.
+
+— SPAWN-3 authored by Charlie (machine-liveness lane); Option-C supersession evidence verified independently by Alpha (captain); RE design-audit subagent (adversarial, pre-build); Alpha 2-lens shadow at PR-boundary.

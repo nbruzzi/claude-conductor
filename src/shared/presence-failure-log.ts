@@ -93,6 +93,11 @@ export type PresenceFailureKind =
   // clean+stale named worktree surfaced for the user to review + explicitly
   // apply-reap (the destructive apply is user-driven, dotfiles named-worktree-reap).
   | "worktree-gc-named-reap-candidate"
+  // SPAWN-3 liveness gate — a clean+stale named worktree the gated enumerator
+  // WITHHELD (live session / liveness-indeterminate / fresh deep-activity):
+  // NOT reapable (Decision 5: indeterminate == NOT reapable). Surfaced so the
+  // report stays honest about machine-withheld rows.
+  | "worktree-gc-named-reap-excluded"
   // Phase 3 Slice 2 follow-up — provisioner observability (provisionWorktree
   // returned ok but post-create state is incomplete: stat-errno, realpath
   // mismatch with canonical, or sentinel-readback null). Mirrors the
@@ -445,6 +450,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "worktree-cleanup-incomplete" ||
     k === "worktree-gc-skipped-named" ||
     k === "worktree-gc-named-reap-candidate" ||
+    // SPAWN-3 liveness gate (atomic with the union add above).
+    k === "worktree-gc-named-reap-excluded" ||
     k === "worktree-provision-incomplete" ||
     // P0 substrate canary (backlog L:892, 2026-05-17) — node_modules
     // symlink-clone failed during provisioner post-creation.
