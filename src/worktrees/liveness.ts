@@ -44,6 +44,14 @@ import {
   type NamedWorktreeReapCandidate,
 } from "./index.ts";
 
+// Re-export the attachment verdict for cross-edge consumers: `session-liveness.ts`
+// has no exports-map entry (the bun exports map gates ALL paths), and the reap
+// surface is ONE toolkit — the dotfiles apply script imports the gated enumerator
+// AND the explicit pre-remove verdict from this single exported module. Value +
+// type exports kept separate (type-only exports erase at runtime).
+export { isWorktreePathLive } from "../active-sessions/session-liveness.ts";
+export type { WorktreePathLiveness } from "../active-sessions/session-liveness.ts";
+
 /** A clean+stale named worktree the gate WITHHELD from the reapable set. */
 export type ExcludedNamedWorktree = {
   readonly path: string;

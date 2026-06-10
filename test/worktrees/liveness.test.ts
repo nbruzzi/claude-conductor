@@ -251,6 +251,14 @@ describe("gatedNamedWorktreeReapCandidates — pass-through + exclusions", () =>
 });
 
 describe("./worktrees/liveness exports-map entry (paired-test owner half)", () => {
+  test("re-exports the attachment verdict as a VALUE for cross-edge consumers", async () => {
+    // The dotfiles apply script imports isWorktreePathLive from THIS module
+    // (session-liveness.ts has no exports-map entry). A type-only re-export
+    // would erase at runtime — pin the value export.
+    const mod = await import("../../src/worktrees/liveness.ts");
+    expect(typeof mod.isWorktreePathLive).toBe("function");
+  });
+
   test("entry exists with all three conditions pointing at the module", () => {
     const pkg = JSON.parse(
       readFileSync(join(import.meta.dir, "../../package.json"), "utf-8"),
