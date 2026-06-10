@@ -426,6 +426,13 @@ export type NamedWorktreeReapCandidate = {
  * destructive apply MUST gate on liveness (a live-idle session is NOT caught by
  * the clean+stale TOCTOU re-verify) or per-candidate human confirm — see
  * `decisions/phase-3.md` G6-P2.
+ *
+ * REAP-PURPOSED CALLERS MUST USE THE GATED WRAPPER (SPAWN-3): this base
+ * enumerator applies NO liveness/deep-activity gate. `worktrees/liveness.ts`
+ * `gatedNamedWorktreeReapCandidates` is the reap-decision surface — it
+ * withholds live / indeterminate / fresh-deep-activity rows (Decision 5:
+ * indeterminate == NOT reapable). Calling THIS function for a reap decision
+ * re-opens the live-reap class the wrapper closes.
  */
 export function namedWorktreeReapCandidates(
   dotfilesCanonical: string,

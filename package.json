@@ -245,6 +245,11 @@
       "import": "./src/worktrees/index.ts",
       "default": "./src/worktrees/index.ts"
     },
+    "./worktrees/liveness": {
+      "types": "./src/worktrees/liveness.ts",
+      "import": "./src/worktrees/liveness.ts",
+      "default": "./src/worktrees/liveness.ts"
+    },
     "./cli/resolve-dotfiles-root": {
       "types": "./src/cli/resolve-dotfiles-root.ts",
       "import": "./src/cli/resolve-dotfiles-root.ts",

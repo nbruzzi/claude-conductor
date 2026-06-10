@@ -69,10 +69,10 @@ import {
   isNamedWorktreeReapReportEnabled,
   isSidPrefixWorktreeId,
   listWorktrees,
-  namedWorktreeReapCandidates,
   NAMED_WORKTREE_STALE_FLOOR_MS,
   removeWorktree,
 } from "../../worktrees/index.ts";
+import { gatedNamedWorktreeReapCandidates } from "../../worktrees/liveness.ts";
 import {
   readRepoConfig,
   type RepoConfigEntry,
@@ -267,10 +267,14 @@ function reapRepo(args: {
   // The loop above SKIPS named worktrees; when opted-in, surface the clean+stale
   // ones with their landed-signals so the user can review + explicitly apply-reap
   // (the destructive apply is user-driven — dotfiles named-worktree-reap --apply).
+  // SPAWN-3: the GATED enumerator withholds live / indeterminate /
+  // fresh-deep-activity rows (Decision 5 — NOT reapable), surfaced as excluded
+  // breadcrumbs so the report is honest about machine-withheld rows.
   if (isNamedWorktreeReapReportEnabled()) {
-    for (const c of namedWorktreeReapCandidates(repo.canonical, now, {
+    const gated = gatedNamedWorktreeReapCandidates(repo.canonical, now, {
       staleFloorMs: NAMED_WORKTREE_STALE_FLOOR_MS,
-    })) {
+    });
+    for (const c of gated.candidates) {
       appendPresenceFailure({
         timestamp: new Date().toISOString(),
         sessionId,
@@ -278,6 +282,16 @@ function reapRepo(args: {
         kind: "worktree-gc-named-reap-candidate",
         artifactPath: c.path,
         detail: `[${source}] named-reap CANDIDATE (report-only): ${formatNamedWorktreeReapCandidate(c, now)}`,
+      });
+    }
+    for (const ex of gated.excluded) {
+      appendPresenceFailure({
+        timestamp: new Date().toISOString(),
+        sessionId,
+        source: "dispatcher",
+        kind: "worktree-gc-named-reap-excluded",
+        artifactPath: ex.path,
+        detail: `[${source}] named-reap candidate WITHHELD (NOT reapable): ${ex.slug} — ${ex.reason}`,
       });
     }
   }
