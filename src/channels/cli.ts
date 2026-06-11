@@ -1134,6 +1134,34 @@ export async function runChannelsCli(
           );
         }
 
+        // Strict-wire send gate (#230 F2, completed): shared by the
+        // audit-ask and audit-verdict branches. The published wire contract
+        // requires EXACTLY ONE of target_pr or target_plan; parseAuditAskBody
+        // / parseAuditVerdictBody accept a pre-normalized 'target' field as
+        // an internal roundtrip convenience, so without this boundary check a
+        // target-only body would send — and pre-#230 readers return null on
+        // it (mixed-version cohort interop). die() exits; no return needed.
+        const requireWireTargetField = (gatedKind: string): void => {
+          let bodyRawObj: Record<string, unknown>;
+          try {
+            bodyRawObj = JSON.parse(body) as Record<string, unknown>;
+          } catch {
+            bodyRawObj = {};
+          }
+          if (!("target_pr" in bodyRawObj) && !("target_plan" in bodyRawObj)) {
+            die(
+              ctx,
+              `[send] ${gatedKind} body missing wire target field — the wire contract requires EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}. A body carrying only 'target' passes internal parsing but pre-#230 readers return null on it. Serialize the target via auditTargetToWire before sending.`,
+              {
+                code: 2,
+                category: "VALIDATION",
+                remediation:
+                  "Add target_pr or target_plan to the body JSON, or use auditTargetToWire to produce the correct wire shape.",
+              },
+            );
+          }
+        };
+
         // Tier 1 Slice 1 2026-05-19 — `audit-ask` validator gate
         // (parallel to digest above). Body must JSON.parse into the
         // AuditAskBody shape per src/channels/audit-ask.ts. Validating
@@ -1150,6 +1178,9 @@ export async function runChannelsCli(
                 "Run 'channels kinds' for the per-kind reference, or read docs/conventions/message-kinds-and-verification.md. Use inferAuditAskTier(loc, invariantRich) from claude-conductor/channels/api to compute the default tier.",
             },
           );
+        }
+        if (kind === "audit-ask") {
+          requireWireTargetField("audit-ask");
         }
 
         // Cycle 6 item-2 2026-05-29 — `poll` validator gate (parallel to
@@ -1197,29 +1228,9 @@ export async function runChannelsCli(
               },
             );
           }
-          // Strict-wire send gate (#230 D-MIG-1): the published wire contract
-          // requires EXACTLY ONE of target_pr or target_plan. The parser
-          // accepts a pre-normalized 'target' field as an internal roundtrip
-          // convenience; the send gate enforces the wire shape so pre-#230
-          // readers can parse the body in mixed-version cohorts.
-          let bodyRawObj: Record<string, unknown>;
-          try {
-            bodyRawObj = JSON.parse(body) as Record<string, unknown>;
-          } catch {
-            bodyRawObj = {};
-          }
-          if (!("target_pr" in bodyRawObj) && !("target_plan" in bodyRawObj)) {
-            die(
-              ctx,
-              `[send] audit-verdict body missing wire target field — the wire contract requires EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}. A body carrying only 'target' passes internal parsing but pre-#230 readers return null on it. Serialize the target via auditTargetToWire before sending.`,
-              {
-                code: 2,
-                category: "VALIDATION",
-                remediation:
-                  "Add target_pr or target_plan to the body JSON, or use auditTargetToWire to produce the correct wire shape.",
-              },
-            );
-          }
+          // Strict-wire send gate (#230 D-MIG-1, F2-completed): shared
+          // helper — see requireWireTargetField above the audit-ask gate.
+          requireWireTargetField("audit-verdict");
           // Substrate-class cross-edge-consumer-coverage gate. D5 (b2): plan
           // targets are NOT substrate-class (a design doc is not a code PR),
           // so the gate applies to PR targets only.

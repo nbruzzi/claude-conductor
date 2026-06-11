@@ -256,6 +256,7 @@ affects:
 **Reason:** The latent block-and-redeliver exposure is real even though all 4 observed entries were test residue. The per-channel isolation (unreadable → empty → normal pass() path) is the load-bearing fix; the outer-catch breadcrumb pollution is the observable symptom. Option B (defense-in-depth wrap in the deliverer) was captain-skipped at n=1. The test is also corrected: the wrong comment ("readChannelMessages swallows EACCES" — false when cursor is seeded) is fixed, and a no-outer-catch assertion is added (`readPresenceFailures(1000)` before/after count of `kind:unhandled` events).
 
 **Supersedes / superseded_by:** Additive behavior extension to `parseJsonlMessages` docstring + implementation. Does not supersede any prior decision.
+
 ## 2026-06-11 — Decision H: audit-target full migration fast-follow (PR #230)
 
 ```yaml

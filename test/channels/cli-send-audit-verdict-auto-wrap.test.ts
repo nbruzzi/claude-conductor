@@ -689,4 +689,82 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       expect(parsed.target).toEqual(CANONICAL_BODY.target);
     });
   });
+
+  describe("Section 5 — strict-wire send gate (#230 F2) rejection cells", () => {
+    // Non-vacuity: these are the delete-the-gate-reds witnesses. A body
+    // carrying only the pre-normalized 'target' passes schema parsing (the
+    // internal roundtrip convenience branch) but violates the published
+    // wire contract — the send boundary must reject it, else pre-#230
+    // readers null on the wire body in mixed-version cohorts.
+    function runSendKind(
+      channelId: string,
+      sendKind: string,
+      bodyFilePath: string,
+    ): RunResult {
+      const proc = Bun.spawnSync({
+        cmd: [
+          "bun",
+          CLI_PATH,
+          "send",
+          channelId,
+          sendKind,
+          "--body-file",
+          bodyFilePath,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDirAbs,
+          CLAUDE_CONDUCTOR_KEYS_DIR: keysDirAbs,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+        },
+      });
+      return {
+        exitCode: proc.exitCode ?? -1,
+        stdout: new TextDecoder().decode(proc.stdout),
+        stderr: new TextDecoder().decode(proc.stderr),
+      };
+    }
+
+    it("S5.1: target-only audit-verdict body → exit 2 VALIDATION, missing-wire-target error", async () => {
+      const channelId = "c-strict-wire-verdict";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      // String form bypasses writeBodyFile's auditTargetToWire spread —
+      // the body is schema-valid (target branch) but wire-invalid.
+      const bodyPath = writeBodyFile(JSON.stringify(CANONICAL_BODY));
+      const result = runSendKind(channelId, "audit-verdict", bodyPath);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(
+        "audit-verdict body missing wire target field",
+      );
+    });
+
+    it("S5.2: target-only audit-ask body → exit 2 VALIDATION, missing-wire-target error", async () => {
+      const channelId = "c-strict-wire-ask";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      const askBody = {
+        kind_version: 1,
+        target: { kind: "pr", repo: "conductor", number: 998 },
+        target_peer: "Alpha",
+        tier: "light-touch",
+        lens_set_requested: ["RE"],
+        audit_class: "inside-pair",
+      };
+      const bodyPath = writeBodyFile(JSON.stringify(askBody));
+      const result = runSendKind(channelId, "audit-ask", bodyPath);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(
+        "audit-ask body missing wire target field",
+      );
+    });
+  });
 });
