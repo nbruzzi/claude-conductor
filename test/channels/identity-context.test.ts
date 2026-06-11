@@ -11,36 +11,48 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { statSync } from "node:fs";
 
 import {
   archiveChannel,
   createChannel,
+  listChannels,
   touchHeartbeat,
 } from "../../src/channels/index.ts";
 import { claimIdentity } from "../../src/channels/identity.ts";
 import {
   getIdentityContextForSession,
   isPeerCoordinatedWithSelf,
+  sortIdentityContextsByChannelId,
+  type IdentityContext,
 } from "../../src/channels/identity-context.ts";
 
-const SANDBOX = `/tmp/test-identity-context-${process.pid}`;
+// §5 test-sandbox discipline: mkdtemp + tmpdir, NEVER /tmp+pid (this PR's own
+// rationale — macOS realpath divergence + shared-/tmp FS state). Assigned
+// per-test in sandbox(); starts empty so cleanup() is a no-op before test 1.
+let SANDBOX = "";
 const SESSION_A = "sess-ctx-a";
 const SESSION_B = "sess-ctx-b";
 const SESSION_C = "sess-ctx-c";
 
 function sandbox(): void {
   cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
+  SANDBOX = mkdtempSync(join(tmpdir(), "identity-context-"));
   process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
 }
 
 function cleanup(): void {
   delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
-  if (existsSync(SANDBOX)) rmSync(SANDBOX, { recursive: true, force: true });
+  if (SANDBOX && existsSync(SANDBOX))
+    rmSync(SANDBOX, { recursive: true, force: true });
 }
 
 describe("getIdentityContextForSession", () => {
@@ -360,3 +372,78 @@ function walk(root: string, dir: string, out: Record<string, number>): void {
     }
   }
 }
+
+describe("sortIdentityContextsByChannelId — deterministic channel order (readdir-flake fix)", () => {
+  const mkCtx = (channelId: string): IdentityContext => ({
+    channelId,
+    self: {
+      identity: "Alpha",
+      role: "pen",
+      joined_at: "2026-06-11T00:00:00.000Z",
+    },
+    peers: [],
+  });
+
+  it("reorders an arbitrary (readdir-order) input to channelId code-unit ASC — the cap-distribution determinism guarantee", () => {
+    // listChannels() returns readdirSync order (ext4 hash-order on Linux,
+    // sorted on APFS/macOS), so the deliverer's shared 50-message cap went to a
+    // filesystem-dependent channel — green locally, flaky on Linux CI (the
+    // "aggregate 50-cap" flake, 2026-06-11). A non-sorted input must still yield
+    // a deterministic channelId-asc processing order. (Self-non-vacuous: revert
+    // the sort in sortIdentityContextsByChannelId and this assertion fails.)
+    const input = [
+      mkCtx("test-ch-pmd-2"),
+      mkCtx("zzz-last"),
+      mkCtx("test-ch-pmd"),
+      mkCtx("aaa-first"),
+    ];
+    const out = sortIdentityContextsByChannelId(input).map((c) => c.channelId);
+    expect(out).toEqual([
+      "aaa-first",
+      "test-ch-pmd",
+      "test-ch-pmd-2",
+      "zzz-last",
+    ]);
+  });
+
+  it("is pure — does not mutate the input array", () => {
+    const input = [mkCtx("b"), mkCtx("a")];
+    const before = input.map((c) => c.channelId);
+    sortIdentityContextsByChannelId(input);
+    expect(input.map((c) => c.channelId)).toEqual(before);
+  });
+});
+
+describe("getIdentityContextForSession — sort WIRE witness (Charlie-F2)", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  it("APPLIES the sort: a descending-listChannels seed still yields channelId-asc (non-vacuous against a dropped sort call on EVERY platform)", async () => {
+    // The helper-only test proves the sort EXISTS; this proves getIdentity-
+    // ContextForSession APPLIES it at the return. Seed listChannels in an EXPLICIT
+    // descending order via the test seam, so the input is non-ascending regardless
+    // of platform readdir (macOS sorts, Linux hash-orders — relying on those would
+    // be vacuous on the wrong layout). The public function must still return
+    // channelId-ASC; drop the sort call at the return and this reds
+    // deterministically everywhere (descending != ascending for two distinct ids).
+    await createChannel({
+      channelId: "a-ch",
+      handoffId: "a-ch",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "a-ch", sessionId: SESSION_A });
+    await createChannel({
+      channelId: "z-ch",
+      handoffId: "z-ch",
+      sessionId: SESSION_A,
+    });
+    await claimIdentity({ channelId: "z-ch", sessionId: SESSION_A });
+
+    const out = getIdentityContextForSession(SESSION_A, () =>
+      [...listChannels()].sort((x, y) =>
+        x.id < y.id ? 1 : x.id > y.id ? -1 : 0,
+      ),
+    );
+    expect(out.map((c) => c.channelId)).toEqual(["a-ch", "z-ch"]);
+  });
+});

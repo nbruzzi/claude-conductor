@@ -2549,3 +2549,31 @@ affects:
 **Verification:** typecheck + format + lint clean; 87 tests pass (28 pre-existing reaper tests + 1 new G3 parity test + 6 new shared-helper unit tests + pre-existing index.test.ts suite). Design pre-ratified 3/3 (Bravo SHIP-CLEAN / Charlie RATIFY w-absorbed-fold / Delta RATIFY CLEAN) per roadmap `reconcile-boot-close-out-roadmap-2026-06-11.md`. Mandatory 2-lens gate (Bravo Opus 4.8 + Charlie Fable 5) on the PR diff before merge.
 
 — G3 authored by Golf (Sonnet 4.6); mandatory lens: Bravo (Opus 4.8) + Charlie (Fable 5).
+
+---
+
+## CI-flake fix — deterministic channel order in `getIdentityContextForSession` (2026-06-11)
+
+```yaml
+---
+ts: 2026-06-11T14:45:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects: [src/channels/identity-context.ts]
+---
+```
+
+**Symptom:** main-CI red on `peer-message-deliverer.test.ts` "aggregate 50-cap shared across channels" (run 27353139527 + the `--failed` rerun). Test dormant-green for 11 main runs (introduced 2026-05-14), then 3-of-5 failures clustered at SHAs containing the G3 test files; locally unreproducible (macOS).
+
+**Root cause (confirmed at the line):** `listChannels()` (`src/channels/index.ts:2533`) returns channels in `readdirSync` order — UNSORTED. `getIdentityContextForSession` propagated that order, and `peer-message-deliverer` applies its shared 50-message cap by decrementing `remaining` across channels in iteration order — so WHICH channel wins the budget was readdir-order-dependent. readdir order is filesystem-dependent: sorted on APFS/macOS (verified by probe), ext4 hash-order on Linux. The test assumed CH1 (`test-ch-pmd`) before CH2 (`test-ch-pmd-2`) — true locally, flaky on Linux. G3's 5+ real-git subprocesses + the test's `/tmp`-pid sandbox were AMPLIFIERS (timing/FS-state shift), NOT the cause — the identical-SHA pass/fail pair proved pure nondeterminism, not a G3 code defect.
+
+**Fix:** deterministic `channelId` code-unit-asc sort in `getIdentityContextForSession` (extracted pure `sortIdentityContextsByChannelId` helper, applied at the single return). Makes the cap distribution + the operator-facing block order reproducible cross-platform. `peer-message-deliverer` is the one order-DEPENDENT consumer; the other FOUR are order-INSENSITIVE (line-verified by 3 lenses): `isPeerCoordinatedWithSelf` (set-membership), `teammate-idle-reminder` + `identity-injector` (per-channel emit, no shared cap — block order cosmetic), `task-coordinator` (commutative role-filter, hard-block wins — bullet order cosmetic). The channelId-asc ORDER CONTRACT is pinned on `getIdentityContextForSession`'s PUBLIC JSDoc (not only the private helper) so a future consumer cannot silently re-depend on readdir or strip the sort. Order-pinning the test was REJECTED (symptom-masking); recency-ordering DEFERRED. Bundled hygiene: migrated BOTH affected test sandboxes from `/tmp/test-...-${pid}` → `mkdtemp(tmpdir())` per OPERATING-MANUAL §5.
+
+**Files changed:** `src/channels/identity-context.ts` (sort helper, applied at the return; public ORDER CONTRACT JSDoc pin; `listChannelsFn` test seam); `test/channels/identity-context.test.ts` (non-vacuous determinism unit test + WIRE-witness test [seeded-descending listChannels → asserts ascending output; reds on a dropped sort call every platform] + mkdtemp migration); `test/hooks/checks/peer-message-deliverer.test.ts` (mkdtemp migration).
+
+**Verification:** full `bun run ci-local` green — all gates PASS, 0 fail across the suite, coverage ≥ 84% floor. TWO non-vacuity proofs confirmed: the helper test reds when the sort logic is reverted; the WIRE-witness test reds when the sort call at the return is dropped (the #222 structural-pin class). 2-lens: Charlie (Fable 5) SHIP-WITH-FOLDS B0 + Delta (Opus 4.8) SHIP-WITH-FOLDS B0 + Golf supplementary B0; PR-CI green ×2 (runs 27356184346 + 27356230932, exit-reliable). Main-CI green = the unlock for #226 mark-shipped + Golf slice-4.
+
+**Follow-up (BACKLOG, trigger = a future order-dependent `listChannels` consumer):** `listChannels` itself stays UNSORTED at source (readdir order); the sort is scoped to `getIdentityContextForSession` (surgical, right for this red-main hotfix). Close the latent class deliberately when it triggers — either lift the sort into `listChannels` at source OR pin an explicit "UNSORTED — sort at your consumer if order-dependent" clause on `listChannels`' JSDoc. (Charlie #227 nit; Foxtrot-ruled to backlog.)
+
+— flake-fix root-caused + authored by Bravo (Opus 4.8); lens: Charlie (Fable 5) + Delta (Opus 4.8) + Golf supplementary.

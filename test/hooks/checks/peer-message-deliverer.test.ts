@@ -32,10 +32,12 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { check } from "../../../src/hooks/checks/peer-message-deliverer.ts";
@@ -56,7 +58,12 @@ import {
 import { generateKeypair } from "../../../src/channels/key-surface.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
-const SANDBOX = `/tmp/test-peer-message-deliverer-${process.pid}`;
+// §5 test-sandbox discipline: mkdtemp + tmpdir, NEVER /tmp+pid. The prior
+// `/tmp/test-...-${pid}` form hit the macOS /tmp->/private/tmp realpath
+// divergence + shared-/tmp FS state — itself a readdir-order amplifier for the
+// 50-cap flake this PR fixes. Assigned per-test in sandbox() (unique +
+// realpath-stable); starts empty so cleanup() is a no-op before the first test.
+let SANDBOX = "";
 const SESSION_SELF = "11111111-1111-4111-8111-111111111111";
 const SESSION_BRAVO = "22222222-2222-4222-8222-222222222222";
 const SESSION_CHARLIE = "33333333-3333-4333-8333-333333333333";
@@ -78,13 +85,13 @@ const BARE_CLOSE = `${LT}${SLASH}`;
 
 function sandbox(): void {
   cleanup();
-  mkdirSync(SANDBOX, { recursive: true });
+  SANDBOX = mkdtempSync(join(tmpdir(), "peer-message-deliverer-"));
   process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"] = SANDBOX;
 }
 
 function cleanup(): void {
   delete process.env["CLAUDE_CONDUCTOR_CHANNELS_DIR"];
-  if (existsSync(SANDBOX)) {
+  if (SANDBOX && existsSync(SANDBOX)) {
     // Restore perms before rm (failure-handling test may chmod 000 below).
     try {
       chmodSync(SANDBOX, 0o755);

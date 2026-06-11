@@ -43,6 +43,7 @@ import {
   listChannels,
   readMetadata,
   type ChannelRole,
+  type ChannelSummary,
   type IdentityClaim,
 } from "./index.ts";
 import type { NatoIdentity } from "./identity.ts";
@@ -79,15 +80,29 @@ const SOURCE = "channels-identity" as const;
  * `metadata.identities`. Channels with no claim (or a corrupt metadata
  * file) are silently skipped — consumers see only the channels they're
  * actually a participant in.
+ *
+ * ORDER CONTRACT (load-bearing): the returned contexts are sorted
+ * DETERMINISTICALLY by `channelId` (code-unit asc) via
+ * {@link sortIdentityContextsByChannelId}, NOT in `listChannels()` readdir order
+ * (which is filesystem-dependent — sorted on APFS, ext4 hash-order on Linux). An
+ * order-DEPENDENT consumer may rely on this stable order; `peer-message-deliverer`
+ * does (its shared 50-message cap is distributed by iteration order, so a
+ * readdir-order regression re-introduces the cross-platform flake fixed
+ * 2026-06-11). Do NOT strip the sort call at the return. See `decisions/phase-3.md`.
+ *
+ * @param listChannelsFn test seam (defaults to {@link listChannels}) — lets a
+ *   wiring-witness test feed a deliberately-unsorted channel list to prove the
+ *   sort is APPLIED here, not merely defined on the helper.
  */
 export function getIdentityContextForSession(
   sessionId: string,
+  listChannelsFn: () => ChannelSummary[] = listChannels,
 ): readonly IdentityContext[] {
   if (!sessionId) return [];
 
   let summaries;
   try {
-    summaries = listChannels();
+    summaries = listChannelsFn();
   } catch (err: unknown) {
     appendPresenceFailure({
       timestamp: new Date().toISOString(),
@@ -106,7 +121,43 @@ export function getIdentityContextForSession(
     const ctx = buildContextForChannel(summary.id, sessionId);
     if (ctx !== null) contexts.push(ctx);
   }
-  return contexts;
+  return sortIdentityContextsByChannelId(contexts);
+}
+
+/**
+ * Deterministic channel ordering for the identity-context list: code-unit
+ * (locale-independent) ascending by `channelId`.
+ *
+ * Why this exists — `listChannels()` returns channels in `readdirSync` order,
+ * which is filesystem-dependent: sorted on APFS/macOS, ext4 hash-order on Linux.
+ * Any ORDER-DEPENDENT consumer of {@link getIdentityContextForSession} is then
+ * nondeterministic across platforms. The lived instance: `peer-message-deliverer`
+ * applies a 50-message emission cap by decrementing a shared `remaining` across
+ * channels in iteration order, so WHICH channel wins the budget was
+ * readdir-order-dependent — green on macOS, flaky on Linux CI (the "aggregate
+ * 50-cap shared across channels" flake; 2026-06-11). Sorting here makes the
+ * channel order — and therefore the cap distribution + the operator-facing block
+ * order — reproducible on every platform. `channelId`-asc is the minimal
+ * deterministic key; a recency-first ordering is a deferred UX enhancement (it
+ * would reintroduce a timing input needing its own tiebreak — determinism is the
+ * requirement, recency is a nice-to-have).
+ *
+ * Pure + non-mutating (returns a new array) so it is directly unit-testable.
+ *
+ * The peer-message-deliverer is the one order-DEPENDENT consumer (the shared
+ * 50-cap). The other FOUR consumers are order-INSENSITIVE (line-verified by 3
+ * lenses 2026-06-11): {@link isPeerCoordinatedWithSelf} (set-membership),
+ * teammate-idle-reminder + identity-injector (per-channel emit, no shared cap —
+ * block order cosmetic), task-coordinator (commutative role-filter, hard-block
+ * wins — bullet order cosmetic). So a stable order is harmless-to-beneficial for
+ * all of them, and load-bearing for the deliverer.
+ */
+export function sortIdentityContextsByChannelId(
+  contexts: readonly IdentityContext[],
+): IdentityContext[] {
+  return [...contexts].sort((a, b) =>
+    a.channelId < b.channelId ? -1 : a.channelId > b.channelId ? 1 : 0,
+  );
 }
 
 function buildContextForChannel(
