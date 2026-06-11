@@ -443,7 +443,7 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
   // compat with kind_version: 1 bodies pre-dating the field. Parser
   // tolerates absent (treated as undefined); rejects present-but-wrong-
   // shape. Send-time validation in cli.ts enforces non-empty for
-  // substrate-class PRs per isSubstrateClassPR(target_pr).
+  // substrate-class PR targets per isSubstrateClassTarget(target); plan targets exempt.
   const crossEdgeRaw = obj["cross_edge_consumers_verified"];
   let crossEdgeConsumersVerified: readonly string[] | undefined;
   if (crossEdgeRaw === undefined) {

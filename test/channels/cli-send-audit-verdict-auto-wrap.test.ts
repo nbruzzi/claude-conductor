@@ -38,6 +38,7 @@ import {
   AUDIT_VERDICT_PAYLOAD_TYPE,
   parseDsseEnvelope,
 } from "../../src/channels/audit-signature-chain.ts";
+import { auditTargetToWire } from "../../src/channels/audit-types.ts";
 import type { AuditVerdictBody } from "../../src/channels/audit-verdict.ts";
 
 function unwrap<T>(value: T | null | undefined, label = "value"): T {
@@ -137,7 +138,11 @@ function writeBodyFile(body: AuditVerdictBody | string): string {
     testTmpDir,
     `body-${Math.random().toString(36).slice(2, 10)}.json`,
   );
-  const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
+  // Spread wire target fields so the strict-wire send gate (#230 F2) passes.
+  const bodyStr =
+    typeof body === "string"
+      ? body
+      : JSON.stringify({ ...body, ...auditTargetToWire(body.target) });
   writeFileSync(bodyPath, bodyStr);
   return bodyPath;
 }

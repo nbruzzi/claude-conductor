@@ -125,9 +125,8 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
     if (bodyRaw === null) continue;
     const body = parseAuditVerdictBodyAnyVersion(bodyRaw);
     if (body === null) continue;
-    // b2: the reciprocation graph is PR-only for now; plan-target verdicts are
-    // deferred to the full-migration fast-follow (Golf's b2 map) — skip them
-    // (not dropped from the channel, only from the auto-reciprocation graph).
+    // PR-only by design per #230 D-MIG-3; generalize if a plan-reciprocation
+    // consumer surfaces (not dropped from the channel, only from the graph).
     if (body.target.kind !== "pr") continue;
     edges.push({
       ts: m.ts,
