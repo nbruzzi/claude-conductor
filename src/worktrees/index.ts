@@ -326,7 +326,7 @@ export function removeWorktreeByPath(
  *
  * RE-2 caller-side guard (see `removeWorktree`'s JSDoc): `removeWorktree` uses
  * `--force` and trusts the caller to refuse on WIP. This is that refusal probe;
- * `dotfiles-worktree-gc`'s `guardReason` consults it before reaping.
+ * `worktreeReapGuard` in both reapers consults it before reaping.
  */
 export function worktreeUncommittedPaths(
   worktreePath: string,
