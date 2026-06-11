@@ -743,4 +743,47 @@ describe("channels-gc-reaper sealed-archive prune (Slice 4)", () => {
     );
     expect(result.stdout).toContain("seqs=[1,2,3]");
   });
+
+  it("prunes stale archives on the coordination channel (coordination is GC-EXEMPT as a channel; its sealed archives ARE prunable by design)", async () => {
+    await makeChannel(COORDINATION_CHANNEL_ID);
+    // 5 archives on the coordination channel: seqs 1+2 stale (candidates),
+    // seqs 3+4+5 fresh (keep-floor, also within TTL).
+    const stale1 = plantArchive(COORDINATION_CHANNEL_ID, 1, STALE_S);
+    const stale2 = plantArchive(COORDINATION_CHANNEL_ID, 2, STALE_S);
+    const fresh3 = plantArchive(COORDINATION_CHANNEL_ID, 3, FRESH_S);
+    const fresh4 = plantArchive(COORDINATION_CHANNEL_ID, 4, FRESH_S);
+    const fresh5 = plantArchive(COORDINATION_CHANNEL_ID, 5, FRESH_S);
+
+    const result = await check(inputFor());
+
+    expect(existsSync(stale1)).toBe(false);
+    expect(existsSync(stale2)).toBe(false);
+    expect(existsSync(fresh3)).toBe(true);
+    expect(existsSync(fresh4)).toBe(true);
+    expect(existsSync(fresh5)).toBe(true);
+    expect(result.stdout).toContain(
+      `pruned 2 sealed archive(s) channel=${COORDINATION_CHANNEL_ID}`,
+    );
+    expect(result.stdout).toContain("seqs=[1,2]");
+  });
+
+  it("second run after a prune does not emit 'pruned' (idempotent — no double-prune)", async () => {
+    await makeChannel("arc-idem");
+    // 5 archives: seqs 1+2 stale (pruned on first run), seqs 3+4+5 fresh.
+    plantArchive("arc-idem", 1, STALE_S);
+    plantArchive("arc-idem", 2, STALE_S);
+    plantArchive("arc-idem", 3, FRESH_S);
+    plantArchive("arc-idem", 4, FRESH_S);
+    plantArchive("arc-idem", 5, FRESH_S);
+
+    // First run prunes seqs 1+2.
+    const first = await check(inputFor());
+    expect(first.stdout).toContain(
+      "pruned 2 sealed archive(s) channel=arc-idem",
+    );
+
+    // Second run: only 3 archives remain (at the keep-N floor) — nothing prunable.
+    const second = await check(inputFor());
+    expect(second.stdout).not.toContain("pruned");
+  });
 });

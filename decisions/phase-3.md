@@ -2596,10 +2596,12 @@ affects: [src/hooks/checks/channels-gc-reaper.ts]
 
 **Policy:** 30-day TTL + keep-newest-3 floor. An archive is eligible for pruning only when its mtime is older than 30 days AND it is not in the 3 highest-sequence (newest) archives for its channel. The keep-3 floor provides a recovery floor on slow-rotating channels where all archives happen to be stale.
 
+**Channel boundary:** `coordination` (`COORDINATION_CHANNEL_ID`) is GC-EXEMPT as a channel (the reaper skips archived/unreachable channels in the outer loop), but its sealed archives ARE prunable by design — `pruneSealedArchives` reaches them on every eligible `reapChannel()` call with no exemption inside the prune path. The eternal coordination channel (~288 bumps/day) is the primary use-case this sweep was designed to address.
+
 **Verifiability-horizon truncation (by design):** pruning removes archive files that some consumers require for full-history reads. Any consumer that spans the rotation boundary — `readMessages(id, { includeArchive: true })` callers, `listChannelArchiveFilePaths(channelDir)` users, the verdict-signature-chain verifier (`:1884-1886`), the chain constructor, and the analytics / cursor / tail readers (`:1921-1932`) — will have a truncated view of history for messages older than the retained archives. This is intentional GC. The reaper breadcrumb carries pruned SEQs so consumers can detect the horizon boundary.
 
 **Implementation:** `pruneSealedArchives(channelId)` added to `channels-gc-reaper.ts`; called from `reapChannel()` after `rotateChannelMessages`. Uses `withMetadataLock` to serialize against concurrent rotations. Breadcrumb on failed unlink; ENOENT silently skipped (idempotent).
 
-**Files changed:** `src/hooks/checks/channels-gc-reaper.ts` (import `listChannelArchiveFilePaths`; constants; `pruneSealedArchives`; call site); `test/hooks/checks/channels-gc-reaper.test.ts` (4 new tests). 2-lens gate: Bravo (Opus 4.8) + Charlie (Fable 5).
+**Files changed:** `src/hooks/checks/channels-gc-reaper.ts` (import `listChannelArchiveFilePaths`; constants; `pruneSealedArchives`; call site; coordination boundary JSDoc); `decisions/phase-3.md` (this entry, coordination boundary clause); `test/hooks/checks/channels-gc-reaper.test.ts` (4 original tests + 2 fold-F1 tests: COORDINATION_CHANNEL_ID prune + idempotency). 2-lens gate: Bravo (Opus 4.8) SHIP-CLEAN B0/F0/N0 + Charlie (Fable 5) SHIP-WITH-FOLDS B0/F1/N2 → fold-union F1-only (Foxtrot ruling 15:58).
 
 — authored by Golf (Sonnet 4.6).

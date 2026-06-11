@@ -844,6 +844,14 @@ function runRaceDetectionBreadcrumb(
  * the `KEEP_N` floor preserves the highest-seq entries. A channel with ≤3
  * archives is never pruned — the floor fully covers it.
  *
+ * **Channel boundary:** `coordination` (`COORDINATION_CHANNEL_ID`) is
+ * GC-EXEMPT as a channel (the outer reaper loop skips archived/unreachable
+ * channels; see the loop guard at the top of `reapChannel`), but its sealed
+ * archives ARE prunable by design — this function reaches them on every
+ * eligible `reapChannel()` call and no exemption exists inside the prune path.
+ * The eternal coordination channel (~288 bumps/day) is the primary use-case
+ * this sweep was designed to address.
+ *
  * **Verifiability-horizon truncation:** pruning removes archive files that
  * some consumers REQUIRE for their full-history view. Any consumer that spans
  * the rotation boundary — `readMessages(id, { includeArchive: true })`
