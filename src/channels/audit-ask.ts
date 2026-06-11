@@ -34,7 +34,6 @@
  */
 
 import {
-  auditTargetToWire,
   isAuditAskTier,
   isAuditClass,
   isLensClassArray,
@@ -58,20 +57,14 @@ export type AuditAskBody = {
   kind_version: 1;
   /**
    * The artifact being audited — a PR or a plan (D2 discriminated union).
-   * Canonical field; new code switches on `target.kind`. The wire carries
-   * exactly one of `target_pr` / `target_plan`; the parser normalizes them.
+   * Canonical field; consumers switch on `target.kind`. The wire carries
+   * exactly one of `target_pr` / `target_plan`; the parser normalizes them
+   * to this field. Wire serialization goes back through `auditTargetToWire`.
    *
    * N3 disposition: known-repo enumeration is audit-context-fetch concern
    * (deferred Tier 3-D pattern-trace), not schema-layer.
    */
   target: AuditTarget;
-  /**
-   * Transitional PR-only mirror — present iff `target.kind === "pr"`. The
-   * deferred automation consumers (queue / quorum / reciprocation) read this
-   * until the full-migration fast-follow removes it; new code uses `target`.
-   * (b2 audit-target generalization — right-sized additive cut.)
-   */
-  target_pr?: { repo: string; number: number };
   /**
    * The peer being asked to audit. Non-empty (post-trim) string;
    * typically a NATO identity name: `Alpha`, `Bravo`, `Charlie`, `Delta`.
@@ -166,11 +159,6 @@ export function parseAuditAskBody(body: string): AuditAskBody | null {
   return {
     kind_version: 1,
     target,
-    // Wire target mirror (D1 additive): emit target_pr (pr) OR target_plan
-    // (plan) so the body roundtrips through canonicalJson -> parse. The
-    // deferred automation consumers (queue / quorum / reciprocation) still
-    // read target_pr until the full-migration fast-follow.
-    ...auditTargetToWire(target),
     target_peer: targetPeer.trim(),
     tier,
     lens_set_requested: lensSet,

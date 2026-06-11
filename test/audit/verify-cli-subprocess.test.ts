@@ -113,7 +113,6 @@ function appendChannelMessage(msg: Record<string, unknown>): void {
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 999 },
-  target_pr: { repo: "conductor", number: 999 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
   audit_class: "inside-pair",
@@ -252,7 +251,7 @@ describe("audit verify CLI subprocess — Section 1: clean-v3-chain fixture", ()
     const prev1Hash = await computePayloadHash(env1.payload);
     const body2: AuditVerdictBody = {
       ...CANONICAL_BODY,
-      target_pr: { repo: "conductor", number: 1000 },
+      target: { kind: "pr", repo: "conductor", number: 1000 },
       prev_audit_body_ref: prev1Hash,
     };
     const env2Json = await wrapAuditVerdictBody(body2, priv, "charlie");
@@ -269,7 +268,7 @@ describe("audit verify CLI subprocess — Section 1: clean-v3-chain fixture", ()
     const prev2Hash = await computePayloadHash(env2.payload);
     const body3: AuditVerdictBody = {
       ...CANONICAL_BODY,
-      target_pr: { repo: "conductor", number: 1001 },
+      target: { kind: "pr", repo: "conductor", number: 1001 },
       prev_audit_body_ref: prev2Hash,
     };
     const env3Json = await wrapAuditVerdictBody(body3, priv, "charlie");
@@ -318,7 +317,7 @@ describe("audit verify CLI subprocess — Section 2: broken-chain fixture", () =
     const wrongHash = "0".repeat(64);
     const body2: AuditVerdictBody = {
       ...CANONICAL_BODY,
-      target_pr: { repo: "conductor", number: 1002 },
+      target: { kind: "pr", repo: "conductor", number: 1002 },
       prev_audit_body_ref: wrongHash,
     };
     const env2Json = await wrapAuditVerdictBody(body2, priv, "charlie");

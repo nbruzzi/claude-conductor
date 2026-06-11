@@ -19,7 +19,7 @@
 import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
 import type { AuditClass, AuditVerdict } from "../channels/audit-types.ts";
 import type { ChannelMessage } from "../channels/index.ts";
-import { isSubstrateClassPR } from "../channels/substrate-class.ts";
+import { isSubstrateClassTarget } from "../channels/substrate-class.ts";
 
 /**
  * A single audit edge — one auditor-to-target verdict in the window.
@@ -205,7 +205,7 @@ export function buildReciprocationGraph(args: BuildArgs): ReciprocationGraph {
     { with_consumers: number; total_substrate_class: number }
   > = {};
   for (const e of edges) {
-    if (!isSubstrateClassPR(e.target_pr)) continue;
+    if (!isSubstrateClassTarget({ kind: "pr", ...e.target_pr })) continue;
     if (e.cross_edge_consumers_verified === undefined) continue;
     const entry = coverage[e.auditor_identity] ?? {
       with_consumers: 0,

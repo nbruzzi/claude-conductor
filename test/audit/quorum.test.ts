@@ -43,7 +43,6 @@ function bodyJson(over: Partial<AuditVerdictBody>): string {
   const base: AuditVerdictBody = {
     kind_version: 1,
     target: { kind: "pr", repo: "claude-conductor", number: 200 },
-    target_pr: { repo: "claude-conductor", number: 200 },
     target_peer: "Author",
     lens_set_applied: ["RE"],
     audit_class: "cross-pair-shadow",
@@ -81,7 +80,11 @@ describe("computeAuditQuorum — defaults sanity", () => {
 });
 
 describe("computeAuditQuorum — conjunction", () => {
-  const targetPr = { repo: "claude-conductor", number: 200 };
+  const targetPr = {
+    kind: "pr" as const,
+    repo: "claude-conductor",
+    number: 200,
+  };
 
   it("passes with >=3 lenses across >=2 distinct auditors", () => {
     const messages = [
@@ -92,7 +95,7 @@ describe("computeAuditQuorum — conjunction", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: targetPr,
+      target: targetPr,
     });
     expect(r.ok).toBe(true);
     expect(r.shortfalls).toEqual([]);
@@ -110,7 +113,7 @@ describe("computeAuditQuorum — conjunction", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: targetPr,
+      target: targetPr,
     });
     expect(r.ok).toBe(false);
     expect(r.distinct_lenses).toEqual(["RE"]);
@@ -130,7 +133,7 @@ describe("computeAuditQuorum — conjunction", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: targetPr,
+      target: targetPr,
     });
     expect(r.ok).toBe(false);
     expect(r.distinct_lenses.length).toBeGreaterThanOrEqual(DEFAULT_MIN_LENSES);
@@ -154,7 +157,7 @@ describe("computeAuditQuorum — self-audit exclusion", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.verdicts_considered).toBe(0);
     expect(r.self_audits_excluded).toBe(1);
@@ -174,7 +177,7 @@ describe("computeAuditQuorum — self-audit exclusion", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.self_audits_excluded).toBe(1);
     expect(r.distinct_auditors).toEqual(["Alpha", "Bravo", "Delta"]);
@@ -187,17 +190,17 @@ describe("computeAuditQuorum — target_pr matching", () => {
     const messages = [
       verdictMsg("Alpha", {
         lens_set_applied: ["RE"],
-        target_pr: { repo: "claude-conductor", number: 999 },
+        target: { kind: "pr", repo: "claude-conductor", number: 999 },
       }),
       verdictMsg("Bravo", {
         lens_set_applied: ["Architecture"],
-        target_pr: { repo: "claude-conductor", number: 999 },
+        target: { kind: "pr", repo: "claude-conductor", number: 999 },
       }),
     ];
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.verdicts_considered).toBe(0);
   });
@@ -206,22 +209,26 @@ describe("computeAuditQuorum — target_pr matching", () => {
     const messages = [
       verdictMsg("Alpha", {
         lens_set_applied: ["RE"],
-        target_pr: { repo: "claude-conductor", number: 200 },
+        target: { kind: "pr", repo: "claude-conductor", number: 200 },
       }),
       verdictMsg("Bravo", {
         lens_set_applied: ["Architecture"],
-        target_pr: { repo: "owner/claude-conductor", number: 200 },
+        target: { kind: "pr", repo: "owner/claude-conductor", number: 200 },
       }),
       verdictMsg("Delta", {
         lens_set_applied: ["TA"],
-        target_pr: { repo: "claude-conductor", number: 200 },
+        target: { kind: "pr", repo: "claude-conductor", number: 200 },
       }),
     ];
     // Query with the owner-prefixed form; all three should match.
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "owner/claude-conductor", number: 200 },
+      target: {
+        kind: "pr" as const,
+        repo: "owner/claude-conductor",
+        number: 200,
+      },
     });
     expect(r.verdicts_considered).toBe(3);
     expect(r.ok).toBe(true);
@@ -248,7 +255,7 @@ describe("computeAuditQuorum — body_ref hydration", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: bodies,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     // If body_ref hydration failed, Alpha would be dropped => only 2
     // auditors / 2 lenses => fail. ok===true proves it was counted.
@@ -263,7 +270,7 @@ describe("computeAuditQuorum — configurable thresholds", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
       options: { minLenses: 1, minAuditors: 1 },
     });
     expect(r.min_lenses).toBe(1);
@@ -277,7 +284,7 @@ describe("computeAuditQuorum — degenerate input", () => {
     const r = computeAuditQuorum({
       messages: [],
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.ok).toBe(false);
     expect(r.verdicts_considered).toBe(0);
@@ -311,7 +318,7 @@ describe("computeAuditQuorum — degenerate input", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.verdicts_considered).toBe(0);
     expect(r.ok).toBe(false);
@@ -330,7 +337,6 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const base: AuditVerdictBody = {
       kind_version: 1,
       target: { kind: "pr", repo: "claude-conductor", number: 200 },
-      target_pr: { repo: "claude-conductor", number: 200 },
       target_peer: "Author",
       lens_set_applied: ["RE"],
       audit_class: "cross-pair-shadow",
@@ -374,7 +380,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     // Pre-fix, parseAuditVerdictBody returns null on a DSSE envelope, so all
     // three would be skipped (verdicts_considered 0, ok false). The dual-
@@ -397,7 +403,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.verdicts_considered).toBe(3);
     expect(r.ok).toBe(true);
@@ -414,7 +420,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     // Self-audit exclusion must read the INNER (unwrapped) body's target_peer.
     expect(r.self_audits_excluded).toBe(1);
@@ -436,7 +442,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
       options: { requireSigned: true },
     });
     expect(r.require_signed).toBe(true);
@@ -461,7 +467,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
       // Index 1 (Bravo) is the failed-chain entry verify.ts would report.
       options: { requireSigned: true, brokenSignatureSeqs: new Set([1]) },
     });
@@ -481,7 +487,7 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     expect(r.require_signed).toBe(false);
     expect(r.unsigned_excluded).toBe(0);
@@ -490,7 +496,11 @@ describe("computeAuditQuorum — v0.3 DSSE-wrapped (signed) verdicts", () => {
 });
 
 describe("computeAuditQuorum — --pr-author independence (OBS-B1)", () => {
-  const targetPr = { repo: "claude-conductor", number: 200 };
+  const targetPr = {
+    kind: "pr" as const,
+    repo: "claude-conductor",
+    number: 200,
+  };
 
   it("excludes verdicts authored by the PR author (even when addressed elsewhere)", () => {
     const messages = [
@@ -513,7 +523,7 @@ describe("computeAuditQuorum — --pr-author independence (OBS-B1)", () => {
     const r = computeAuditQuorum({
       messages,
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: targetPr,
+      target: targetPr,
       options: { prAuthor: "Author" },
     });
     expect(r.pr_author).toBe("Author");
@@ -531,7 +541,7 @@ describe("computeAuditQuorum — --pr-author independence (OBS-B1)", () => {
         }),
       ],
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: targetPr,
+      target: targetPr,
     });
     expect(r.pr_author).toBeNull();
     expect(r.pr_author_audits_excluded).toBe(0);
@@ -548,11 +558,11 @@ describe("renderQuorumHuman", () => {
         verdictMsg("Delta", { lens_set_applied: ["TA"] }),
       ],
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     const text = renderQuorumHuman(r);
     expect(text).toContain("ok: true");
-    expect(text).toContain("target_pr: claude-conductor#200");
+    expect(text).toContain("target: pr:claude-conductor#200");
     expect(text).toContain("distinct_lenses: 3");
     expect(text).toContain("distinct_auditors: 3");
   });
@@ -561,10 +571,107 @@ describe("renderQuorumHuman", () => {
     const r = computeAuditQuorum({
       messages: [verdictMsg("Solo", { lens_set_applied: ["RE"] })],
       bodies_by_ref: EMPTY_BODIES,
-      target_pr: { repo: "claude-conductor", number: 200 },
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
     });
     const text = renderQuorumHuman(r);
     expect(text).toContain("ok: false");
     expect(text).toContain("shortfall:");
+  });
+});
+
+describe("computeAuditQuorum — plan targets (b2 generalization)", () => {
+  const PLAN_REF = "my-plan.md";
+
+  function planVerdictMsg(
+    identity: string,
+    over: Omit<Partial<AuditVerdictBody>, "target"> = {},
+  ): ChannelMessage {
+    return verdictMsg(identity, {
+      target: { kind: "plan" as const, ref: PLAN_REF },
+      ...over,
+    });
+  }
+
+  it("3 distinct plan verdicts on same ref reach quorum", () => {
+    const r = computeAuditQuorum({
+      messages: [
+        planVerdictMsg("Alpha", { lens_set_applied: ["RE"] as const }),
+        planVerdictMsg("Bravo", {
+          lens_set_applied: ["Architecture"] as const,
+        }),
+        planVerdictMsg("Delta", { lens_set_applied: ["TA"] as const }),
+      ],
+      bodies_by_ref: EMPTY_BODIES,
+      target: { kind: "plan" as const, ref: PLAN_REF },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.distinct_auditors).toHaveLength(3);
+    expect(r.distinct_lenses).toHaveLength(3);
+  });
+
+  it("plan verdicts do NOT count toward a PR quorum query (non-vacuous)", () => {
+    const r = computeAuditQuorum({
+      messages: [
+        planVerdictMsg("Alpha", { lens_set_applied: ["RE"] as const }),
+        planVerdictMsg("Bravo", {
+          lens_set_applied: ["Architecture"] as const,
+        }),
+        planVerdictMsg("Delta", { lens_set_applied: ["TA"] as const }),
+      ],
+      bodies_by_ref: EMPTY_BODIES,
+      target: { kind: "pr" as const, repo: "claude-conductor", number: 200 },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.distinct_auditors).toHaveLength(0);
+  });
+
+  it("PR verdicts do NOT count toward a plan quorum query (non-vacuous)", () => {
+    const r = computeAuditQuorum({
+      messages: [
+        verdictMsg("Alpha", { lens_set_applied: ["RE"] as const }),
+        verdictMsg("Bravo", { lens_set_applied: ["Architecture"] as const }),
+        verdictMsg("Delta", { lens_set_applied: ["TA"] as const }),
+      ],
+      bodies_by_ref: EMPTY_BODIES,
+      target: { kind: "plan" as const, ref: PLAN_REF },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.distinct_auditors).toHaveLength(0);
+  });
+
+  it("plan verdict on different ref does NOT count toward this plan's quorum", () => {
+    const r = computeAuditQuorum({
+      messages: [
+        verdictMsg("Alpha", {
+          target: { kind: "plan" as const, ref: "other-plan.md" },
+          lens_set_applied: ["RE"] as const,
+        }),
+        planVerdictMsg("Bravo", {
+          lens_set_applied: ["Architecture"] as const,
+        }),
+        planVerdictMsg("Delta", { lens_set_applied: ["TA"] as const }),
+      ],
+      bodies_by_ref: EMPTY_BODIES,
+      target: { kind: "plan" as const, ref: PLAN_REF },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.distinct_auditors).toHaveLength(2);
+  });
+
+  it("renderQuorumHuman shows plan target key", () => {
+    const r = computeAuditQuorum({
+      messages: [
+        planVerdictMsg("Alpha", { lens_set_applied: ["RE"] as const }),
+        planVerdictMsg("Bravo", {
+          lens_set_applied: ["Architecture"] as const,
+        }),
+        planVerdictMsg("Delta", { lens_set_applied: ["TA"] as const }),
+      ],
+      bodies_by_ref: EMPTY_BODIES,
+      target: { kind: "plan" as const, ref: PLAN_REF },
+    });
+    const text = renderQuorumHuman(r);
+    expect(text).toContain(`target: plan:${PLAN_REF}`);
+    expect(text).toContain("ok: true");
   });
 });

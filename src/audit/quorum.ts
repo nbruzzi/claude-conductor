@@ -81,7 +81,12 @@ import {
   parseAuditVerdictV0_3Wrapped,
   type AuditVerdictBody,
 } from "../channels/audit-verdict.ts";
-import type { AuditClass, LensClass } from "../channels/audit-types.ts";
+import {
+  auditTargetKey,
+  type AuditClass,
+  type AuditTarget,
+  type LensClass,
+} from "../channels/audit-types.ts";
 import type { ChannelMessage } from "../channels/index.ts";
 
 /** Default lens-diversity quorum — CONTRIBUTING.md line 14 "3 minimum personas". */
@@ -90,7 +95,7 @@ export const DEFAULT_MIN_LENSES = 3;
 /** Default auditor-independence floor — blocks single-author N-hats quorum. */
 export const DEFAULT_MIN_AUDITORS = 2;
 
-/** The PR under audit. Mirror of `AuditVerdictBody.target_pr`. */
+/** The PR repo+number shape used by the CLI's `--target-pr` flag parser. */
 export type TargetPr = { repo: string; number: number };
 
 /** Tunable quorum thresholds; both default to the cohort-canonical values. */
@@ -131,7 +136,7 @@ export type AuditQuorumOptions = {
  * deterministic output (test-friendly + grep-friendly).
  */
 export type AuditQuorumReport = {
-  target_pr: TargetPr;
+  target: AuditTarget;
   /** Distinct auditor identities, self-audits excluded. Sorted. */
   distinct_auditors: string[];
   /** Distinct lens-classes covered across the PR's verdicts. Sorted. */
@@ -163,7 +168,7 @@ export type AuditQuorumReport = {
 type ComputeArgs = {
   messages: readonly ChannelMessage[];
   bodies_by_ref: ReadonlyMap<string, string>;
-  target_pr: TargetPr;
+  target: AuditTarget;
   options?: AuditQuorumOptions;
 };
 
@@ -252,12 +257,18 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
       body = parseAuditVerdictBodyAnyVersion(bodyRaw);
     }
     if (body === null) continue;
-    // b2: quorum is PR-only for now; a plan-target verdict (no target_pr) cannot
-    // match a PR query — skip it (plan quorum deferred to the full-migration
-    // fast-follow, Golf's b2 map).
-    if (body.target.kind !== "pr") continue;
-    if (body.target.number !== args.target_pr.number) continue;
-    if (!repoMatches(body.target.repo, args.target_pr.repo)) continue;
+    // Skip verdicts not targeting the same artifact. PR targets use
+    // repoMatches for owner-prefix-tolerant normalization; plan targets
+    // match on exact ref.
+    const queryTarget = args.target;
+    if (queryTarget.kind === "pr") {
+      if (body.target.kind !== "pr") continue;
+      if (body.target.number !== queryTarget.number) continue;
+      if (!repoMatches(body.target.repo, queryTarget.repo)) continue;
+    } else {
+      if (body.target.kind !== "plan") continue;
+      if (body.target.ref !== queryTarget.ref) continue;
+    }
 
     // Self-audit: the auditor is the verdict's own addressee (the PR's
     // audit-ask author). Not an independent perspective — exclude.
@@ -299,7 +310,7 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
   }
 
   return {
-    target_pr: { repo: args.target_pr.repo, number: args.target_pr.number },
+    target: args.target,
     distinct_auditors: distinctAuditors,
     distinct_lenses: distinctLenses,
     distinct_audit_classes: distinctAuditClasses,
@@ -325,7 +336,7 @@ export function computeAuditQuorum(args: ComputeArgs): AuditQuorumReport {
 export function renderQuorumHuman(report: AuditQuorumReport): string {
   const lines: string[] = [];
   lines.push(`ok: ${report.ok}`);
-  lines.push(`target_pr: ${report.target_pr.repo}#${report.target_pr.number}`);
+  lines.push(`target: ${auditTargetKey(report.target)}`);
   lines.push(
     `distinct_lenses: ${report.distinct_lenses.length} (>= ${report.min_lenses} required) [${report.distinct_lenses.join(", ")}]`,
   );

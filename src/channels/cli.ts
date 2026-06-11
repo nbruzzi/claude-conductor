@@ -214,7 +214,7 @@ const KINDS_HELP =
   "  out       — peer terminates this channel (additive; `claim --force` resets). Body: reason (e.g. `session ended`).\n" +
   "  digest    — structured summary (mental-model sync). Trust the SHAPE; primary-source-verify any audit-class claim or SHA. Body: JSON conforming to DigestBody (see src/channels/digest.ts).\n" +
   "  live-update— sibling-onboarding scope-assignment from active peer (L152). Trust the SHAPE; primary-source-verify any cited SHA/PR/path. Body: JSON conforming to LiveUpdateBody (see src/channels/live-update.ts).\n" +
-  "  audit-ask — author requests audit on PR/plan from target peer (Tier 1 Slice 1). Trust the SHAPE; primary-source-verify target_pr exists + target_peer is a live NATO identity. Body: JSON conforming to AuditAskBody (see src/channels/audit-ask.ts).\n" +
+  "  audit-ask — author requests audit on PR/plan from target peer (Tier 1 Slice 1). Trust the SHAPE; primary-source-verify the target (PR or plan) exists + target_peer is a live NATO identity. Body: JSON conforming to AuditAskBody (see src/channels/audit-ask.ts).\n" +
   "  audit-verdict— auditor reports verdict closing the audit-loop initiated by audit-ask (Tier 1 Slice 2). Trust the SHAPE; primary-source-verify the verdict's lens-set-applied + findings + counts against the actual diff. Body: JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts).\n" +
   "  memory-proposal— peer surfaces memorialization candidate to Nick's batch yes/no decision queue (Tier 2 Verb 2). Trust the SHAPE; primary-source-verify slug uniqueness vs existing memories (when amends_existing is null) or the named memory exists on disk (when non-null). Body: JSON conforming to MemoryProposalBody (see src/channels/memory-proposal.ts).\n" +
   "  wind-down-checkin— peer broadcasts structured cycle-close state at wind-down time (Tier 2 Verb 1). Trust the SHAPE; primary-source-verify cycle_character claim against actual cycle artifacts (PR squashes/CI/failed-approach captures) + memory_candidates slug names against the memory directory. Body: JSON conforming to WindDownCheckinBody (see src/channels/wind-down-checkin.ts).\n" +
@@ -1179,8 +1179,8 @@ export async function runChannelsCli(
         //
         // Cycle 2026-05-25 substrate-evolution slice (Bravo-pen): after
         // shape validation, a second gate enforces non-empty
-        // cross_edge_consumers_verified for substrate-class PRs per
-        // isSubstrateClassPR(target_pr). Concretizes the
+        // cross_edge_consumers_verified for substrate-class targets per
+        // isSubstrateClassTarget(target). Plan targets are never substrate-class.
         // feedback-audit-cohort-missed-cross-edge-shim-consumer
         // discipline from PR #119 4-instance audit-cohort gap.
         if (kind === "audit-verdict") {
@@ -1188,7 +1188,7 @@ export async function runChannelsCli(
           if (parsedVerdict === null) {
             die(
               ctx,
-              `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}), cross_edge_consumers_verified[] (optional readonly string[]; required non-empty for substrate-class PRs per isSubstrateClassPR). counts must equal severity-grouped findings length.`,
+              `[send] audit-verdict body failed schema validation — body must be JSON conforming to AuditVerdictBody (see src/channels/audit-verdict.ts + docs/conventions/message-kinds-and-verification.md). Required fields: kind_version=1, EXACTLY ONE of target_pr={repo,number} OR target_plan={ref}, target_peer (non-empty string), lens_set_applied (non-empty array of LensClass), audit_class (inside-pair | outside-pair | cross-pair-shadow), audit_axes (non-empty array of surface | depth | distance), verdict (SHIP-CLEAN | SHIP-WITH-FOLDS | NEEDS-REWORK), counts={blocker,fold,nit} non-negative integers, three_option_ask={a_ratify,b_fold_if_applicable,c_reframe_if_applicable} ALWAYS REQUIRED (sub-fields nullable), findings[] (each {kind,lens,title,detail}), cross_edge_consumers_verified[] (optional readonly string[]; required non-empty for substrate-class PR targets per isSubstrateClassTarget; plan targets exempt). counts must equal severity-grouped findings length.`,
               {
                 code: 2,
                 category: "VALIDATION",

@@ -300,7 +300,6 @@ describe("verifyChannelAuditChain — chain verifies across the rotation boundar
     const baseBody: AuditVerdictBody = {
       kind_version: 1,
       target: { kind: "pr", repo: "conductor", number: 99 },
-      target_pr: { repo: "conductor", number: 99 },
       target_peer: "Alpha",
       lens_set_applied: ["RE"],
       audit_class: "inside-pair",
@@ -331,7 +330,7 @@ describe("verifyChannelAuditChain — chain verifies across the rotation boundar
     // verdict 2 (chained to 1)
     const body2: AuditVerdictBody = {
       ...baseBody,
-      target_pr: { repo: "conductor", number: 100 },
+      target: { kind: "pr" as const, repo: "conductor", number: 100 },
       prev_audit_body_ref: await computePayloadHash(env1.payload),
     };
     const env2Json = await wrapAuditVerdictBody(body2, priv, "charlie");
@@ -350,7 +349,7 @@ describe("verifyChannelAuditChain — chain verifies across the rotation boundar
     // verdict 3 (chained to 2) appended to the fresh live file
     const body3: AuditVerdictBody = {
       ...baseBody,
-      target_pr: { repo: "conductor", number: 101 },
+      target: { kind: "pr" as const, repo: "conductor", number: 101 },
       prev_audit_body_ref: await computePayloadHash(env2.payload),
     };
     const env3Json = await wrapAuditVerdictBody(body3, priv, "charlie");

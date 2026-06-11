@@ -289,10 +289,13 @@ export type AuditTarget =
  * {@link AuditTarget} (D1: additive, backwards-compatible). The caller passes
  * the already-JSON-parsed body object.
  *
- * Exactly ONE of `target_pr` / `target_plan` must be present:
+ * Wire formats accepted (in precedence order):
  *   - `target_pr: { repo, number }` (historical wire shape) → `{ kind: "pr" }`
  *   - `target_plan: { ref }`                                → `{ kind: "plan" }`
- *   - both-absent OR both-present                           → `null`
+ *   - `target: { kind, ... }` (normalized — present when neither wire field
+ *     is available, e.g. a parsed body re-serialized without auditTargetToWire)
+ *   - both `target_pr` + `target_plan` present              → `null`
+ *   - none of the above                                     → `null`
  *
  * Historical `target_pr`-only bodies satisfy exactly-one → parse unchanged
  * (kind_version stays 1; purely additive). Whitespace on string fields is
@@ -305,8 +308,9 @@ export function parseAuditTarget(
   const planRaw = obj["target_plan"];
   const hasPr = prRaw !== undefined;
   const hasPlan = planRaw !== undefined;
-  // Exactly-one: both-absent or both-present is invalid.
-  if (hasPr === hasPlan) return null;
+
+  // Both wire fields present → invalid.
+  if (hasPr && hasPlan) return null;
 
   if (hasPr) {
     if (prRaw === null || typeof prRaw !== "object" || Array.isArray(prRaw)) {
@@ -326,18 +330,46 @@ export function parseAuditTarget(
     return { kind: "pr", repo: repo.trim(), number };
   }
 
-  // plan
-  if (
-    planRaw === null ||
-    typeof planRaw !== "object" ||
-    Array.isArray(planRaw)
-  ) {
-    return null;
+  if (hasPlan) {
+    if (
+      planRaw === null ||
+      typeof planRaw !== "object" ||
+      Array.isArray(planRaw)
+    ) {
+      return null;
+    }
+    const plan = planRaw as Record<string, unknown>;
+    const ref = plan["ref"];
+    if (typeof ref !== "string" || ref.trim().length === 0) return null;
+    return { kind: "plan", ref: ref.trim() };
   }
-  const plan = planRaw as Record<string, unknown>;
-  const ref = plan["ref"];
-  if (typeof ref !== "string" || ref.trim().length === 0) return null;
-  return { kind: "plan", ref: ref.trim() };
+
+  // Pre-normalized: neither wire field present; accept AuditTarget directly.
+  // Used when a parsed body (which carries `target` not `target_pr`/`target_plan`)
+  // is re-serialized to JSON and re-parsed (e.g. roundtrip tests, wrap/unwrap).
+  const targetRaw = obj["target"];
+  if (targetRaw === undefined) return null;
+  if (
+    typeof targetRaw !== "object" ||
+    targetRaw === null ||
+    Array.isArray(targetRaw)
+  )
+    return null;
+  const target = targetRaw as Record<string, unknown>;
+  if (target["kind"] === "pr") {
+    const repo = target["repo"];
+    if (typeof repo !== "string" || repo.trim().length === 0) return null;
+    const number = target["number"];
+    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0)
+      return null;
+    return { kind: "pr", repo: repo.trim(), number };
+  }
+  if (target["kind"] === "plan") {
+    const ref = target["ref"];
+    if (typeof ref !== "string" || ref.trim().length === 0) return null;
+    return { kind: "plan", ref: ref.trim() };
+  }
+  return null;
 }
 
 /**

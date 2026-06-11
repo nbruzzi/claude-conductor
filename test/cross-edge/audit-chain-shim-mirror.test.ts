@@ -36,6 +36,7 @@ import { describe, expect, it } from "bun:test";
 
 import {
   canonicalJson,
+  parseAuditTarget,
   parseAuditVerdictBody,
   parseAuditVerdictV0_3Wrapped,
   wrapAuditVerdictBody,
@@ -45,7 +46,6 @@ import {
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 99 },
-  target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
   audit_class: "inside-pair",
@@ -106,7 +106,11 @@ describe("audit-chain shim mirror — Section 2: behavioral roundtrip via api.ts
     expect(result).not.toBeNull();
     expect(result?.envelope.signatures[0]?.keyid).toBe("charlie");
     expect(result?.body.verdict).toBe("SHIP-CLEAN");
-    expect(result?.body.target_pr).toEqual({ repo: "conductor", number: 99 });
+    expect(result?.body.target).toEqual({
+      kind: "pr",
+      repo: "conductor",
+      number: 99,
+    });
     expect(result?.body.signer_role).toBe("queue");
   });
 
@@ -120,6 +124,11 @@ describe("audit-chain shim mirror — Section 2: behavioral roundtrip via api.ts
     const parsed = parseAuditVerdictBody(rawV0_2);
     expect(parsed).not.toBeNull();
     expect(parsed?.verdict).toBe("SHIP-CLEAN");
+  });
+
+  it("T2.5: parseAuditTarget — plan-wire roundtrip via api.ts (NIT-3)", () => {
+    const parsed = parseAuditTarget({ target_plan: { ref: "my-plan.md" } });
+    expect(parsed).toEqual({ kind: "plan", ref: "my-plan.md" });
   });
 });
 

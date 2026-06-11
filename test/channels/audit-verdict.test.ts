@@ -64,7 +64,6 @@ async function generateTestKeypair(): Promise<CryptoKeyPair> {
 const CANONICAL_AUDIT_VERDICT_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 99 },
-  target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE", "Architecture"],
   audit_class: "inside-pair",
@@ -94,7 +93,6 @@ const CANONICAL_AUDIT_VERDICT_BODY: AuditVerdictBody = {
 const SHIP_CLEAN_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 99 },
-  target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
   audit_class: "inside-pair",
@@ -113,7 +111,7 @@ function bodyWith(overrides: Record<string, unknown>): string {
   return JSON.stringify({ ...CANONICAL_AUDIT_VERDICT_BODY, ...overrides });
 }
 
-function bodyWithout(field: keyof AuditVerdictBody): string {
+function bodyWithout(field: string): string {
   const copy: Record<string, unknown> = { ...CANONICAL_AUDIT_VERDICT_BODY };
   delete copy[field];
   return JSON.stringify(copy);
@@ -185,8 +183,8 @@ describe("parseAuditVerdictBody — Section 3: target_pr (F3 whitespace-normaliz
       parseAuditVerdictBody(JSON.stringify(CANONICAL_AUDIT_VERDICT_BODY)),
     ).not.toBeNull();
   });
-  it("T3.2: missing target_pr rejected", () => {
-    expect(parseAuditVerdictBody(bodyWithout("target_pr"))).toBeNull();
+  it("T3.2: missing target (no target, target_pr, or target_plan) rejected", () => {
+    expect(parseAuditVerdictBody(bodyWithout("target"))).toBeNull();
   });
   it("T3.3: target_pr=null (footgun) rejected", () => {
     expect(parseAuditVerdictBody(bodyWith({ target_pr: null }))).toBeNull();
@@ -225,19 +223,22 @@ describe("parseAuditVerdictBody — Section 3: target_pr (F3 whitespace-normaliz
       bodyWith({ target_pr: { repo: "  conductor  ", number: 99 } }),
     );
     expect(parsed).not.toBeNull();
-    expect(parsed?.target_pr).toEqual({ repo: "conductor", number: 99 });
+    expect(parsed?.target).toEqual({
+      kind: "pr",
+      repo: "conductor",
+      number: 99,
+    });
   });
 });
 
 describe("parseAuditVerdictBody — Section 3b: target_plan plan-target (Item #3b)", () => {
-  it("T3b.1: plan-only wire parses -> target.kind='plan' + target_pr undefined", () => {
+  it("T3b.1: plan-only wire parses -> target.kind='plan'", () => {
     const parsed = parseAuditVerdictBody(JSON.stringify(PLAN_VERDICT_WIRE));
     expect(parsed).not.toBeNull();
     expect(parsed?.target).toEqual({
       kind: "plan",
       ref: "my-plan-2026-06-03.md",
     });
-    expect(parsed?.target_pr).toBeUndefined();
   });
   it("T3b.2: BOTH target_pr + target_plan present rejected (exactly-one)", () => {
     const both = {
@@ -1063,7 +1064,6 @@ describe("parseAuditVerdictV0_3Wrapped — Section 17: v0.3 DSSE wrapper", () =>
       kind: "plan",
       ref: "my-plan-2026-06-03.md",
     });
-    expect(result?.body.target_pr).toBeUndefined();
   });
 });
 
@@ -1149,11 +1149,6 @@ describe("Section 15: lineage field extension (PR-A2)", () => {
     const c2 = canonicalJson(SHIP_CLEAN_BODY);
     expect(c1).toBe(c2);
     // Re-ordered keys produce same canonical bytes (key-sort recursion)
-    // target_pr is transitional-optional post-#3(b); SHIP_CLEAN_BODY sets it,
-    // narrow away `undefined` for the exactOptionalPropertyTypes assignment.
-    const shipCleanTargetPr = SHIP_CLEAN_BODY.target_pr;
-    if (shipCleanTargetPr === undefined)
-      throw new Error("SHIP_CLEAN_BODY.target_pr must be defined");
     const reordered: AuditVerdictBody = {
       findings: SHIP_CLEAN_BODY.findings,
       three_option_ask: SHIP_CLEAN_BODY.three_option_ask,
@@ -1164,7 +1159,6 @@ describe("Section 15: lineage field extension (PR-A2)", () => {
       lens_set_applied: SHIP_CLEAN_BODY.lens_set_applied,
       target_peer: SHIP_CLEAN_BODY.target_peer,
       target: SHIP_CLEAN_BODY.target,
-      target_pr: shipCleanTargetPr,
       kind_version: 1,
     };
     expect(canonicalJson(reordered)).toBe(c1);
@@ -1200,9 +1194,9 @@ describe("Section 15: lineage field extension (PR-A2)", () => {
     const wrapped = parseAuditVerdictV0_3Wrapped(envelopeJson);
     expect(wrapped).not.toBeNull();
     expect(wrapped?.body.lineage).toEqual(VALID_LINEAGE);
-    // Inner-body shape preserved: target_pr + verdict + findings unchanged
+    // Inner-body shape preserved: target + verdict + findings unchanged
     expect(wrapped?.body.verdict).toBe(SHIP_CLEAN_BODY.verdict);
-    expect(wrapped?.body.target_pr).toEqual(SHIP_CLEAN_BODY.target_pr);
+    expect(wrapped?.body.target).toEqual(SHIP_CLEAN_BODY.target);
   });
 
   it("T15.9: lineage signature-coverage via PAE — embed inside payload bytes", async () => {

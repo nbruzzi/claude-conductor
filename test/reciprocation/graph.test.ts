@@ -22,8 +22,8 @@ import { describe, expect, it } from "bun:test";
 import { buildReciprocationGraph } from "../../src/reciprocation/graph.ts";
 import type { ChannelMessage } from "../../src/channels/index.ts";
 import {
+  parseAuditVerdictBody,
   wrapAuditVerdictBody,
-  type AuditVerdictBody,
 } from "../../src/channels/audit-verdict.ts";
 import { generateKeypair } from "../../src/channels/key-surface.ts";
 
@@ -453,8 +453,11 @@ describe("buildReciprocationGraph — v0.3 DSSE-wrapped (signed) verdicts", () =
   it("counts a signed (wrapped) verdict as an edge (regression: was 0 when wrapped-blind)", async () => {
     const kp = await generateKeypair();
     const rawBody = makeVerdictBody({ target_peer: "Bravo", pr_number: 100 });
+    const parsedBody = parseAuditVerdictBody(rawBody);
+    if (parsedBody === null)
+      throw new Error("test: parseAuditVerdictBody returned null");
     const wrappedBody = await wrapAuditVerdictBody(
-      JSON.parse(rawBody) as AuditVerdictBody,
+      parsedBody,
       kp.privateKey,
       "Alpha",
     );

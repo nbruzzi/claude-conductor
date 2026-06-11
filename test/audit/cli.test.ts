@@ -276,7 +276,6 @@ describe("runBootstrap end-to-end — Section 5: full bootstrap → sign → ver
     const inputBody: AuditVerdictBody = {
       kind_version: 1,
       target: { kind: "pr", repo: "conductor", number: 127 },
-      target_pr: { repo: "conductor", number: 127 },
       target_peer: "Delta",
       lens_set_applied: ["RE", "Architecture"],
       audit_class: "inside-pair",
@@ -318,7 +317,11 @@ describe("runBootstrap end-to-end — Section 5: full bootstrap → sign → ver
 
     // PR-A1 v0.2 field preservation through roundtrip
     expect(wrapped?.body.kind_version).toBe(1);
-    expect(wrapped?.body.target_pr).toEqual({ repo: "conductor", number: 127 });
+    expect(wrapped?.body.target).toEqual({
+      kind: "pr",
+      repo: "conductor",
+      number: 127,
+    });
     expect(wrapped?.body.target_peer).toBe("Delta");
     expect(wrapped?.body.verdict).toBe("SHIP-CLEAN");
     expect(wrapped?.body.cross_edge_consumers_verified).toEqual([

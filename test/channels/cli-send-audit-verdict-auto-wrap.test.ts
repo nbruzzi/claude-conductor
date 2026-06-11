@@ -57,7 +57,6 @@ const TEST_SESSION_ID = "00000000-0000-4000-8000-000000000042";
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 998 },
-  target_pr: { repo: "conductor", number: 998 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
   audit_class: "inside-pair",
@@ -237,7 +236,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // First send — bootstrap audit-verdict, no chain ref expected.
       const firstBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 1 },
+        target: { kind: "pr", repo: "conductor", number: 1 },
       };
       const firstResult = runSend(channelId, writeBodyFile(firstBody));
       expect(firstResult.exitCode).toBe(0);
@@ -246,7 +245,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // canonical-JSON payload + inject as prev_audit_body_ref.
       const secondBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 2 },
+        target: { kind: "pr", repo: "conductor", number: 2 },
       };
       const secondResult = runSend(channelId, writeBodyFile(secondBody));
       expect(secondResult.exitCode).toBe(0);
@@ -303,7 +302,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // Mode C emits the raw body unchanged — NOT a DSSE envelope.
       expect(parseDsseEnvelope(bodyStr)).toBeNull();
       const parsed = JSON.parse(bodyStr) as AuditVerdictBody;
-      expect(parsed.target_pr?.number).toBe(CANONICAL_BODY.target_pr?.number);
+      expect(parsed.target).toEqual(CANONICAL_BODY.target);
     });
 
     it("C2.2: claim + cohort key + operator-supplied UUID prev_audit_body_ref → Mode C raw + stderr WARN", async () => {
@@ -518,14 +517,14 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // takes precedence.
       const firstBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 1 },
+        target: { kind: "pr", repo: "conductor", number: 1 },
       };
       const firstResult = runSend(channelId, writeBodyFile(firstBody));
       expect(firstResult.exitCode).toBe(0);
 
       const secondBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 2 },
+        target: { kind: "pr", repo: "conductor", number: 2 },
         prev_audit_body_ref: OPERATOR_SHA256_HEX,
       };
       const secondResult = runSend(channelId, writeBodyFile(secondBody));
@@ -682,7 +681,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // signing capability same as Mode A.
       expect(parseDsseEnvelope(bodyStr)).toBeNull();
       const parsed = JSON.parse(bodyStr) as AuditVerdictBody;
-      expect(parsed.target_pr?.number).toBe(CANONICAL_BODY.target_pr?.number);
+      expect(parsed.target).toEqual(CANONICAL_BODY.target);
     });
   });
 });
