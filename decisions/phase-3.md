@@ -2549,3 +2549,29 @@ affects:
 **Verification:** typecheck + format + lint clean; 87 tests pass (28 pre-existing reaper tests + 1 new G3 parity test + 6 new shared-helper unit tests + pre-existing index.test.ts suite). Design pre-ratified 3/3 (Bravo SHIP-CLEAN / Charlie RATIFY w-absorbed-fold / Delta RATIFY CLEAN) per roadmap `reconcile-boot-close-out-roadmap-2026-06-11.md`. Mandatory 2-lens gate (Bravo Opus 4.8 + Charlie Fable 5) on the PR diff before merge.
 
 — G3 authored by Golf (Sonnet 4.6); mandatory lens: Bravo (Opus 4.8) + Charlie (Fable 5).
+
+---
+
+## CI-flake fix — deterministic channel order in `getIdentityContextForSession` (2026-06-11)
+
+```yaml
+---
+ts: 2026-06-11T14:45:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects: [src/channels/identity-context.ts]
+---
+```
+
+**Symptom:** main-CI red on `peer-message-deliverer.test.ts` "aggregate 50-cap shared across channels" (run 27353139527 + the `--failed` rerun). Test dormant-green for 11 main runs (introduced 2026-05-14), then 3-of-5 failures clustered at SHAs containing the G3 test files; locally unreproducible (macOS).
+
+**Root cause (confirmed at the line):** `listChannels()` (`src/channels/index.ts:2533`) returns channels in `readdirSync` order — UNSORTED. `getIdentityContextForSession` propagated that order, and `peer-message-deliverer` applies its shared 50-message cap by decrementing `remaining` across channels in iteration order — so WHICH channel wins the budget was readdir-order-dependent. readdir order is filesystem-dependent: sorted on APFS/macOS (verified by probe), ext4 hash-order on Linux. The test assumed CH1 (`test-ch-pmd`) before CH2 (`test-ch-pmd-2`) — true locally, flaky on Linux. G3's 5+ real-git subprocesses + the test's `/tmp`-pid sandbox were AMPLIFIERS (timing/FS-state shift), NOT the cause — the identical-SHA pass/fail pair proved pure nondeterminism, not a G3 code defect.
+
+**Fix:** deterministic `channelId` code-unit-asc sort in `getIdentityContextForSession` (extracted pure `sortIdentityContextsByChannelId` helper). Makes the cap distribution + the operator-facing block order reproducible cross-platform. The other two consumers (`isPeerCoordinatedWithSelf`, teammate-idle) are order-insensitive → harmless. Order-pinning the test was REJECTED (symptom-masking); recency-ordering DEFERRED (would reintroduce a timing input needing a tiebreak). Bundled hygiene: migrated the test sandbox from `/tmp/test-...-${pid}` → `mkdtemp(tmpdir())` per OPERATING-MANUAL §5 (a latent realpath/FS-state flake-source in the same file).
+
+**Files changed:** `src/channels/identity-context.ts` (sort helper + wire); `test/channels/identity-context.test.ts` (non-vacuous determinism unit test — fails when the sort is reverted, verified); `test/hooks/checks/peer-message-deliverer.test.ts` (mkdtemp migration).
+
+**Verification:** 50/50 tests pass across both files; determinism-test non-vacuity confirmed (reverted-sort → red); ci-local before push; Charlie (Fable 5) lens on the diff; main-CI must go green (the unlock for #226 mark-shipped + Golf slice-4 merge-gate).
+
+— flake-fix root-caused + authored by Bravo (Opus 4.8); lens: Charlie (Fable 5).

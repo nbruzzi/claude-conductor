@@ -25,6 +25,8 @@ import { claimIdentity } from "../../src/channels/identity.ts";
 import {
   getIdentityContextForSession,
   isPeerCoordinatedWithSelf,
+  sortIdentityContextsByChannelId,
+  type IdentityContext,
 } from "../../src/channels/identity-context.ts";
 
 const SANDBOX = `/tmp/test-identity-context-${process.pid}`;
@@ -360,3 +362,44 @@ function walk(root: string, dir: string, out: Record<string, number>): void {
     }
   }
 }
+
+describe("sortIdentityContextsByChannelId — deterministic channel order (readdir-flake fix)", () => {
+  const mkCtx = (channelId: string): IdentityContext => ({
+    channelId,
+    self: {
+      identity: "Alpha",
+      role: "pen",
+      joined_at: "2026-06-11T00:00:00.000Z",
+    },
+    peers: [],
+  });
+
+  it("reorders an arbitrary (readdir-order) input to channelId code-unit ASC — the cap-distribution determinism guarantee", () => {
+    // listChannels() returns readdirSync order (ext4 hash-order on Linux,
+    // sorted on APFS/macOS), so the deliverer's shared 50-message cap went to a
+    // filesystem-dependent channel — green locally, flaky on Linux CI (the
+    // "aggregate 50-cap" flake, 2026-06-11). A non-sorted input must still yield
+    // a deterministic channelId-asc processing order. (Self-non-vacuous: revert
+    // the sort in sortIdentityContextsByChannelId and this assertion fails.)
+    const input = [
+      mkCtx("test-ch-pmd-2"),
+      mkCtx("zzz-last"),
+      mkCtx("test-ch-pmd"),
+      mkCtx("aaa-first"),
+    ];
+    const out = sortIdentityContextsByChannelId(input).map((c) => c.channelId);
+    expect(out).toEqual([
+      "aaa-first",
+      "test-ch-pmd",
+      "test-ch-pmd-2",
+      "zzz-last",
+    ]);
+  });
+
+  it("is pure — does not mutate the input array", () => {
+    const input = [mkCtx("b"), mkCtx("a")];
+    const before = input.map((c) => c.channelId);
+    sortIdentityContextsByChannelId(input);
+    expect(input.map((c) => c.channelId)).toEqual(before);
+  });
+});

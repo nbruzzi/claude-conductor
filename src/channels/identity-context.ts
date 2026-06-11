@@ -106,7 +106,37 @@ export function getIdentityContextForSession(
     const ctx = buildContextForChannel(summary.id, sessionId);
     if (ctx !== null) contexts.push(ctx);
   }
-  return contexts;
+  return sortIdentityContextsByChannelId(contexts);
+}
+
+/**
+ * Deterministic channel ordering for the identity-context list: code-unit
+ * (locale-independent) ascending by `channelId`.
+ *
+ * Why this exists — `listChannels()` returns channels in `readdirSync` order,
+ * which is filesystem-dependent: sorted on APFS/macOS, ext4 hash-order on Linux.
+ * Any ORDER-DEPENDENT consumer of {@link getIdentityContextForSession} is then
+ * nondeterministic across platforms. The lived instance: `peer-message-deliverer`
+ * applies a 50-message emission cap by decrementing a shared `remaining` across
+ * channels in iteration order, so WHICH channel wins the budget was
+ * readdir-order-dependent — green on macOS, flaky on Linux CI (the "aggregate
+ * 50-cap shared across channels" flake; 2026-06-11). Sorting here makes the
+ * channel order — and therefore the cap distribution + the operator-facing block
+ * order — reproducible on every platform. `channelId`-asc is the minimal
+ * deterministic key; a recency-first ordering is a deferred UX enhancement (it
+ * would reintroduce a timing input needing its own tiebreak — determinism is the
+ * requirement, recency is a nice-to-have).
+ *
+ * Pure + non-mutating (returns a new array) so it is directly unit-testable;
+ * the other two consumers ({@link isPeerCoordinatedWithSelf}, teammate-idle) are
+ * order-insensitive, so a stable order is harmless-to-beneficial for them.
+ */
+export function sortIdentityContextsByChannelId(
+  contexts: readonly IdentityContext[],
+): IdentityContext[] {
+  return [...contexts].sort((a, b) =>
+    a.channelId < b.channelId ? -1 : a.channelId > b.channelId ? 1 : 0,
+  );
 }
 
 function buildContextForChannel(
