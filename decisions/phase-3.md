@@ -2517,6 +2517,21 @@ files:
 
 ## G3 data-loss fix — shared `worktreeReapGuard` extraction (2026-06-11)
 
+```yaml
+---
+ts: 2026-06-11T13:30:00Z
+kind: architectural
+severity: major
+phase: 3
+affects:
+  [
+    src/worktrees/index.ts,
+    src/hooks/checks/dotfiles-worktree-gc.ts,
+    src/hooks/checks/repo-worktree-gc.ts,
+  ]
+---
+```
+
 **Files changed:**
 
 - `src/worktrees/index.ts` (added `forensicMarkerActive`, `worktreeReapGuard`, `readdirSync`/`statSync` imports + private constants)
