@@ -66,6 +66,7 @@ import { join } from "node:path";
 import {
   COORDINATION_CHANNEL_ID,
   LOCK_STALE_MS,
+  listChannelArchiveFilePaths,
   listChannels,
   resolveArchiveDir,
   resolveChannelsDir,
@@ -141,6 +142,17 @@ const COORDINATION_RECLAIM_STALE_MS = 24 * 60 * 60 * 1000;
  *  >24h-stale HBs CANNOT remove one a liveness read would still treat as live,
  *  so this is a pure growth-bound, never a liveness change. */
 const HEARTBEAT_GC_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Sealed-archive retention: archives older than this are eligible for pruning
+ *  (subject to the keep-newest-N floor below). 30 days is a month of history
+ *  — long enough for any audit or replay need, short enough to bound growth. */
+const SEALED_ARCHIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Minimum number of sealed archives ALWAYS retained per channel, regardless
+ *  of age. Keeps a recovery floor even on slow-rotating channels where all
+ *  archives happen to be stale. 3 is the minimum safe floor per the Phase 3
+ *  Slice 4 policy (see decisions/phase-3.md). */
+const SEALED_ARCHIVE_KEEP_N = 3;
 
 /** Subdirectory holding the per-channel rate-gate cursor file.
  *  Step G (ARCH-W2-4) renamed from `gc-reap/` to `reap-cursors/` (noun-form
@@ -404,6 +416,24 @@ async function reapChannel(channelId: string): Promise<string[]> {
         detail: `gc-reaper messages rotation failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
+  }
+
+  // Sealed-archive retention sweep: prune old message rotation archives
+  // (messages.<seq>.archive.jsonl) subject to the 30d TTL + keep-newest-3 floor.
+  // Runs AFTER rotation so a freshly-sealed archive immediately holds its
+  // "newest" position before the prune policy evaluates.
+  try {
+    const pruneLine = await pruneSealedArchives(channelId);
+    if (pruneLine !== null) lines.push(pruneLine);
+  } catch (err: unknown) {
+    appendPresenceFailure({
+      timestamp: new Date().toISOString(),
+      source: "channels-identity",
+      kind: "unhandled",
+      sessionId: null,
+      artifactPath: channelId,
+      detail: `gc-reaper sealed-archive prune failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 
   let markResult: MarkResult;
@@ -801,6 +831,99 @@ function runRaceDetectionBreadcrumb(
       /* tmp-file already moved or absent — ignore */
     }
   }
+}
+
+/**
+ * Phase 3 Slice 4: prune old sealed message-rotation archives
+ * (`messages.<seq>.archive.jsonl`) for a channel.
+ *
+ * **Policy:** remove archives whose file mtime is older than
+ * {@link SEALED_ARCHIVE_TTL_MS} (30 days), subject to a hard floor of
+ * {@link SEALED_ARCHIVE_KEEP_N} (3) newest archives always retained regardless
+ * of age. Archives are ranked by sequence number (ascending = oldest first);
+ * the `KEEP_N` floor preserves the highest-seq entries. A channel with ≤3
+ * archives is never pruned — the floor fully covers it.
+ *
+ * **Channel boundary:** `coordination` (`COORDINATION_CHANNEL_ID`) is
+ * GC-EXEMPT as a channel (the outer reaper loop skips archived/unreachable
+ * channels; see the loop guard at the top of `reapChannel`), but its sealed
+ * archives ARE prunable by design — this function reaches them on every
+ * eligible `reapChannel()` call and no exemption exists inside the prune path.
+ * The eternal coordination channel (~288 bumps/day) is the primary use-case
+ * this sweep was designed to address.
+ *
+ * **Verifiability-horizon truncation:** pruning removes archive files that
+ * some consumers REQUIRE for their full-history view. Any consumer that spans
+ * the rotation boundary — `readMessages(id, { includeArchive: true })`
+ * callers, `listChannelArchiveFilePaths(channelDir)` users, the verdict-
+ * signature-chain verifier (`:1884-1886`), the chain constructor, and the
+ * analytics / cursor / tail readers (`:1921-1932`) — will have a truncated
+ * view of history once archives are pruned. This is intentional GC: the
+ * policy trades full-history verifiability for bounded disk growth. Consumers
+ * that require unbounded history must either disable rotation or export audit
+ * artifacts before the 30d horizon. The breadcrumb below carries the pruned
+ * SEQs so consumers can detect the horizon boundary.
+ *
+ * **Serialization:** runs inside `withMetadataLock` to prevent a concurrent
+ * `rotateChannelMessages` from creating a new archive (and becoming
+ * unexpectedly "oldest") between this sweep's seq-scan and its unlinks.
+ *
+ * **Failure modes:** fail-open + breadcrumb — individual unlink failures are
+ * breadcrumbed and skipped; lock-acquire failures throw (caller handles).
+ * ENOENT on an already-pruned archive is silently skipped (idempotent).
+ *
+ * Returns a one-line summary string when archives were pruned (for inclusion
+ * in the reaper's warn output); returns `null` when nothing was pruned.
+ */
+async function pruneSealedArchives(channelId: string): Promise<string | null> {
+  return await withMetadataLock(channelId, () => {
+    const channelDir = join(resolveChannelsDir(), channelId);
+    // listChannelArchiveFilePaths returns seq-ascending (oldest first).
+    const paths = listChannelArchiveFilePaths(channelDir);
+
+    if (paths.length <= SEALED_ARCHIVE_KEEP_N) return null;
+
+    // Candidates: all archives except the newest KEEP_N (slice off the tail).
+    const candidates = paths.slice(0, paths.length - SEALED_ARCHIVE_KEEP_N);
+    const now = getWallClockNow();
+    const prunedSeqs: number[] = [];
+
+    for (const archivePath of candidates) {
+      // Extract seq from filename for the breadcrumb.
+      const m = archivePath.match(/messages\.(\d+)\.archive\.jsonl$/);
+      if (m?.[1] === undefined) continue;
+      const seq = Number.parseInt(m[1], 10);
+
+      let mtimeMs: number;
+      try {
+        mtimeMs = statSync(archivePath).mtimeMs;
+      } catch {
+        continue; // race-cleared or already absent
+      }
+
+      if (now - mtimeMs < SEALED_ARCHIVE_TTL_MS) continue; // not old enough
+
+      try {
+        unlinkSync(archivePath);
+        prunedSeqs.push(seq);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException | undefined)?.code;
+        if (code === "ENOENT") continue; // already pruned — idempotent
+        appendPresenceFailure({
+          timestamp: new Date().toISOString(),
+          source: "channels-identity",
+          kind: "write-failed",
+          sessionId: null,
+          artifactPath: archivePath,
+          detail: `gc-reaper sealed-archive prune unlink failed: seq=${seq} ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
+
+    if (prunedSeqs.length === 0) return null;
+
+    return `  pruned ${prunedSeqs.length} sealed archive(s) channel=${channelId} seqs=[${prunedSeqs.join(",")}]`;
+  });
 }
 
 /**
