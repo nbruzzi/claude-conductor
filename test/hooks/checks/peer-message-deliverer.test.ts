@@ -56,6 +56,7 @@ import {
   type AuditVerdictBody,
 } from "../../../src/channels/audit-verdict.ts";
 import { generateKeypair } from "../../../src/channels/key-surface.ts";
+import { readPresenceFailures } from "../../../src/shared/presence-failure-log.ts";
 import type { HookInput } from "../../../src/hooks/types.ts";
 
 // §5 test-sandbox discipline: mkdtemp + tmpdir, NEVER /tmp+pid. The prior
@@ -874,12 +875,11 @@ describe("peer-message-deliverer hook", () => {
     it("degrades silently when JSONL read fails (EACCES via chmod 000)", async () => {
       // TA-2 fold: assert full silent-pass shape AND skip on root (CI Docker)
       // where chmod 000 is a no-op (test would pass-for-wrong-reasons).
-      // The substrate's `readChannelMessages` swallows EACCES internally and
-      // returns []; the hook then sees an empty channel and degrades to
-      // silent pass (no breadcrumb fires from this path — by design, since
-      // a channel unreadable for one session is unreadable for all and
-      // not the deliverer's job to alarm). Validates the docstring claim
-      // "Missing file → empty array" extends to EACCES correctly.
+      // NOTE: this test seeds a committed cursor (below), so the hook takes the
+      // `readMessagesAfter` path (NOT `readChannelMessages`). `parseJsonlMessages`
+      // wraps readFileSync in try/catch — an EACCES returns empty, readMessagesAfter
+      // returns [], the hook sees no new messages and returns pass() from the normal
+      // path without reaching the outer catch. No outer-catch breadcrumb fires.
       if (typeof process.getuid === "function" && process.getuid() === 0) {
         return; // chmod 000 is a no-op under root; test cannot exercise the EACCES branch.
       }
@@ -892,11 +892,20 @@ describe("peer-message-deliverer hook", () => {
       );
       await appendPeer(CH, SESSION_BRAVO, "msg-that-cant-be-read");
       const jsonl = messagesPath(CH);
+      const unhandledBefore = readPresenceFailures(1000).filter(
+        (e) => e.kind === "unhandled",
+      ).length;
       try {
         chmodSync(jsonl, 0o000);
         const result = await check(inputFor(SESSION_SELF));
         // Strong assertion: full silent-pass shape (exit 0, no stdout, no source).
         expect(result).toEqual({ exitCode: 0, stdout: "", source: "" });
+        // No outer-catch breadcrumb: EACCES is isolated in parseJsonlMessages
+        // (unreadable → empty), so the outer catch is never reached.
+        const unhandledAfter = readPresenceFailures(1000).filter(
+          (e) => e.kind === "unhandled",
+        ).length;
+        expect(unhandledAfter).toBe(unhandledBefore);
       } finally {
         try {
           chmodSync(jsonl, 0o644);

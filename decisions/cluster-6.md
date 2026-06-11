@@ -233,3 +233,26 @@ affects:
 **Supersedes / superseded_by:** Additive — extends the audit-discipline body schema (`AuditAskBody` / `AuditVerdictBody`). Deprecates the `kind=note` plan-gate workaround (not yet removed; superseded-in-practice once consumers adopt `target:{kind:"plan"}`). The transitional `target_pr?` optional field is scheduled for removal in a follow-up cut.
 
 **Fold absorption (Alpha + Golf convergent SHIP-WITH-FOLDS, 2026-06-03):** absorbed into this PR before merge. (HIGH-2) the new schema surface is now tested — `parseAuditTarget` exactly-one matrix + `auditTargetToWire` roundtrip + `sameTarget` + `auditTargetKey` (audit-types.test.ts), a plan-kind body through both `parseAuditVerdictBody` + `parseAuditAskBody` (Section 3b each), and a `plan:<ref>` render assertion. **Serialize-side roundtrip fix:** the parser returns now spread `...auditTargetToWire(target)` (emit `target_pr` OR `target_plan`) instead of the prior pr-only conditional — a plan body re-serializes WITH `target_plan`, so it roundtrips through `canonicalJson` → wrap → parse. This independently CONVERGES with Golf's forward-catch (the serialize-wiring gap): the auto-wrap plan-roundtrip test (Section 17) made it non-deferrable, so serialize-correctness is IN this PR, not the deferred fast-follow. The deferred fast-follow now retains ONLY the `--target-plan` CLI flag + the queue/quorum/reciprocation full plan-handling. `isSubstrateClassTarget` added to the api.ts surface (the 6th export) for the Alpha-owned dotfiles shim mirror (HIGH-1, sequenced post-merge + canonical-sync).
+
+---
+
+## 2026-06-11 — Decision EACCES-FIX-1: `parseJsonlMessages` extends missing-file→empty to unreadable-file→empty
+
+```yaml
+---
+ts: 2026-06-11T17:30:00Z
+kind: api-shape
+severity: minor
+phase: cluster-6
+affects:
+  - src/channels/index.ts
+---
+```
+
+**Context:** `parseJsonlMessages` guarded `ENOENT` via `existsSync` but did not wrap `readFileSync` in a try/catch. A chmod-000 file (EACCES) propagated through `readMessagesAfter` to the outer catch in `peer-message-deliverer.ts`, which fired `appendPresenceFailure` as a side effect. Four `kind:unhandled` entries appeared in the presence log from test runs — the test deliberately chmodSync-000 to verify fail-open, but the cursor-seeded code path (readMessagesAfter, NOT readChannelMessages) exposed the gap. The outer-catch abort also means an EACCES in production would silently block delivery for ALL channels for that hook fire (the outer catch is hook-wide, not per-channel).
+
+**Chosen:** Wrap `readFileSync` in a try/catch inside `parseJsonlMessages`; return `{messages:[], skipped:0}` on any IO error. This extends the documented "Missing file → empty" contract to "Missing or unreadable file → empty", isolating the EACCES to the affected channel without reaching the outer catch. Production-EACCES signaling (a persistently-unreadable file vs an empty channel) is deliberately deferred: n=1 test-residue evidence, delay-not-loss failure direction (cursor holds → redelivery when perms clear), and the simple fix keeps the future option open (Charlie/Bravo pre-staged design input, captain B-skip ruling 2026-06-11). A JSDoc note in the function documents the deferral explicitly.
+
+**Reason:** The latent block-and-redeliver exposure is real even though all 4 observed entries were test residue. The per-channel isolation (unreadable → empty → normal pass() path) is the load-bearing fix; the outer-catch breadcrumb pollution is the observable symptom. Option B (defense-in-depth wrap in the deliverer) was captain-skipped at n=1. The test is also corrected: the wrong comment ("readChannelMessages swallows EACCES" — false when cursor is seeded) is fixed, and a no-outer-catch assertion is added (`readPresenceFailures(1000)` before/after count of `kind:unhandled` events).
+
+**Supersedes / superseded_by:** Additive behavior extension to `parseJsonlMessages` docstring + implementation. Does not supersede any prior decision.
