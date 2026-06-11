@@ -39,7 +39,6 @@ import {
 const CANONICAL_AUDIT_ASK_BODY: AuditAskBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 95 },
-  target_pr: { repo: "conductor", number: 95 },
   target_peer: "Bravo",
   tier: "light-touch",
   lens_set_requested: ["RE"],
@@ -57,7 +56,7 @@ function bodyWith(overrides: Record<string, unknown>): string {
 /**
  * Construct a JSON-serialized body with a single field omitted.
  */
-function bodyWithout(field: keyof AuditAskBody): string {
+function bodyWithout(field: string): string {
   const copy: Record<string, unknown> = { ...CANONICAL_AUDIT_ASK_BODY };
   delete copy[field];
   return JSON.stringify(copy);
@@ -68,7 +67,11 @@ describe("parseAuditAskBody — Section 1: happy path", () => {
     const parsed = parseAuditAskBody(JSON.stringify(CANONICAL_AUDIT_ASK_BODY));
     expect(parsed).not.toBeNull();
     expect(parsed?.kind_version).toBe(1);
-    expect(parsed?.target_pr).toEqual({ repo: "conductor", number: 95 });
+    expect(parsed?.target).toEqual({
+      kind: "pr",
+      repo: "conductor",
+      number: 95,
+    });
     expect(parsed?.target_peer).toBe("Bravo");
     expect(parsed?.tier).toBe("light-touch");
     expect(parsed?.lens_set_requested).toEqual(["RE"]);
@@ -102,8 +105,8 @@ describe("parseAuditAskBody — Section 3: target_pr (F2 expanded)", () => {
       parseAuditAskBody(JSON.stringify(CANONICAL_AUDIT_ASK_BODY)),
     ).not.toBeNull();
   });
-  it("T3.2: missing target_pr rejected", () => {
-    expect(parseAuditAskBody(bodyWithout("target_pr"))).toBeNull();
+  it("T3.2: missing target (no target, target_pr, or target_plan) rejected", () => {
+    expect(parseAuditAskBody(bodyWithout("target"))).toBeNull();
   });
   it("T3.3: target_pr as string rejected", () => {
     expect(
@@ -167,7 +170,11 @@ describe("parseAuditAskBody — Section 3: target_pr (F2 expanded)", () => {
       bodyWith({ target_pr: { repo: "  conductor  ", number: 95 } }),
     );
     expect(parsed).not.toBeNull();
-    expect(parsed?.target_pr).toEqual({ repo: "conductor", number: 95 });
+    expect(parsed?.target).toEqual({
+      kind: "pr",
+      repo: "conductor",
+      number: 95,
+    });
   });
 });
 
@@ -348,14 +355,13 @@ describe("parseAuditAskBody — Section 3b: target_plan plan-target (Item #3b)",
     lens_set_requested: ["RE"],
     audit_class: "inside-pair",
   };
-  it("T3b.1: plan-only wire parses -> target.kind='plan' + target_pr undefined", () => {
+  it("T3b.1: plan-only wire parses -> target.kind='plan'", () => {
     const parsed = parseAuditAskBody(JSON.stringify(PLAN_ASK_WIRE));
     expect(parsed).not.toBeNull();
     expect(parsed?.target).toEqual({
       kind: "plan",
       ref: "my-plan-2026-06-03.md",
     });
-    expect(parsed?.target_pr).toBeUndefined();
   });
   it("T3b.2: BOTH target_pr + target_plan present rejected (exactly-one)", () => {
     const both = {

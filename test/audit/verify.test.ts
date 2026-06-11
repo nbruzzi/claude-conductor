@@ -105,7 +105,6 @@ function appendChannelMessage(msg: Record<string, unknown>): void {
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 99 },
-  target_pr: { repo: "conductor", number: 99 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
   audit_class: "inside-pair",
@@ -212,7 +211,7 @@ describe("verifyChannelAuditChain — Section 2: intact chain", () => {
     const prev1Hash = await computePayloadHash(env1.payload);
     const body2: AuditVerdictBody = {
       ...CANONICAL_BODY,
-      target_pr: { repo: "conductor", number: 100 },
+      target: { kind: "pr", repo: "conductor", number: 100 },
       signed_at: "2099-12-31T23:59:59.999Z",
       prev_audit_body_ref: prev1Hash,
     };
@@ -229,7 +228,7 @@ describe("verifyChannelAuditChain — Section 2: intact chain", () => {
     const prev2Hash = await computePayloadHash(env2.payload);
     const body3: AuditVerdictBody = {
       ...CANONICAL_BODY,
-      target_pr: { repo: "conductor", number: 101 },
+      target: { kind: "pr", repo: "conductor", number: 101 },
       signed_at: "2099-12-31T23:59:59.999Z",
       prev_audit_body_ref: prev2Hash,
     };
@@ -323,7 +322,7 @@ describe("verifyChannelAuditChain — Section 4: chain discontinuity", () => {
 
     const body2: AuditVerdictBody = {
       ...CANONICAL_BODY,
-      target_pr: { repo: "conductor", number: 100 },
+      target: { kind: "pr", repo: "conductor", number: 100 },
       signed_at: "2026-05-26T18:01:00.000Z",
       prev_audit_body_ref:
         "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
@@ -742,7 +741,7 @@ describe("verify → quorum --require-signed composition (at_msg_seq alignment)"
     const report = computeAuditQuorum({
       messages,
       bodies_by_ref,
-      target_pr: { repo: "conductor", number: 99 },
+      target: { kind: "pr" as const, repo: "conductor", number: 99 },
       options: { requireSigned: true, brokenSignatureSeqs },
     });
     // Bravo (index 1) counts; Echo (index 2) excluded via verify's break index.

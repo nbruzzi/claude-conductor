@@ -125,17 +125,11 @@ export type AuditVerdictBody = {
   kind_version: 1;
   /**
    * The artifact being audited — a PR or a plan (D2 discriminated union).
-   * Mirror of audit-ask's `target`. Canonical field; new code switches on
+   * Mirror of audit-ask's `target`. Canonical field; consumers switch on
    * `target.kind`. Whitespace-normalized on output (F3 carry-over).
+   * Wire serialization goes back through `auditTargetToWire`.
    */
   target: AuditTarget;
-  /**
-   * Transitional PR-only mirror — present iff `target.kind === "pr"`. The
-   * deferred automation consumers (queue / quorum / reciprocation) read this
-   * until the full-migration fast-follow removes it; new code uses `target`.
-   * (b2 audit-target generalization — right-sized additive cut.)
-   */
-  target_pr?: { repo: string; number: number };
   /**
    * The peer the verdict is ADDRESSED to (the original audit-ask
    * author). Mirror of audit-ask's `target_peer`. Whitespace-normalized
@@ -449,7 +443,7 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
   // compat with kind_version: 1 bodies pre-dating the field. Parser
   // tolerates absent (treated as undefined); rejects present-but-wrong-
   // shape. Send-time validation in cli.ts enforces non-empty for
-  // substrate-class PRs per isSubstrateClassPR(target_pr).
+  // substrate-class PR targets per isSubstrateClassTarget(target); plan targets exempt.
   const crossEdgeRaw = obj["cross_edge_consumers_verified"];
   let crossEdgeConsumersVerified: readonly string[] | undefined;
   if (crossEdgeRaw === undefined) {
@@ -538,11 +532,6 @@ export function parseAuditVerdictBody(body: string): AuditVerdictBody | null {
   return {
     kind_version: 1,
     target,
-    // Wire target mirror (D1 additive): emit target_pr (pr) OR target_plan
-    // (plan) so the body roundtrips through canonicalJson -> parse. The
-    // deferred automation consumers (queue / quorum / reciprocation) still
-    // read target_pr until the full-migration fast-follow.
-    ...auditTargetToWire(target),
     target_peer: targetPeer.trim(),
     lens_set_applied: lensSet,
     audit_class: auditClass,
@@ -683,7 +672,13 @@ export async function wrapAuditVerdictBody(
   secretKey: CryptoKey,
   keyid: string,
 ): Promise<string> {
-  const canonical = canonicalJson(body);
+  // Include wire fields (target_pr or target_plan) so the DSSE payload
+  // is re-parseable by parseAuditVerdictBody (which calls parseAuditTarget).
+  const wireBody: Record<string, unknown> = {
+    ...body,
+    ...auditTargetToWire(body.target),
+  };
+  const canonical = canonicalJson(wireBody);
   const payload = encodePayload(canonical);
   const envelope = await signPayload(payload, secretKey, keyid);
   return JSON.stringify(envelope);

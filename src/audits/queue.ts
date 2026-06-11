@@ -28,8 +28,10 @@
 import { parseAuditAskBody } from "../channels/audit-ask.ts";
 import { parseAuditVerdictBodyAnyVersion } from "../channels/audit-verdict.ts";
 import {
+  sameTarget,
   type AuditAskTier,
   type AuditClass,
+  type AuditTarget,
   type LensClass,
 } from "../channels/audit-types.ts";
 import { type ChannelMessage } from "../channels/index.ts";
@@ -38,9 +40,11 @@ import { type ChannelMessage } from "../channels/index.ts";
  * One pending audit-ask row in the queue output.
  */
 export type PendingAsk = {
-  /** Repo of the PR under audit. Whitespace-normalized (per Slice 1 A1). */
+  /** The audit target (PR or plan). Canonical field post-b2 generalization. */
+  target: AuditTarget;
+  /** Repo of the PR under audit. Only meaningful for PR targets; "" for plan. */
   pr_repo: string;
-  /** PR number. Positive integer (parser-enforced). */
+  /** PR number. Only meaningful for PR targets; 0 for plan. */
   pr_number: number;
   /** ISO-8601 timestamp the ask was posted to channel (wrapper `ts`). */
   ask_ts: string;
@@ -113,9 +117,8 @@ function rankTier(tier: AuditAskTier): number {
  *   1. `V.kind === "audit-verdict"` AND parses as a valid verdict body
  *   2. `V.identity === A.body.target_peer` — verdict author is the
  *      identity originally asked to audit
- *   3. `V.body.target_pr.repo === A.body.target_pr.repo`
- *   4. `V.body.target_pr.number === A.body.target_pr.number`
- *   5. `V.ts >= A.ts` — verdict posted at or after the ask
+ *   3. `sameTarget(V.body.target, A.body.target)` — same PR or plan ref
+ *   4. `V.ts >= A.ts` — verdict posted at or after the ask
  *
  * **Sort:** primary `waited_minutes` DESC (oldest waiting first);
  * secondary `tier` rank DESC (3-lens-convergence > 1-lens-substantive >
@@ -176,17 +179,11 @@ export function queryPendingAuditAsks(
   const pending: PendingAsk[] = [];
 
   for (const ask of asks) {
-    // b2: the pending-audit queue auto-pairs PR-target asks only; plan-target
-    // asks are deferred to the full-migration fast-follow (Golf's b2 map) —
-    // skip (not dropped from the channel, only from the pending-digest auto).
     const askTarget = ask.body.target;
-    if (askTarget.kind !== "pr") continue;
     const matched = verdicts.some(
       (v) =>
-        v.body.target.kind === "pr" &&
         v.identity === ask.body.target_peer &&
-        v.body.target.repo === askTarget.repo &&
-        v.body.target.number === askTarget.number &&
+        sameTarget(askTarget, v.body.target) &&
         v.ts_ms >= ask.ts_ms,
     );
     if (matched) continue;
@@ -195,8 +192,9 @@ export function queryPendingAuditAsks(
     if (fromIdentity.length === 0) continue; // skip legacy asks without identity stamp
 
     pending.push({
-      pr_repo: askTarget.repo,
-      pr_number: askTarget.number,
+      target: askTarget,
+      pr_repo: askTarget.kind === "pr" ? askTarget.repo : "",
+      pr_number: askTarget.kind === "pr" ? askTarget.number : 0,
       ask_ts: ask.msg.ts,
       waited_minutes: Math.max(0, Math.floor((now_ms - ask.ts_ms) / 60_000)),
       audit_class: ask.body.audit_class,

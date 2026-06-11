@@ -38,6 +38,7 @@ import {
   AUDIT_VERDICT_PAYLOAD_TYPE,
   parseDsseEnvelope,
 } from "../../src/channels/audit-signature-chain.ts";
+import { auditTargetToWire } from "../../src/channels/audit-types.ts";
 import type { AuditVerdictBody } from "../../src/channels/audit-verdict.ts";
 
 function unwrap<T>(value: T | null | undefined, label = "value"): T {
@@ -57,7 +58,6 @@ const TEST_SESSION_ID = "00000000-0000-4000-8000-000000000042";
 const CANONICAL_BODY: AuditVerdictBody = {
   kind_version: 1,
   target: { kind: "pr", repo: "conductor", number: 998 },
-  target_pr: { repo: "conductor", number: 998 },
   target_peer: "Alpha",
   lens_set_applied: ["RE"],
   audit_class: "inside-pair",
@@ -138,7 +138,11 @@ function writeBodyFile(body: AuditVerdictBody | string): string {
     testTmpDir,
     `body-${Math.random().toString(36).slice(2, 10)}.json`,
   );
-  const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
+  // Spread wire target fields so the strict-wire send gate (#230 F2) passes.
+  const bodyStr =
+    typeof body === "string"
+      ? body
+      : JSON.stringify({ ...body, ...auditTargetToWire(body.target) });
   writeFileSync(bodyPath, bodyStr);
   return bodyPath;
 }
@@ -237,7 +241,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // First send — bootstrap audit-verdict, no chain ref expected.
       const firstBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 1 },
+        target: { kind: "pr", repo: "conductor", number: 1 },
       };
       const firstResult = runSend(channelId, writeBodyFile(firstBody));
       expect(firstResult.exitCode).toBe(0);
@@ -246,7 +250,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // canonical-JSON payload + inject as prev_audit_body_ref.
       const secondBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 2 },
+        target: { kind: "pr", repo: "conductor", number: 2 },
       };
       const secondResult = runSend(channelId, writeBodyFile(secondBody));
       expect(secondResult.exitCode).toBe(0);
@@ -303,7 +307,7 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // Mode C emits the raw body unchanged — NOT a DSSE envelope.
       expect(parseDsseEnvelope(bodyStr)).toBeNull();
       const parsed = JSON.parse(bodyStr) as AuditVerdictBody;
-      expect(parsed.target_pr?.number).toBe(CANONICAL_BODY.target_pr?.number);
+      expect(parsed.target).toEqual(CANONICAL_BODY.target);
     });
 
     it("C2.2: claim + cohort key + operator-supplied UUID prev_audit_body_ref → Mode C raw + stderr WARN", async () => {
@@ -518,14 +522,14 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // takes precedence.
       const firstBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 1 },
+        target: { kind: "pr", repo: "conductor", number: 1 },
       };
       const firstResult = runSend(channelId, writeBodyFile(firstBody));
       expect(firstResult.exitCode).toBe(0);
 
       const secondBody: AuditVerdictBody = {
         ...CANONICAL_BODY,
-        target_pr: { repo: "conductor", number: 2 },
+        target: { kind: "pr", repo: "conductor", number: 2 },
         prev_audit_body_ref: OPERATOR_SHA256_HEX,
       };
       const secondResult = runSend(channelId, writeBodyFile(secondBody));
@@ -682,7 +686,85 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       // signing capability same as Mode A.
       expect(parseDsseEnvelope(bodyStr)).toBeNull();
       const parsed = JSON.parse(bodyStr) as AuditVerdictBody;
-      expect(parsed.target_pr?.number).toBe(CANONICAL_BODY.target_pr?.number);
+      expect(parsed.target).toEqual(CANONICAL_BODY.target);
+    });
+  });
+
+  describe("Section 5 — strict-wire send gate (#230 F2) rejection cells", () => {
+    // Non-vacuity: these are the delete-the-gate-reds witnesses. A body
+    // carrying only the pre-normalized 'target' passes schema parsing (the
+    // internal roundtrip convenience branch) but violates the published
+    // wire contract — the send boundary must reject it, else pre-#230
+    // readers null on the wire body in mixed-version cohorts.
+    function runSendKind(
+      channelId: string,
+      sendKind: string,
+      bodyFilePath: string,
+    ): RunResult {
+      const proc = Bun.spawnSync({
+        cmd: [
+          "bun",
+          CLI_PATH,
+          "send",
+          channelId,
+          sendKind,
+          "--body-file",
+          bodyFilePath,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDirAbs,
+          CLAUDE_CONDUCTOR_KEYS_DIR: keysDirAbs,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+        },
+      });
+      return {
+        exitCode: proc.exitCode ?? -1,
+        stdout: new TextDecoder().decode(proc.stdout),
+        stderr: new TextDecoder().decode(proc.stderr),
+      };
+    }
+
+    it("S5.1: target-only audit-verdict body → exit 2 VALIDATION, missing-wire-target error", async () => {
+      const channelId = "c-strict-wire-verdict";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      // String form bypasses writeBodyFile's auditTargetToWire spread —
+      // the body is schema-valid (target branch) but wire-invalid.
+      const bodyPath = writeBodyFile(JSON.stringify(CANONICAL_BODY));
+      const result = runSendKind(channelId, "audit-verdict", bodyPath);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(
+        "audit-verdict body missing wire target field",
+      );
+    });
+
+    it("S5.2: target-only audit-ask body → exit 2 VALIDATION, missing-wire-target error", async () => {
+      const channelId = "c-strict-wire-ask";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      const askBody = {
+        kind_version: 1,
+        target: { kind: "pr", repo: "conductor", number: 998 },
+        target_peer: "Alpha",
+        tier: "light-touch",
+        lens_set_requested: ["RE"],
+        audit_class: "inside-pair",
+      };
+      const bodyPath = writeBodyFile(JSON.stringify(askBody));
+      const result = runSendKind(channelId, "audit-ask", bodyPath);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(
+        "audit-ask body missing wire target field",
+      );
     });
   });
 });

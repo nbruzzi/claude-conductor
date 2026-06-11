@@ -451,3 +451,139 @@ describe("queryPendingAuditAsks — T2.9 body parser null on shape mismatch", ()
     expect(out).toHaveLength(0);
   });
 });
+
+// plan-ask body factory — uses target_plan wire format
+function planAskBody(opts?: { ref?: string; target_peer?: string }): string {
+  return JSON.stringify({
+    kind_version: 1,
+    target_plan: { ref: opts?.ref ?? "my-plan.md" },
+    target_peer: opts?.target_peer ?? "Charlie",
+    tier: "3-lens-convergence",
+    lens_set_requested: ["RE", "Architecture"],
+    audit_class: "inside-pair",
+  });
+}
+
+// plan-verdict body factory — uses target_plan wire format
+function planVerdictBody(opts?: {
+  ref?: string;
+  target_peer?: string;
+}): string {
+  return JSON.stringify({
+    kind_version: 1,
+    target_plan: { ref: opts?.ref ?? "my-plan.md" },
+    target_peer: opts?.target_peer ?? "Delta",
+    lens_set_applied: ["RE"],
+    audit_class: "inside-pair",
+    audit_axes: ["surface"],
+    verdict: "SHIP-CLEAN",
+    counts: { blocker: 0, fold: 0, nit: 0 },
+    three_option_ask: {
+      a_ratify: "plan cleared",
+      b_fold_if_applicable: null,
+      c_reframe_if_applicable: null,
+    },
+    findings: [],
+  });
+}
+
+describe("queryPendingAuditAsks — plan pairing (b2 generalization)", () => {
+  it("plan-vs-plan same ref: verdict closes ask", () => {
+    const messages: ChannelMessage[] = [
+      inlineMsg({
+        ts: "2026-05-20T00:10:00Z",
+        from: "alpha-sid",
+        identity: "Alpha",
+        kind: "audit-ask",
+        body: planAskBody({ ref: "my-plan.md", target_peer: "Charlie" }),
+      }),
+      inlineMsg({
+        ts: "2026-05-20T00:20:00Z",
+        from: "charlie-sid",
+        identity: "Charlie",
+        kind: "audit-verdict",
+        body: planVerdictBody({ ref: "my-plan.md", target_peer: "Alpha" }),
+      }),
+    ];
+    const out = queryPendingAuditAsks({
+      messages,
+      bodies_by_ref: new Map(),
+      target_identity: "Charlie",
+      now_ms: NOW_MS,
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it("plan ask with no verdict is pending; output target has kind=plan", () => {
+    const messages: ChannelMessage[] = [
+      inlineMsg({
+        ts: "2026-05-20T00:10:00Z",
+        from: "alpha-sid",
+        identity: "Alpha",
+        kind: "audit-ask",
+        body: planAskBody({ ref: "my-plan.md", target_peer: "Charlie" }),
+      }),
+    ];
+    const out = queryPendingAuditAsks({
+      messages,
+      bodies_by_ref: new Map(),
+      target_identity: "Charlie",
+      now_ms: NOW_MS,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.target.kind).toBe("plan");
+  });
+
+  it("pr verdict does NOT close plan ask (kind mismatch — non-vacuous)", () => {
+    const messages: ChannelMessage[] = [
+      inlineMsg({
+        ts: "2026-05-20T00:10:00Z",
+        from: "alpha-sid",
+        identity: "Alpha",
+        kind: "audit-ask",
+        body: planAskBody({ ref: "my-plan.md", target_peer: "Charlie" }),
+      }),
+      inlineMsg({
+        ts: "2026-05-20T00:20:00Z",
+        from: "charlie-sid",
+        identity: "Charlie",
+        kind: "audit-verdict",
+        body: verdictBody({ repo: "claude-conductor", number: 99 }),
+      }),
+    ];
+    const out = queryPendingAuditAsks({
+      messages,
+      bodies_by_ref: new Map(),
+      target_identity: "Charlie",
+      now_ms: NOW_MS,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.target.kind).toBe("plan");
+  });
+
+  it("plan verdict with different ref does NOT close ask", () => {
+    const messages: ChannelMessage[] = [
+      inlineMsg({
+        ts: "2026-05-20T00:10:00Z",
+        from: "alpha-sid",
+        identity: "Alpha",
+        kind: "audit-ask",
+        body: planAskBody({ ref: "my-plan.md", target_peer: "Charlie" }),
+      }),
+      inlineMsg({
+        ts: "2026-05-20T00:20:00Z",
+        from: "charlie-sid",
+        identity: "Charlie",
+        kind: "audit-verdict",
+        body: planVerdictBody({ ref: "other-plan.md", target_peer: "Alpha" }),
+      }),
+    ];
+    const out = queryPendingAuditAsks({
+      messages,
+      bodies_by_ref: new Map(),
+      target_identity: "Charlie",
+      now_ms: NOW_MS,
+    });
+    expect(out).toHaveLength(1);
+  });
+});

@@ -256,3 +256,36 @@ affects:
 **Reason:** The latent block-and-redeliver exposure is real even though all 4 observed entries were test residue. The per-channel isolation (unreadable → empty → normal pass() path) is the load-bearing fix; the outer-catch breadcrumb pollution is the observable symptom. Option B (defense-in-depth wrap in the deliverer) was captain-skipped at n=1. The test is also corrected: the wrong comment ("readChannelMessages swallows EACCES" — false when cursor is seeded) is fixed, and a no-outer-catch assertion is added (`readPresenceFailures(1000)` before/after count of `kind:unhandled` events).
 
 **Supersedes / superseded_by:** Additive behavior extension to `parseJsonlMessages` docstring + implementation. Does not supersede any prior decision.
+
+## 2026-06-11 — Decision H: audit-target full migration fast-follow (PR #230)
+
+```yaml
+---
+ts: 2026-06-11T18:00:00Z
+kind: architectural
+severity: major
+phase: cluster-6
+affects:
+  - src/channels/audit-types.ts
+  - src/channels/audit-verdict.ts
+  - src/channels/audit-ask.ts
+  - src/channels/cli.ts
+  - src/audit/quorum.ts
+  - src/audits/queue.ts
+  - src/reciprocation/graph.ts
+---
+```
+
+**Context:** Decision G (#193) added `AuditTarget` as a discriminated union and kept `target_pr?` as a transitional-optional field for wire back-compat. This fast-follow (#230) executes the deferred three decisions from the delta-spec (`~/.claude/plans/audit-target-l697-delta-spec-delta-2026-06-11.md`) ratified on the coordination channel by Hotel/Delta/Foxtrot (2026-06-11).
+
+**D-MIG-1 (D2): Drop `target_pr?` from internal body types.** `AuditAskBody` and `AuditVerdictBody` now carry only `target: AuditTarget` (required). The `target_pr?` optional was the migration shim from #193; removing it lets the TypeScript compiler enumerate every internal consumer — any surviving `body.target_pr` read becomes a compile error, giving a structural completeness guarantee no grep can match. Wire back-compat is preserved: `parseAuditTarget` still accepts `target_pr` / `target_plan` wire fields; `auditTargetToWire` emits them; `wrapAuditVerdictBody` injects them before canonicalization. The send gate adds a strict-wire check: a body with only `target` (no wire field) is rejected, preventing mixed-version cohort breakage.
+
+**D-MIG-2 (D4): Enable plan-quorum and plan-pairing.** `queryPendingAuditAsks` now uses `sameTarget` for pairing (plan ask ↔ plan verdict matched by ref; pr ↔ pr by repo+number; cross-kind never matches). `computeAuditQuorum` now accepts plan targets via kind-aware matching (exact ref equality). The b2 `kind !== "pr"` skip guards are removed from both. Non-vacuity verified empirically: reverting the plan-match branch reds the plan-quorum tests; plan verdicts do not count toward PR quorum queries and vice versa.
+
+**D-MIG-3: Reciprocation graph stays PR-only by design.** `buildReciprocationGraph` keeps the explicit `body.target.kind !== "pr"` skip with a comment naming this decision. Plan-target verdicts are not dropped from the channel — only excluded from the auto-reciprocation ledger. Rationale: plan audits do not have a natural reciprocation debt unit (no PR number to pair by authorship). Generalize if a plan-reciprocation consumer surfaces.
+
+**Chosen:** All three decisions executed as specified in the delta-spec. Channel ratification: Hotel/Delta/Foxtrot on `coordination` channel, 2026-06-11; Bravo + Charlie 2-lens gate (Bravo SHIP-CLEAN B0/F0/N1 + Charlie SHIP-WITH-FOLDS B0/F3/N2, converged to fold-union before merge).
+
+**Reason:** D-MIG-1 is the structural completeness net — without the type drop, the compiler cannot enumerate consumers and a missed consumer is undetectable. D-MIG-2 closes the plan-gate workaround class (plan audits now flow through the same queue/quorum discipline as PR audits). D-MIG-3 is an explicit scope boundary, not a gap.
+
+**Supersedes / superseded_by:** Completes Decision G's deferred fast-follow. The transitional `target_pr?` optional field removed from internal types (D-MIG-1). Wire field `target_pr` / `target_plan` retained in the wire protocol for pre-#230 reader back-compat.

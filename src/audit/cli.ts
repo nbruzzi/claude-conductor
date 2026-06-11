@@ -495,7 +495,7 @@ export async function runAuditCli(argv: readonly string[]): Promise<void> {
     const report = computeAuditQuorum({
       messages,
       bodies_by_ref,
-      target_pr: flags.targetPr,
+      target: { kind: "pr" as const, ...flags.targetPr },
       options,
     });
     if (flags.output === "json") {
