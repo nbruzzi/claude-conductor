@@ -383,4 +383,48 @@ describe("repo-worktree-gc hook", () => {
     // reaped. The max(15min, 60min) = 60min floor keeps it fresh → preserved.
     expect(existsSync(worktreePath)).toBe(true);
   });
+
+  /* ─── G3 data-loss fix: dirty-tree WIP guard (repo-parity) ──────── */
+
+  it("G3 parity: dirty + heartbeat-dead worktree → NOT reaped (WIP guard fires)", async () => {
+    // This is the G3 data-loss scenario: a repo worktree with uncommitted WIP
+    // and a stale/absent heartbeat was previously reaped because repo-worktree-gc
+    // lacked the dirty-tree guard that dotfiles-worktree-gc had. The shared
+    // worktreeReapGuard now gives both reapers the same protection.
+    process.env[FEATURE_FLAG_ENV] = "1";
+    const repo = join(tmpHome, "repo-a");
+    initRepo(repo);
+    const stalePrefix = "aa00aa00";
+    const worktreePath = addWorktree(repo, stalePrefix);
+
+    // Uncommitted in-flight work a `git worktree remove --force` would destroy.
+    // No heartbeat is planted — this worktree is heartbeat-dead and would
+    // otherwise be reaped. The WIP guard must be the only thing that saves it.
+    writeFileSync(join(worktreePath, "wip-uncommitted.ts"), "// in-flight\n");
+
+    const configPath = join(tmpHome, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        repos: [{ name: "repo-a", canonical: repo, auto: true, gc: true }],
+      }),
+    );
+    process.env[CONFIG_ENV] = configPath;
+
+    const result = await gcCheck(makeInput());
+    expect(result.exitCode).toBe(0);
+    // The WIP guard preserved it — a `--force` reap would have destroyed WIP.
+    expect(existsSync(worktreePath)).toBe(true);
+
+    const events = readPresenceFailures();
+    const guard = events.find(
+      (e) =>
+        e.kind === "worktree-cleanup-failed" &&
+        e.detail.includes("dirty working tree"),
+    );
+    expect(guard).toBeDefined();
+    // Confirm no reap fired for this worktree.
+    expect(events.find((e) => e.kind === "worktree-gc-reaped")).toBeUndefined();
+  });
 });

@@ -39,8 +39,10 @@ import { effectiveHome } from "../shared/home.ts";
 import {
   existsSync,
   lstatSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
+  statSync,
   symlinkSync,
   type Stats,
 } from "node:fs";
@@ -324,7 +326,7 @@ export function removeWorktreeByPath(
  *
  * RE-2 caller-side guard (see `removeWorktree`'s JSDoc): `removeWorktree` uses
  * `--force` and trusts the caller to refuse on WIP. This is that refusal probe;
- * `dotfiles-worktree-gc`'s `guardReason` consults it before reaping.
+ * `worktreeReapGuard` in both reapers consults it before reaping.
  */
 export function worktreeUncommittedPaths(
   worktreePath: string,
@@ -654,6 +656,107 @@ export function linkCanonicalNodeModules(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+// ─── Reap-guard shared primitives ────────────────────────────────────
+
+/** Directory under `~/.claude/` that holds forensic-marker sentinel files.
+ *  A file named `<sid-prefix>` under this directory prevents a reap of any
+ *  worktree attributed to that sid-prefix, regardless of heartbeat state.
+ *  Shared constant — both reapers (dotfiles + repo) use the same path. */
+const FORENSIC_MARKER_DIR_NAME = "session-state-forensic";
+
+/** index.lock mtime gate — a lock file older than 1 hour is a crashed git
+ *  process and is safe to ignore for reaping purposes. */
+const INDEX_LOCK_FRESH_MS = 60 * 60 * 1000;
+
+/** .bun-tmp-* mtime gate — a typical `bun install` completes within 5 min. */
+const BUN_TMP_FRESH_MS = 5 * 60 * 1000;
+
+/**
+ * True when a forensic-marker sentinel exists for `sidPrefix` under
+ * `~/.claude/session-state-forensic/`.  A present marker unconditionally
+ * prevents the reap of any worktree attributed to that prefix — the operator
+ * has flagged the session for investigation.
+ *
+ * Byte-identical across both reapers; extracted here so the path is a single
+ * source of truth.
+ */
+export function forensicMarkerActive(sidPrefix: string): boolean {
+  const path = join(
+    effectiveHome(),
+    ".claude",
+    FORENSIC_MARKER_DIR_NAME,
+    sidPrefix,
+  );
+  return existsSync(path);
+}
+
+/**
+ * Returns a human-readable guard reason when a worktree must NOT be reaped,
+ * or `null` when it is safe to reap.  Guards (in order):
+ *
+ *   1. **Dirty working tree** — `worktreeUncommittedPaths` detects staged,
+ *      modified, or untracked files (excluding the provisioner node_modules
+ *      symlink).  A `--force` removal would silently destroy this WIP.
+ *      This is the G3 data-loss fix: the repo reaper previously lacked this
+ *      check; both reapers now call the same guard through this shared helper.
+ *   2. **index.lock active** — a fresh (< 1 h) `.git/index.lock` means a git
+ *      operation is in progress; reaping mid-operation can corrupt the repo.
+ *   3. **Mid-bun-install** — a fresh (< 5 min) `.bun-tmp-*` entry under
+ *      `node_modules/` means bun is writing dependencies; removing the tree
+ *      now would tear the install.
+ *
+ * Fail-open: any stat / read error on the safety-check paths returns `null`
+ * (treat as inactive) so a broken guard cannot permanently block reaping.
+ *
+ * RE-2 caller-side contract: `removeWorktree` uses `git worktree remove
+ * --force` and trusts the caller to refuse on WIP.  This function is that
+ * refusal probe; callers must invoke it before every reap.
+ */
+export function worktreeReapGuard(
+  worktreePath: string,
+  now: number,
+): string | null {
+  const dirty = worktreeUncommittedPaths(worktreePath);
+  if (dirty.length > 0) {
+    const sample = dirty.slice(0, 3).join(", ");
+    return `dirty working tree — ${String(dirty.length)} uncommitted/untracked path(s) (e.g. ${sample}); --force removal would destroy WIP`;
+  }
+
+  const indexLock = join(worktreePath, ".git", "index.lock");
+  if (existsSync(indexLock)) {
+    try {
+      const age = now - statSync(indexLock).mtimeMs;
+      if (age >= 0 && age < INDEX_LOCK_FRESH_MS) {
+        return ".git/index.lock active (mid-checkout/commit)";
+      }
+    } catch {
+      /* skip — treat as stale lock */
+    }
+  }
+
+  const nodeModules = join(worktreePath, "node_modules");
+  if (existsSync(nodeModules)) {
+    try {
+      const entries = readdirSync(nodeModules);
+      for (const entry of entries) {
+        if (!entry.startsWith(".bun-tmp-")) continue;
+        try {
+          const age = now - statSync(join(nodeModules, entry)).mtimeMs;
+          if (age >= 0 && age < BUN_TMP_FRESH_MS) {
+            return `node_modules/${entry} active (mid-bun-install)`;
+          }
+        } catch {
+          /* skip individual entry */
+        }
+      }
+    } catch {
+      /* skip — treat as no guard */
+    }
+  }
+
+  return null;
 }
 
 // ─── Internal helpers ───────────────────────────────────────────────
