@@ -1933,13 +1933,20 @@ export function listChannelArchiveFilePaths(channelDirPath: string): string[] {
 
 /** Parse one JSONL message file. Tolerant: a corrupt line is skipped, never
  *  thrown upward. Returns the parsed messages plus a skipped-count so callers
- *  can aggregate a single warning across multiple files. Missing file → empty. */
+ *  can aggregate a single warning across multiple files. Missing or unreadable
+ *  file → empty (ENOENT and IO errors like EACCES both return empty; production
+ *  EACCES signaling is deliberately deferred — see Decision EACCES-FIX-1). */
 function parseJsonlMessages(path: string): {
   messages: ChannelMessage[];
   skipped: number;
 } {
   if (!existsSync(path)) return { messages: [], skipped: 0 };
-  const text = readFileSync(path, "utf-8");
+  let text: string;
+  try {
+    text = readFileSync(path, "utf-8");
+  } catch {
+    return { messages: [], skipped: 0 };
+  }
   const messages: ChannelMessage[] = [];
   let skipped = 0;
   for (const raw of text.split("\n")) {
