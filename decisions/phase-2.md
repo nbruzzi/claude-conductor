@@ -188,3 +188,18 @@ CLI DX score under SHIP threshold (≥ 8 / 10) but verdict is FOLD-with-HOTFIX-g
 **Supersedes / superseded_by:** Closes the Wave 1 deferrals enumerated in Decision A (RE-1, RE-2, ARCH-2, ARCH-3, ARCH-4 routed to fold-now or backlog per disposition table above).
 
 ---
+
+## 2026-06-11 — Decision A observation block: Slice-4 reaper soak-read (backlog L129)
+
+**Context:** The L129 soak-verify (filed 2026-04-29 with Decision A) executed by Foxtrot (`1bf33c5d`) during the liveness-cluster close-out cycle. Window: the full retained `~/.claude/logs/.presence-gate-failures.log` history — `.log.1` (3,198 entries, pre-rotation) + the live log (228 entries, 2026-06-11 14:28–15:35Z, peak 6-session load).
+
+**Protect-guards are load-bearing in production (the headline):** `harness-active-suppressed` ×832 (Lane A observe-protect) · `worktree-gc-liveness-fallback-fired` ×29 all-time (the #187 cross-artifact gate's live-worktree saves; the L137 text's "6× historically" is long superseded) · `worktree-gc-skipped-named` ×52 (G6-P1 subtract-only guard) · `active-sessions-live-suppressed` ×39. `.reaper-acked` markers on disk: **0** (no stuck reaper acks — the >7-day-persistence anomaly is absent).
+
+**Contention family — benign-retried under load:** `registry-contention` ×258 + `write-failed` ×210 + `clock-skew` ×30 + `takeover-audit-failed` ×30 across the window; today's 6-session peak alone produced 15 contention entries (above the entry's >10/24h flag, but timestamp-clustered at simultaneous heartbeat writes during the takeover storm — retry-resolved, no operational symptom). Baseline expectation ("0 race-detection breadcrumbs") was calibrated for single-session operation; multi-NATO cohorts make a nonzero baseline normal. Recommend re-calibrating the anomaly threshold to per-concurrent-session.
+
+**Two NEW defect signals (filed):**
+
+1. `unhandled` ×4 (2026-06-11): `peer-message-deliverer: outer-catch swallowed unhandled throw: EACCES permission denied open '$TMPDIR/peer-message-de…'` — fail-open held (correct direction for a UserPromptSubmit hook), but the deliverer's tmp-file write hits EACCES repeatedly. Filed as a next-touch/backlog item (trigger: recurrence or next deliverer edit).
+2. `check-import-failed` ×93 — the broken-import wedge class is firing far more than expected; worth a dedicated classification pass (which check, which window, post-fix residue vs live issue) at the next hooks-hygiene slice.
+
+**Verdict:** the shipped liveness/reaper cluster behaves as designed under both solo and 6-session peak load; destructive paths show zero false-reap signals in the soak window; the protective layers fire regularly and correctly. L129 CLOSED with this block.
