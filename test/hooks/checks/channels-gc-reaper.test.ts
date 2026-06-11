@@ -646,3 +646,101 @@ describe("channels-gc-reaper channelHB-GC (M3 — prune stale heartbeat markers)
     expect(existsSync(legacyPath)).toBe(false);
   });
 });
+
+describe("channels-gc-reaper sealed-archive prune (Slice 4)", () => {
+  beforeEach(sandbox);
+  afterEach(cleanup);
+
+  const STALE_S = 31 * 24 * 60 * 60; // 31 days > 30d TTL
+  const FRESH_S = 1 * 24 * 60 * 60; // 1 day < 30d TTL
+
+  /** Plant a sealed message-rotation archive file with an explicit mtime. */
+  function plantArchive(
+    channelId: string,
+    seq: number,
+    ageSeconds: number,
+  ): string {
+    const path = join(channelDir(channelId), `messages.${seq}.archive.jsonl`);
+    writeFileSync(path, `{"seq":${seq}}\n`);
+    const mtime = Date.now() / 1000 - ageSeconds;
+    utimesSync(path, mtime, mtime);
+    return path;
+  }
+
+  it("prunes stale archives beyond the keep-newest-3 floor", async () => {
+    await makeChannel("arc-prune");
+    // 5 archives: seqs 1+2 are stale; seqs 3+4+5 are fresh (keep floor protects them
+    // even if they were stale, but here fresh confirms only old ones are pruned).
+    const stale1 = plantArchive("arc-prune", 1, STALE_S);
+    const stale2 = plantArchive("arc-prune", 2, STALE_S);
+    const fresh3 = plantArchive("arc-prune", 3, FRESH_S);
+    const fresh4 = plantArchive("arc-prune", 4, FRESH_S);
+    const fresh5 = plantArchive("arc-prune", 5, FRESH_S);
+
+    const result = await check(inputFor());
+
+    expect(existsSync(stale1)).toBe(false);
+    expect(existsSync(stale2)).toBe(false);
+    expect(existsSync(fresh3)).toBe(true);
+    expect(existsSync(fresh4)).toBe(true);
+    expect(existsSync(fresh5)).toBe(true);
+    expect(result.stdout).toContain(
+      "pruned 2 sealed archive(s) channel=arc-prune",
+    );
+    expect(result.stdout).toContain("seqs=[1,2]");
+  });
+
+  it("keeps all archives when count is at or below the keep-N floor (3)", async () => {
+    await makeChannel("arc-floor");
+    // Only 3 archives, all stale — floor protects all of them.
+    const p1 = plantArchive("arc-floor", 1, STALE_S);
+    const p2 = plantArchive("arc-floor", 2, STALE_S);
+    const p3 = plantArchive("arc-floor", 3, STALE_S);
+
+    const result = await check(inputFor());
+
+    expect(existsSync(p1)).toBe(true);
+    expect(existsSync(p2)).toBe(true);
+    expect(existsSync(p3)).toBe(true);
+    expect(result.stdout).not.toContain("pruned");
+  });
+
+  it("keeps archives that are within the 30d TTL even when count exceeds keep-N", async () => {
+    await makeChannel("arc-fresh");
+    // 5 fresh archives — none old enough to prune.
+    const paths = [1, 2, 3, 4, 5].map((seq) =>
+      plantArchive("arc-fresh", seq, FRESH_S),
+    );
+
+    const result = await check(inputFor());
+
+    for (const p of paths) expect(existsSync(p)).toBe(true);
+    expect(result.stdout).not.toContain("pruned");
+  });
+
+  it("prunes only the stale candidates and retains the newest-3 floor even when they are stale", async () => {
+    await makeChannel("arc-mixed");
+    // 6 archives: seqs 1+2+3 are stale candidates; seqs 4+5+6 are the newest-3.
+    // Even if the newest-3 were stale, the floor protects them. Here they are
+    // also stale to verify the keep-N logic, not the TTL, protects the newest-3.
+    const stale1 = plantArchive("arc-mixed", 1, STALE_S);
+    const stale2 = plantArchive("arc-mixed", 2, STALE_S);
+    const stale3 = plantArchive("arc-mixed", 3, STALE_S);
+    const kept4 = plantArchive("arc-mixed", 4, STALE_S); // stale but in keep-floor
+    const kept5 = plantArchive("arc-mixed", 5, STALE_S); // stale but in keep-floor
+    const kept6 = plantArchive("arc-mixed", 6, STALE_S); // stale but in keep-floor
+
+    const result = await check(inputFor());
+
+    expect(existsSync(stale1)).toBe(false);
+    expect(existsSync(stale2)).toBe(false);
+    expect(existsSync(stale3)).toBe(false);
+    expect(existsSync(kept4)).toBe(true);
+    expect(existsSync(kept5)).toBe(true);
+    expect(existsSync(kept6)).toBe(true);
+    expect(result.stdout).toContain(
+      "pruned 3 sealed archive(s) channel=arc-mixed",
+    );
+    expect(result.stdout).toContain("seqs=[1,2,3]");
+  });
+});

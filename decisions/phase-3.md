@@ -2577,3 +2577,29 @@ affects: [src/channels/identity-context.ts]
 **Follow-up (BACKLOG, trigger = a future order-dependent `listChannels` consumer):** `listChannels` itself stays UNSORTED at source (readdir order); the sort is scoped to `getIdentityContextForSession` (surgical, right for this red-main hotfix). Close the latent class deliberately when it triggers — either lift the sort into `listChannels` at source OR pin an explicit "UNSORTED — sort at your consumer if order-dependent" clause on `listChannels`' JSDoc. (Charlie #227 nit; Foxtrot-ruled to backlog.)
 
 — flake-fix root-caused + authored by Bravo (Opus 4.8); lens: Charlie (Fable 5) + Delta (Opus 4.8) + Golf supplementary.
+
+---
+
+## Slice 4 — sealed-archive retention: `pruneSealedArchives` in `channels-gc-reaper` (2026-06-11)
+
+```yaml
+---
+ts: 2026-06-11T15:35:00Z
+kind: architectural
+severity: minor
+phase: 3
+affects: [src/hooks/checks/channels-gc-reaper.ts]
+---
+```
+
+**Problem:** `rotateChannelMessages` creates `messages.<seq>.archive.jsonl` sibling files inside each channel directory, but nothing ever deletes them. On long-lived eternal channels (e.g., `coordination`), archives accumulate without bound — unbounded disk growth.
+
+**Policy:** 30-day TTL + keep-newest-3 floor. An archive is eligible for pruning only when its mtime is older than 30 days AND it is not in the 3 highest-sequence (newest) archives for its channel. The keep-3 floor provides a recovery floor on slow-rotating channels where all archives happen to be stale.
+
+**Verifiability-horizon truncation (by design):** pruning removes archive files that some consumers require for full-history reads. Any consumer that spans the rotation boundary — `readMessages(id, { includeArchive: true })` callers, `listChannelArchiveFilePaths(channelDir)` users, the verdict-signature-chain verifier (`:1884-1886`), the chain constructor, and the analytics / cursor / tail readers (`:1921-1932`) — will have a truncated view of history for messages older than the retained archives. This is intentional GC. The reaper breadcrumb carries pruned SEQs so consumers can detect the horizon boundary.
+
+**Implementation:** `pruneSealedArchives(channelId)` added to `channels-gc-reaper.ts`; called from `reapChannel()` after `rotateChannelMessages`. Uses `withMetadataLock` to serialize against concurrent rotations. Breadcrumb on failed unlink; ENOENT silently skipped (idempotent).
+
+**Files changed:** `src/hooks/checks/channels-gc-reaper.ts` (import `listChannelArchiveFilePaths`; constants; `pruneSealedArchives`; call site); `test/hooks/checks/channels-gc-reaper.test.ts` (4 new tests). 2-lens gate: Bravo (Opus 4.8) + Charlie (Fable 5).
+
+— authored by Golf (Sonnet 4.6).
