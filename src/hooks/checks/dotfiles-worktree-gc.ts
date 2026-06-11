@@ -47,7 +47,6 @@
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   realpathSync,
   statSync,
   utimesSync,
@@ -66,13 +65,14 @@ import { sessionLivePrefixSource } from "../../active-sessions/session-liveness.
 import { getWallClockNow } from "../../shared/clock.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
+  forensicMarkerActive,
   formatNamedWorktreeReapCandidate,
   isNamedWorktreeReapReportEnabled,
   isSidPrefixWorktreeId,
   listWorktrees,
   NAMED_WORKTREE_STALE_FLOOR_MS,
   removeWorktree,
-  worktreeUncommittedPaths,
+  worktreeReapGuard,
 } from "../../worktrees/index.ts";
 import { gatedNamedWorktreeReapCandidates } from "../../worktrees/liveness.ts";
 import { resolveSessionIdOrNull } from "../session-id.ts";
@@ -90,13 +90,6 @@ const REAP_INTERVAL_MS = 5 * 60 * 1000;
  *  build-wait scenarios. */
 const GC_WINDOW_MS = 60 * 60 * 1000;
 
-/** Index-lock mtime gate — older than 1 hour is a crashed git process. */
-const INDEX_LOCK_FRESH_MS = 60 * 60 * 1000;
-
-/** bun-tmp mtime gate — typical bun-install completes within 5 minutes. */
-const BUN_TMP_FRESH_MS = 5 * 60 * 1000;
-
-const FORENSIC_MARKER_DIR_NAME = "session-state-forensic";
 const CURSOR_FILE_NAME = ".worktree-gc-cursor";
 
 export async function check(input: HookInput): Promise<HookResult> {
@@ -200,7 +193,7 @@ export async function check(input: HookInput): Promise<HookResult> {
         continue;
       }
 
-      const guard = guardReason(wt.path, now);
+      const guard = worktreeReapGuard(wt.path, now);
       if (guard !== null) {
         appendPresenceFailure({
           timestamp: new Date().toISOString(),
@@ -369,63 +362,4 @@ function mapByDotfilesRoot(
     out.set(canonical, a);
   }
   return out;
-}
-
-function forensicMarkerActive(sidPrefix: string): boolean {
-  const path = join(
-    effectiveHome(),
-    ".claude",
-    FORENSIC_MARKER_DIR_NAME,
-    sidPrefix,
-  );
-  return existsSync(path);
-}
-
-function guardReason(worktreePath: string, now: number): string | null {
-  // RE-2 data-loss guard (L1049 2a): removeWorktree uses `git worktree remove
-  // --force`, which destroys uncommitted work; its JSDoc defers this refusal to
-  // the caller. A worktree carrying WIP (staged/modified/untracked, excluding
-  // the provisioner node_modules symlink) must NOT be reaped — the 3/3 live
-  // reap of 2026-06-03 hit ALIVE sessions, which are exactly the ones likely to
-  // hold WIP. Orthogonal to the liveness gate above: even a correctly
-  // reap-eligible (no-live-heartbeat) worktree is preserved if it holds WIP.
-  const dirty = worktreeUncommittedPaths(worktreePath);
-  if (dirty.length > 0) {
-    const sample = dirty.slice(0, 3).join(", ");
-    return `dirty working tree — ${String(dirty.length)} uncommitted/untracked path(s) (e.g. ${sample}); --force removal would destroy WIP`;
-  }
-
-  const indexLock = join(worktreePath, ".git", "index.lock");
-  if (existsSync(indexLock)) {
-    try {
-      const age = now - statSync(indexLock).mtimeMs;
-      if (age >= 0 && age < INDEX_LOCK_FRESH_MS) {
-        return ".git/index.lock active (mid-checkout/commit)";
-      }
-    } catch {
-      /* skip — treat as stale lock */
-    }
-  }
-
-  const nodeModules = join(worktreePath, "node_modules");
-  if (existsSync(nodeModules)) {
-    try {
-      const entries = readdirSync(nodeModules);
-      for (const entry of entries) {
-        if (!entry.startsWith(".bun-tmp-")) continue;
-        try {
-          const age = now - statSync(join(nodeModules, entry)).mtimeMs;
-          if (age >= 0 && age < BUN_TMP_FRESH_MS) {
-            return `node_modules/${entry} active (mid-bun-install)`;
-          }
-        } catch {
-          /* skip individual entry */
-        }
-      }
-    } catch {
-      /* skip — treat as no guard */
-    }
-  }
-
-  return null;
 }

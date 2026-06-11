@@ -35,6 +35,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  forensicMarkerActive,
   formatNamedWorktreeReapCandidate,
   isSidPrefixWorktreeId,
   isWorktreeStale,
@@ -48,8 +49,13 @@ import {
   removeWorktreeByPath,
   worktreeLastActivityMs,
   worktreePathForSession,
+  worktreeReapGuard,
 } from "../../src/worktrees/index.ts";
-import { makeTmpRepo, type TmpRepo } from "../../test-utils/index.ts";
+import {
+  makeTmpHome,
+  makeTmpRepo,
+  type TmpRepo,
+} from "../../test-utils/index.ts";
 
 const FEATURE_FLAG_ENV = "CLAUDE_CONDUCTOR_PER_SESSION_WORKTREES";
 const SID = "94a8058c-d764-43e1-a87e-b43126b7fe90";
@@ -803,5 +809,114 @@ describe("formatNamedWorktreeReapCandidate — landed-signal one-liner", () => {
   it("renders a detached-HEAD candidate (branch === null)", () => {
     const s = formatNamedWorktreeReapCandidate({ ...base, branch: null }, now);
     expect(s).toContain("detached-HEAD");
+  });
+});
+
+/* ─── forensicMarkerActive ────────────────────────────────────────── */
+
+describe("forensicMarkerActive — shared reap-guard primitive", () => {
+  let tmp: ReturnType<typeof makeTmpHome>;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmp = makeTmpHome();
+    prevHome = process.env["HOME"];
+    process.env["HOME"] = tmp.home;
+  });
+
+  afterEach(() => {
+    tmp.cleanup();
+    if (prevHome !== undefined) process.env["HOME"] = prevHome;
+    else delete process.env["HOME"];
+  });
+
+  it("returns false when no marker file exists for the sid-prefix", () => {
+    expect(forensicMarkerActive("deadbeef")).toBe(false);
+  });
+
+  it("returns true when the marker sentinel file is present", () => {
+    const forensicDir = join(tmp.home, ".claude", "session-state-forensic");
+    mkdirSync(forensicDir, { recursive: true });
+    writeFileSync(join(forensicDir, "deadbeef"), "");
+    expect(forensicMarkerActive("deadbeef")).toBe(true);
+  });
+
+  it("returns false for an unrelated sid-prefix even when another marker exists", () => {
+    const forensicDir = join(tmp.home, ".claude", "session-state-forensic");
+    mkdirSync(forensicDir, { recursive: true });
+    writeFileSync(join(forensicDir, "cafebabe"), "");
+    expect(forensicMarkerActive("deadbeef")).toBe(false);
+  });
+});
+
+/* ─── worktreeReapGuard ───────────────────────────────────────────── */
+
+describe("worktreeReapGuard — shared reap-guard primitive (G3)", () => {
+  let repo: TmpRepo;
+
+  beforeEach(() => {
+    repo = makeTmpRepo();
+  });
+
+  afterEach(() => {
+    repo.cleanup();
+  });
+
+  it("returns null for a clean worktree (no guard needed)", () => {
+    // A fresh worktree with no uncommitted work passes all guards.
+    const wtPath = `${repo.dir}-wt-clean`;
+    execFileSync("git", ["worktree", "add", "-b", "worktree/clean", wtPath], {
+      cwd: repo.dir,
+      stdio: "ignore",
+    });
+    try {
+      expect(worktreeReapGuard(wtPath, Date.now())).toBeNull();
+    } finally {
+      execFileSync("git", ["worktree", "remove", "--force", wtPath], {
+        cwd: repo.dir,
+        stdio: "ignore",
+      });
+    }
+  });
+
+  it("returns a dirty-working-tree guard when uncommitted files are present", () => {
+    // This is the G3 data-loss fix path: an uncommitted file must block the reap.
+    // The guard must return a non-null reason containing "dirty working tree".
+    const wtPath = `${repo.dir}-wt-dirty`;
+    execFileSync("git", ["worktree", "add", "-b", "worktree/dirty", wtPath], {
+      cwd: repo.dir,
+      stdio: "ignore",
+    });
+    try {
+      writeFileSync(join(wtPath, "wip.ts"), "// uncommitted\n");
+      const reason = worktreeReapGuard(wtPath, Date.now());
+      expect(reason).not.toBeNull();
+      expect(reason).toContain("dirty working tree");
+    } finally {
+      execFileSync("git", ["worktree", "remove", "--force", wtPath], {
+        cwd: repo.dir,
+        stdio: "ignore",
+      });
+    }
+  });
+
+  it("does NOT guard on an untracked node_modules entry (provisioner symlink class)", () => {
+    // The provisioner creates a node_modules symlink that git shows as untracked.
+    // This must NOT trigger the dirty guard — a clean worktree with only a
+    // node_modules entry must still be reapable.
+    const wtPath = `${repo.dir}-wt-nm`;
+    execFileSync("git", ["worktree", "add", "-b", "worktree/nm", wtPath], {
+      cwd: repo.dir,
+      stdio: "ignore",
+    });
+    try {
+      writeFileSync(join(wtPath, "node_modules"), "");
+      expect(worktreeReapGuard(wtPath, Date.now())).toBeNull();
+    } finally {
+      execFileSync("git", ["worktree", "remove", "--force", wtPath], {
+        cwd: repo.dir,
+        stdio: "ignore",
+      });
+    }
   });
 });

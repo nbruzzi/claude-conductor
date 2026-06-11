@@ -2512,3 +2512,25 @@ files:
 **Supersedes / superseded_by:** extends G6-P2 (the deferred machine-liveness half); supersedes the Option-C mechanism sketch recorded in the 2026-06-09 handoff. The pure enumerator, the human-gate, the opt-in flag, and the sid-prefix reaper path are all UNCHANGED.
 
 — SPAWN-3 authored by Charlie (machine-liveness lane); Option-C supersession evidence verified independently by Alpha (captain); RE design-audit subagent (adversarial, pre-build); Alpha 2-lens shadow at PR-boundary.
+
+---
+
+## G3 data-loss fix — shared `worktreeReapGuard` extraction (2026-06-11)
+
+**Files changed:**
+
+- `src/worktrees/index.ts` (added `forensicMarkerActive`, `worktreeReapGuard`, `readdirSync`/`statSync` imports + private constants)
+- `src/hooks/checks/dotfiles-worktree-gc.ts` (import from shared helper; removed private copies)
+- `src/hooks/checks/repo-worktree-gc.ts` (import from shared helper; removed private copies + fixed data-loss gap)
+- `test/hooks/checks/repo-worktree-gc.test.ts` (added G3 parity test)
+- `test/worktrees/index.test.ts` (added `forensicMarkerActive` + `worktreeReapGuard` unit tests)
+
+**Gap closed:** `repo-worktree-gc`'s `guardReason` lacked the `worktreeUncommittedPaths` dirty-tree check that `dotfiles-worktree-gc.ts` already carried (RE-2 caller-side guard). A conductor worktree holding uncommitted WIP with a stale/absent heartbeat was previously reaped — `--force` removal destroyed that WIP silently. `dotfiles-worktree-gc` never-kill-WIP held 4/5 paths; this closes the 5th.
+
+**Shape (3/3 roadmap-ratified):** EXTRACT `worktreeReapGuard` (composed dirty-check + index.lock + .bun-tmp-_ iteration) and the byte-identical `forensicMarkerActive` into `src/worktrees/index.ts` (home of `worktreeUncommittedPaths`); both reapers import and delete their private copies. Node_modules exclusion is subtract-only-safe for repo worktrees (provision-repo.ts creates the same symlink only when canonical has node_modules). Unified on the dotfiles precise `.bun-tmp-_` iteration, dropping repo's dir-mtime heuristic.
+
+**Non-vacuity gate (Bravo/Opus lens responsibility):** the repo-parity test (`aa00aa00` sid-prefix, uncommitted file, no heartbeat) must FAIL when the dirty-check branch of `worktreeReapGuard` is reverted — proving the test is not vacuously green.
+
+**Verification:** typecheck + format + lint clean; 87 tests pass (28 pre-existing reaper tests + 1 new G3 parity test + 6 new shared-helper unit tests + pre-existing index.test.ts suite). Design pre-ratified 3/3 (Bravo SHIP-CLEAN / Charlie RATIFY w-absorbed-fold / Delta RATIFY CLEAN) per roadmap `reconcile-boot-close-out-roadmap-2026-06-11.md`. Mandatory 2-lens gate (Bravo Opus 4.8 + Charlie Fable 5) on the PR diff before merge.
+
+— G3 authored by Golf (Sonnet 4.6); mandatory lens: Bravo (Opus 4.8) + Charlie (Fable 5).

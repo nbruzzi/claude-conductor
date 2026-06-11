@@ -65,12 +65,14 @@ import { getWallClockNow } from "../../shared/clock.ts";
 import { effectiveHome } from "../../shared/home.ts";
 import { appendPresenceFailure } from "../../shared/presence-failure-log.ts";
 import {
+  forensicMarkerActive,
   formatNamedWorktreeReapCandidate,
   isNamedWorktreeReapReportEnabled,
   isSidPrefixWorktreeId,
   listWorktrees,
   NAMED_WORKTREE_STALE_FLOOR_MS,
   removeWorktree,
+  worktreeReapGuard,
 } from "../../worktrees/index.ts";
 import { gatedNamedWorktreeReapCandidates } from "../../worktrees/liveness.ts";
 import {
@@ -93,11 +95,6 @@ const REAP_INTERVAL_MS = 5 * 60 * 1000;
  *  precedence ratification. */
 const GC_WINDOW_MS_DEFAULT = 60 * 60 * 1000;
 
-/** Safety-guard mtime gates — mirror dotfiles GC. */
-const INDEX_LOCK_FRESH_MS = 60 * 60 * 1000;
-const BUN_TMP_FRESH_MS = 5 * 60 * 1000;
-
-const FORENSIC_MARKER_DIR_NAME = "session-state-forensic";
 const CURSOR_FILE_PREFIX = ".repo-worktree-gc-cursor.";
 
 export async function check(input: HookInput): Promise<HookResult> {
@@ -208,7 +205,7 @@ function reapRepo(args: {
       continue;
     }
 
-    const guard = guardReason(wt.path, now);
+    const guard = worktreeReapGuard(wt.path, now);
     if (guard !== null) {
       appendPresenceFailure({
         timestamp: new Date().toISOString(),
@@ -346,44 +343,4 @@ function touchCursor(cursorPath: string): void {
   } catch {
     /* best-effort */
   }
-}
-
-function forensicMarkerActive(sidPrefix: string): boolean {
-  const path = join(
-    effectiveHome(),
-    ".claude",
-    FORENSIC_MARKER_DIR_NAME,
-    sidPrefix,
-  );
-  return existsSync(path);
-}
-
-function guardReason(worktreePath: string, now: number): string | null {
-  const indexLock = join(worktreePath, ".git", "index.lock");
-  if (existsSync(indexLock)) {
-    try {
-      const age = now - statSync(indexLock).mtimeMs;
-      if (age >= 0 && age < INDEX_LOCK_FRESH_MS) {
-        return ".git/index.lock active (mid-checkout/commit)";
-      }
-    } catch {
-      /* skip — treat as stale lock */
-    }
-  }
-  const nodeModulesDir = join(worktreePath, "node_modules");
-  try {
-    if (existsSync(nodeModulesDir)) {
-      // Lightweight heuristic: dir's mtime reflects any recent .bun-tmp-*
-      // activity. Under-reaping is safer than over-reaping; skip if mtime
-      // is recent regardless of the specific .bun-tmp-* file presence.
-      const stat = statSync(nodeModulesDir);
-      const age = now - stat.mtimeMs;
-      if (age >= 0 && age < BUN_TMP_FRESH_MS) {
-        return "node_modules recently modified (possible mid-install)";
-      }
-    }
-  } catch {
-    /* skip — treat as inactive */
-  }
-  return null;
 }
