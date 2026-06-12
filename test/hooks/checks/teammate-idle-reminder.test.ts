@@ -1326,3 +1326,172 @@ describe("teammate-idle-reminder — harness-status PRIMARY suppress (Lane A)", 
     );
   });
 });
+
+// ─── K4-b §C — compaction grace-gate ─────────────────────────────────────────
+//
+// The harness writes a NON-active status (idle/unknown) during /compact, so
+// Lane-A (harness-status suppress) structurally cannot see a compacting peer as
+// alive. The PreCompact sentinel in the channel IS the right signal: this gate
+// suppresses the idle reminder when the peer's most-recent STATUS post starts
+// with COMPACTION_SENTINEL_PREFIX and is within the bounded grace window.
+// Addresses sub-class (i) compaction false-fire only; (ii) reserve-hold/dead-
+// peer true-idle is deferred (no sentinel exists for it).
+describe("teammate-idle-reminder — compaction grace-gate (K4-b §C)", () => {
+  const COMPACTION_GRACE_ENV = "CLAUDE_CONDUCTOR_COMPACTION_GRACE_MS";
+  // Full sentinel body as formatStatusBody("auto") emits it (dotfiles
+  // compaction-notify.ts:133). The cross-edge paired test (F4) pins that
+  // formatStatusBody output startsWith COMPACTION_SENTINEL_PREFIX.
+  const SENTINEL_BODY =
+    "auto-heartbeat (PreCompact/auto): compacting context after a long stretch — active, not idle; will resurface post-compaction.";
+
+  let prevHomeCG: string | undefined;
+  let homeCG: string | undefined;
+  let prevGraceEnv: string | undefined;
+
+  /**
+   * Append a STATUS-kind JSONL message to a channel's messages.jsonl.
+   * Mirror of the standby tests' appendPeerMessage helper; ts defaults to now,
+   * overridable for grace-expiry and env-override tests.
+   */
+  function appendPeerStatus(
+    channelId: string,
+    sessionId: string,
+    body: string,
+    tsOverrideIso?: string,
+  ): void {
+    const messagesPath = join(
+      resolveChannelsDir(),
+      channelId,
+      "messages.jsonl",
+    );
+    const line = `${JSON.stringify({
+      ts: tsOverrideIso ?? new Date().toISOString(),
+      from: sessionId,
+      kind: "status",
+      body,
+    })}\n`;
+    mkdirSync(join(resolveChannelsDir(), channelId), { recursive: true });
+    if (existsSync(messagesPath)) {
+      const existing = readFileSync(messagesPath, "utf-8");
+      writeFileSync(messagesPath, existing + line, "utf-8");
+    } else {
+      writeFileSync(messagesPath, line, "utf-8");
+    }
+  }
+
+  async function setupStalePeer(channelId: string): Promise<void> {
+    await createChannel({
+      channelId,
+      handoffId: channelId,
+      sessionId: SESSION_SELF,
+    });
+    await claimIdentity({
+      channelId,
+      sessionId: SESSION_SELF,
+      defaultRole: "pen",
+    });
+    await claimIdentity({
+      channelId,
+      sessionId: SESSION_BRAVO,
+      defaultRole: "queue",
+    });
+    touchHeartbeat(channelId, SESSION_SELF);
+    backdateHeartbeat(channelId, SESSION_BRAVO, 6 * 60 * 1000); // 6 min idle
+  }
+
+  beforeEach(() => {
+    sandbox();
+    prevHomeCG = process.env["HOME"];
+    homeCG = mkdtempSync(join(tmpdir(), "teammate-idle-cg-home-"));
+    process.env["HOME"] = homeCG;
+    prevGraceEnv = process.env[COMPACTION_GRACE_ENV];
+  });
+
+  afterEach(() => {
+    if (prevHomeCG === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = prevHomeCG;
+    if (homeCG !== undefined && existsSync(homeCG)) {
+      rmSync(homeCG, { recursive: true, force: true });
+      homeCG = undefined;
+    }
+    if (prevGraceEnv === undefined) delete process.env[COMPACTION_GRACE_ENV];
+    else process.env[COMPACTION_GRACE_ENV] = prevGraceEnv;
+    cleanup();
+  });
+
+  // T1 — sentinel body within grace → suppressed + breadcrumb written.
+  it("T1. sentinel body within grace window → reminder suppressed + compaction-grace-suppressed breadcrumb", async () => {
+    await setupStalePeer("ch-cg-t1");
+    appendPeerStatus("ch-cg-t1", SESSION_BRAVO, SENTINEL_BODY);
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    const ev = readPresenceFailures().filter(
+      (e) => e.kind === "compaction-grace-suppressed",
+    );
+    expect(ev.length).toBeGreaterThanOrEqual(1);
+    expect(ev[ev.length - 1]?.detail ?? "").toContain("peer Bravo");
+  });
+
+  // T2 — NON-VACUITY: identical setup to T1. The gate IS load-bearing:
+  // deleting the grace-gate block (F2 step 4) causes this peer to WARN
+  // (a [teammate-idle] block appears). Verified by the lens in an isolated
+  // worktree. This test stays green only while the gate is present.
+  it("T2. NON-VACUITY: same setup as T1 — gate is load-bearing (green only while gate present)", async () => {
+    await setupStalePeer("ch-cg-t2");
+    appendPeerStatus("ch-cg-t2", SESSION_BRAVO, SENTINEL_BODY);
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toBe(""); // deleting the gate makes this FAIL
+  });
+
+  // T3 — grace expiry: sentinel ts = 20 min ago > 15 min default → still warns.
+  // A crashed-mid-compaction peer resurfaces after the bounded window.
+  it("T3. grace expired — sentinel ts 20 min old (> 15 min default) → reminder fires (window bounded)", async () => {
+    await setupStalePeer("ch-cg-t3");
+    const oldTs = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    appendPeerStatus("ch-cg-t3", SESSION_BRAVO, SENTINEL_BODY, oldTs);
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toContain("Peer Bravo");
+  });
+
+  // T4 — NON-VACUITY #2 (additive-direction guard / CG3 / (i)-not-(ii) boundary):
+  // non-sentinel status body → gate sees it (kindFilter="status" matches) but
+  // body fails startsWith → NOT suppressed. Must stay green WITH the gate present,
+  // proving the gate quiets ONLY compaction sentinels, never a genuine idle.
+  it("T4. NON-VACUITY #2 — non-sentinel status body → NOT suppressed (additive-for-suppress-only, CG3)", async () => {
+    await setupStalePeer("ch-cg-t4");
+    appendPeerStatus("ch-cg-t4", SESSION_BRAVO, "checking in — still working");
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toContain("Peer Bravo"); // gate present; body fails startsWith
+  });
+
+  // T5 — prefix-anchored: body CONTAINS the prefix mid-string but does NOT
+  // start with it → NOT suppressed (anchored startsWith, per spec 1b).
+  it("T5. prefix mid-string (not startsWith) → NOT suppressed (anchored match)", async () => {
+    await setupStalePeer("ch-cg-t5");
+    appendPeerStatus(
+      "ch-cg-t5",
+      SESSION_BRAVO,
+      "re: auto-heartbeat (PreCompact/auto) — see below",
+    );
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toContain("Peer Bravo");
+  });
+
+  // T6 — env override: COMPACTION_GRACE_MS=60000 (60s); sentinel ts = now − 2 min
+  // (120s). 120s > 60s grace → NOT suppressed (fires). Confirms env reader + bound.
+  it("T6. env override COMPACTION_GRACE_MS=60000 — sentinel 2 min old exceeds 60s grace → reminder fires", async () => {
+    process.env[COMPACTION_GRACE_ENV] = "60000";
+    await setupStalePeer("ch-cg-t6");
+    const twoMinOldTs = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    appendPeerStatus("ch-cg-t6", SESSION_BRAVO, SENTINEL_BODY, twoMinOldTs);
+
+    const result = await check(inputFor(SESSION_SELF));
+    expect(result.stdout).toContain("Peer Bravo"); // 120s > 60s grace → not suppressed
+  });
+});

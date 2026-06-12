@@ -99,6 +99,13 @@ const LOCK_BASE_DELAY_MS = 50;
  */
 export const COORDINATION_CHANNEL_ID = "coordination";
 
+/** The invariant prefix of the PreCompact auto-heartbeat sentinel emitted by
+ *  dotfiles compaction-notify.ts formatStatusBody. The teammate-idle compaction
+ *  grace-gate keys on this (startsWith); a dotfiles paired test pins the producer
+ *  literal == this constant (feedback-cross-edge-contract-via-paired-tests). */
+export const COMPACTION_SENTINEL_PREFIX =
+  "auto-heartbeat (PreCompact/" as const;
+
 export type ChannelLifecycle = "parallel";
 
 /**
