@@ -958,5 +958,23 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
         "--target-plan requires a non-empty ref argument",
       );
     });
+
+    it("T7: body with internal target field + --target-plan → exit 2, stderr matches 'or internal target'", async () => {
+      const channelId = "c-s6-t7-internal-target";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      // JSON.stringify(CANONICAL_BODY) as string bypasses auditTargetToWire spread —
+      // body carries internal `target` field but no wire target fields.
+      const bodyPath = writeBodyFile(JSON.stringify(CANONICAL_BODY));
+      const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("or internal target");
+    });
   });
 });
