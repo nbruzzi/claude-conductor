@@ -81,6 +81,24 @@ The shared parser is `parseAuditAskBody` (`src/channels/audit-ask.ts`);
 shared types + as-const tuples + type-guards live in
 `src/channels/audit-types.ts` (Slice 2 also consumes them).
 
+**Strict-wire target field (#230):** `audit-ask` and `audit-verdict`
+bodies must carry `target_pr` XOR `target_plan` on the wire; a body
+carrying only the internal `target` field (accepted by the parser as a
+roundtrip convenience) is rejected at send (#230 F2). Plan targets use
+`"target_plan": {"ref": "…"}`. To inject the wire field at send without
+hand-authoring the JSON, pass `--target-plan <ref>`:
+
+```
+# CLI flag (injects wire field from a body that has no target yet)
+--target-plan "plans-durable/my-plan.md"
+
+# Hand-authored equivalent in the JSON body
+"target_plan": {"ref": "plans-durable/my-plan.md"}
+```
+
+Use `auditTargetToWire` (`src/channels/audit-types.ts`) to serialize
+the wire shape programmatically.
+
 ### Tier 2 Verb 2 cycle 2026-05-20 — memory-proposal surface (1 kind)
 
 | Kind              | Semantic                                                                                                                          | Recommended body                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |

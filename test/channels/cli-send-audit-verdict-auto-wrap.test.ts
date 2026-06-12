@@ -40,6 +40,7 @@ import {
 } from "../../src/channels/audit-signature-chain.ts";
 import { auditTargetToWire } from "../../src/channels/audit-types.ts";
 import type { AuditVerdictBody } from "../../src/channels/audit-verdict.ts";
+import { parseAuditAskBody } from "../../src/channels/audit-ask.ts";
 
 function unwrap<T>(value: T | null | undefined, label = "value"): T {
   if (value === null || value === undefined) {
@@ -765,6 +766,215 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
       expect(result.stderr).toContain(
         "audit-ask body missing wire target field",
       );
+    });
+  });
+
+  describe("Section 6 — --target-plan flag injects wire field at send time (T1-T6)", () => {
+    function runSendKindWithArgs(
+      channelId: string,
+      sendKind: string,
+      bodyFilePath: string,
+      extraArgs: readonly string[] = [],
+    ): RunResult {
+      const proc = Bun.spawnSync({
+        cmd: [
+          "bun",
+          CLI_PATH,
+          "send",
+          channelId,
+          sendKind,
+          "--body-file",
+          bodyFilePath,
+          ...extraArgs,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDirAbs,
+          CLAUDE_CONDUCTOR_KEYS_DIR: keysDirAbs,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+        },
+      });
+      return {
+        exitCode: proc.exitCode ?? -1,
+        stdout: new TextDecoder().decode(proc.stdout),
+        stderr: new TextDecoder().decode(proc.stderr),
+      };
+    }
+
+    it("T1: audit-ask + --target-plan → exit 0; body has target_plan.ref; parseAuditAskBody returns target.kind=plan", async () => {
+      const channelId = "c-s6-t1-ask-target-plan";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      const askBody = {
+        kind_version: 1,
+        target_peer: "Bravo",
+        tier: "light-touch",
+        lens_set_requested: ["RE"],
+        audit_class: "inside-pair",
+      };
+      const bodyPath = join(testTmpDir, "body-s6-t1.json");
+      writeFileSync(bodyPath, JSON.stringify(askBody));
+      const result = runSendKindWithArgs(channelId, "audit-ask", bodyPath, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(0);
+      const messages = readChannelJsonl(channelId);
+      const askMsg = unwrap(
+        messages.find((m) => m["kind"] === "audit-ask"),
+        "ask message",
+      );
+      const bodyStr = resolveJsonlBody(channelId, askMsg);
+      const parsedObj = JSON.parse(bodyStr) as Record<string, unknown>;
+      expect(parsedObj["target_plan"]).toStrictEqual({ ref: "plans/x.md" });
+      const parsedAsk = unwrap(parseAuditAskBody(bodyStr), "parsedAsk");
+      expect(parsedAsk.target.kind).toBe("plan");
+    });
+
+    it("T2: audit-verdict + --target-plan → exit 0; DSSE payload has target_plan.ref", async () => {
+      const channelId = "c-s6-t2-verdict-target-plan";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      await claimIdentityNamed({
+        channelId,
+        sessionId: TEST_SESSION_ID,
+        identity: "Charlie",
+        force: false,
+      });
+      await runBootstrap({
+        identity: "charlie",
+        force: false,
+        cohortDir: cohortKeysDirAbs,
+      });
+      // Body WITHOUT wire target OR internal target field — after F1, a body
+      // carrying the internal `target` key also conflicts. Mirrors S5.1 fixture shape.
+      const bodyPath = writeBodyFile(
+        JSON.stringify((({ target: _t, ...r }) => r)(CANONICAL_BODY)),
+      );
+      const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(0);
+      const messages = readChannelJsonl(channelId);
+      const auditMsg = unwrap(
+        messages.find((m) => m["kind"] === "audit-verdict"),
+        "audit verdict",
+      );
+      const bodyRaw = resolveJsonlBody(channelId, auditMsg);
+      // Body IS the DSSE auto-wrap envelope — decode payload to inspect wire fields.
+      const envelope = unwrap(parseDsseEnvelope(bodyRaw), "DSSE envelope");
+      const decoded = Buffer.from(envelope.payload, "base64").toString("utf-8");
+      const inner = JSON.parse(decoded) as Record<string, unknown>;
+      expect(inner["target_plan"]).toStrictEqual({ ref: "plans/x.md" });
+    });
+
+    it("T3: body with target_pr + --target-plan → exit 2, stderr matches 'already carries a wire target field'", async () => {
+      const channelId = "c-s6-t3-conflict";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      // writeBodyFile spreads auditTargetToWire → body already has target_pr
+      const bodyPath = writeBodyFile(CANONICAL_BODY);
+      const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(
+        "already carries a wire target field or internal target",
+      );
+    });
+
+    it("T4: kind=note + --target-plan → exit 2, stderr matches 'applies only to audit-ask|audit-verdict'", async () => {
+      const channelId = "c-s6-t4-wrong-kind";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      const bodyPath = join(testTmpDir, "body-s6-t4.txt");
+      writeFileSync(bodyPath, "plain note body");
+      const result = runSendKindWithArgs(channelId, "note", bodyPath, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(
+        "applies only to audit-ask|audit-verdict",
+      );
+    });
+
+    it("T5: non-JSON body + --target-plan (kind=audit-ask) → exit 2, stderr matches 'requires a JSON object body'", async () => {
+      const channelId = "c-s6-t5-nonjson";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      const bodyPath = join(testTmpDir, "body-s6-t5.txt");
+      writeFileSync(bodyPath, "this is not json");
+      const result = runSendKindWithArgs(channelId, "audit-ask", bodyPath, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("requires a JSON object body");
+    });
+
+    it("T6: --target-plan with no value → exit 2 ARGS", () => {
+      // No channel setup needed — die fires in parseTargetPlanFlag before
+      // any channel I/O or stdin read.
+      const proc = Bun.spawnSync({
+        cmd: [
+          "bun",
+          CLI_PATH,
+          "send",
+          "any-channel",
+          "audit-ask",
+          "--target-plan",
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          CLAUDE_CONDUCTOR_CHANNELS_DIR: channelsDirAbs,
+          CLAUDE_CONDUCTOR_KEYS_DIR: keysDirAbs,
+          CLAUDE_SESSION_ID: TEST_SESSION_ID,
+        },
+      });
+      expect(proc.exitCode).toBe(2);
+      expect(new TextDecoder().decode(proc.stderr)).toContain(
+        "--target-plan requires a non-empty ref argument",
+      );
+    });
+
+    it("T7: body with internal target field + --target-plan → exit 2, stderr matches 'or internal target'", async () => {
+      const channelId = "c-s6-t7-internal-target";
+      await createChannel({
+        channelId,
+        handoffId: channelId,
+        sessionId: TEST_SESSION_ID,
+      });
+      // JSON.stringify(CANONICAL_BODY) as string bypasses auditTargetToWire spread —
+      // body carries internal `target` field but no wire target fields.
+      const bodyPath = writeBodyFile(JSON.stringify(CANONICAL_BODY));
+      const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
+        "--target-plan",
+        "plans/x.md",
+      ]);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("or internal target");
     });
   });
 });
