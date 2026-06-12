@@ -24,7 +24,12 @@
  *      `idle-emit/`; LEGACY dual-read fallback ≥30d). Each peer letter has
  *      an independent ISO-timestamp; emission is suppressed for 30 minutes
  *      after the last emission.
- *   5. Emits one `[teammate-idle]` system-reminder block per still-eligible
+ *   5. Compaction grace gate (K4-b §C): if the peer's most-recent STATUS
+ *      message body starts with COMPACTION_SENTINEL_PREFIX and is within
+ *      COMPACTION_GRACE_MS of now, the peer is mid-/compact (working, not
+ *      crashed) → suppress. Addresses sub-class (i) compaction only; does NOT
+ *      suppress (ii) reserve-hold/dead-peer true-idle — see backlog.
+ *   6. Emits one `[teammate-idle]` system-reminder block per still-eligible
  *      idle peer with the canonical `close-peer --force` recovery hint.
  *
  * Failure-mode class: **fail-open + breadcrumb**. Outer try/catch ensures
@@ -50,8 +55,15 @@ import {
   type IdentityContext,
   type IdentityPeer,
 } from "../../channels/identity-context.ts";
-import { readHeartbeatBody, resolveChannelsDir } from "../../channels/index.ts";
-import { getMostRecentPeerKind } from "../../channels/peer-recent-message.ts";
+import {
+  COMPACTION_SENTINEL_PREFIX,
+  readHeartbeatBody,
+  resolveChannelsDir,
+} from "../../channels/index.ts";
+import {
+  getMostRecentPeerKind,
+  getMostRecentPeerMessageWithBody,
+} from "../../channels/peer-recent-message.ts";
 import { isSessionLiveByPrefix } from "../../active-sessions/index.ts";
 import {
   buildHarnessStatusIndex,
@@ -100,6 +112,8 @@ const STANDBY_KINDS: ReadonlySet<string> = new Set([
 const CURSOR_DIR_NAME = "idle-emit-cursors";
 const LEGACY_CURSOR_DIR_NAME = "idle-emit";
 const ENV_VAR_IDLE_THRESHOLD = "CLAUDE_CONDUCTOR_IDLE_THRESHOLD_MS";
+const DEFAULT_COMPACTION_GRACE_MS = 15 * 60 * 1000;
+const ENV_VAR_COMPACTION_GRACE = "CLAUDE_CONDUCTOR_COMPACTION_GRACE_MS";
 
 /** Per-(channel, observer-session) rate-limit cursor. Key = peer letter, value = ISO timestamp of last emission. */
 type EmitCursor = Record<string, string>;
@@ -241,6 +255,23 @@ function readIdleThresholdMs(): number {
   return n;
 }
 
+/**
+ * Resolve the compaction grace window from env, falling back to the 15-minute
+ * default. Same syntactic guard as readIdleThresholdMs.
+ */
+function readCompactionGraceMs(): number {
+  const raw = process.env[ENV_VAR_COMPACTION_GRACE];
+  if (raw === undefined) return DEFAULT_COMPACTION_GRACE_MS;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return DEFAULT_COMPACTION_GRACE_MS;
+  if (!/^\d+$/.test(trimmed)) return DEFAULT_COMPACTION_GRACE_MS;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return DEFAULT_COMPACTION_GRACE_MS;
+  if (!Number.isInteger(n)) return DEFAULT_COMPACTION_GRACE_MS;
+  if (n <= 0) return DEFAULT_COMPACTION_GRACE_MS;
+  return n;
+}
+
 function formatRelativeTime(ms: number): string {
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
@@ -273,6 +304,7 @@ export async function check(input: HookInput): Promise<HookResult> {
     if (contexts.length === 0) return pass();
 
     const idleThreshold = readIdleThresholdMs();
+    const compactionGraceMs = readCompactionGraceMs();
     const now = getWallClockNow();
     // INDEX-ONCE (Alpha Lane-A lens Q3): build the harness sessions/<pid>.json
     // status map a single time per check, then do O(1) per-peer lookups below
@@ -342,6 +374,43 @@ export async function check(input: HookInput): Promise<HookResult> {
             sessionId,
             artifactPath: ctx.channelId,
             detail: `${SOURCE}: peer ${peer.identity} suppressed (channel-idle ${formatRelativeTime(idleMs)} but active-sessions-live)`,
+          });
+          continue;
+        }
+
+        // Compaction grace gate (K4-b §C). The harness reports a NON-active status
+        // during /compact (F4: confirmed by elimination), so neither Lane-A nor the
+        // active-sessions consult above can see a compacting peer as alive. The channel
+        // PreCompact sentinel IS that signal: if the peer's most-recent message body is
+        // the compaction sentinel AND it is within the grace window, the peer is
+        // mid-compaction (working, not crashed) -> suppress. Additive-for-suppress-only
+        // (CG3): only quiets a would-be warn, never promotes a peer to idle.
+        // Addresses sub-class (i) compaction only; does NOT suppress (ii) reserve-hold/
+        // dead-peer true-idle — see backlog.
+        // kindFilter="status" is REQUIRED (the accessor takes 3 args; the sentinel is
+        // kind=status, compaction-notify.ts:172). Semantics: this returns the most-recent
+        // STATUS post. A newer NON-prefix status self-corrects (peer resurfaced -> not
+        // suppressed). A newer non-status NOTE after the sentinel would have touched the
+        // heartbeat mtime, so the peer wouldn't reach this idle gate at all — benign.
+        const recentMsg = getMostRecentPeerMessageWithBody(
+          ctx.channelId,
+          peer.session_id,
+          "status",
+        );
+        if (
+          recentMsg !== null &&
+          recentMsg.body !== undefined &&
+          recentMsg.body.startsWith(COMPACTION_SENTINEL_PREFIX) &&
+          Number.isFinite(Date.parse(recentMsg.ts)) &&
+          now - Date.parse(recentMsg.ts) <= compactionGraceMs
+        ) {
+          appendPresenceFailure({
+            timestamp: new Date().toISOString(),
+            source: "channels-identity",
+            kind: "compaction-grace-suppressed",
+            sessionId,
+            artifactPath: ctx.channelId,
+            detail: `${SOURCE}: peer ${peer.identity} suppressed (channel-idle ${formatRelativeTime(idleMs)} but mid-/compact sentinel ts=${recentMsg.ts} within ${compactionGraceMs}ms grace)`,
           });
           continue;
         }

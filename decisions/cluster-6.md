@@ -349,3 +349,38 @@ affects:
 **Reason:** Fail-SAFE direction — terminal fires only on explicit `"terminal"`. If absent defaulted to `"terminal"`, every legacy body would assert terminal authority, re-creating the exact mid-vs-terminal indistinguishability bug. Strict-reject on present-invalid gives send-time typo-catch. No downstream consumer built this slice (deferred with the consumer per spec §0 + §4).
 
 **Supersedes / superseded_by:** Standalone additive. No prior decision superseded.
+
+---
+
+## 2026-06-12 — Decision: teammate-idle compaction grace-gate (K4-b §C)
+
+```yaml
+---
+ts: 2026-06-12T15:45:00Z
+kind: gate-addition
+severity: major
+phase: cluster-6 K4-b
+affects:
+  - src/channels/index.ts
+  - src/shared/presence-failure-log.ts
+  - src/hooks/checks/teammate-idle-reminder.ts
+  - test/hooks/checks/teammate-idle-reminder.test.ts
+  - ~/.claude-dotfiles/test/channels/compaction-sentinel-contract.test.ts
+---
+```
+
+**Context (F4 root-cause, refined by live capture — record observed, not predicted):** The existing Lane-A harness-status suppress (`teammate-idle-reminder.ts:308-323`) was BUILT to cover compaction; its own comment (`:299-303`) asserts "a /compact is indistinguishable from a long busy turn". It nonetheless missed ≥10 times (≥3 live mid-compaction instances flagged by K4-b). F4's elimination pass ruled out (b) pidfile-missing (every live session has a numeric pidfile) and (c) pid-dead (a compacting process is alive). The predicted mechanism for (a) — "the harness WRITES a non-active status during `/compact`" — was then REFUTED by the live capture: **during `/compact` the harness pidfile FREEZES at its last-written entry-status** (observed: pid 70590 busy-FROZEN with `updatedAt` stale pre-compaction, captured by Alpha at 2026-06-12T16:02:24Z, ~6 min into Hotel's sentinel-announced compaction). Lane-A coverage therefore depends on the frozen value: froze-at-active is covered; **froze-at-NON-active (the session was idle/non-busy at the instant compaction began) is the real miss class** — `isActiveHarnessStatus` returns false and Lane-A structurally cannot suppress it. The harness status is the wrong signal for that class; the channel PreCompact sentinel is the right one, and the additive grace-gate is a harmless overlap in the froze-at-active case (two suppressors, never a promote).
+
+**Phase-1 residual empirical (§1f) — CAPTURED:** One live mid-`/compact` pidfile was captured in-session (Alpha read Hotel's `sessions/70590.json` during Hotel's own compaction; a compacting session cannot self-read): `status:"busy"` frozen, `updatedAt` stale at the pre-compaction value. This nailed the freeze mechanism above. The exact non-active value in the historical miss cases (`idle` vs `unknown`) remains structurally irrelevant — both fail `isActiveHarnessStatus` — and the guard covers both.
+
+**Scope (sub-class (i) only — the non-claim):** This gate addresses sub-class (i): compaction false-fire (peer is WORKING/compacting, looks idle). It does **NOT** address sub-class (ii): reserve-hold/dead-peer true-idle (peer is genuinely idle post-sign-off; the fire is CORRECT, only the `close-peer --force` recommendation is wrong). Sub-class (ii) needs intentional-idle recognition — a sign-off/reserve marker or standby-kind extension — and is deferred to a filed backlog item. The gate JSDoc and spec §1a state this non-claim verbatim.
+
+**Recognition contract:** A peer is "mid-compaction" iff its most-recent channel STATUS message body starts with `COMPACTION_SENTINEL_PREFIX` (`"auto-heartbeat (PreCompact/"`) AND the message's `ts` is within `COMPACTION_GRACE_MS` (default 15 min, 3× the 5-min idle threshold) of now. The prefix is invariant across all three trigger variants (`auto`/`manual`/`unknown`) from `compaction-notify.ts:133`. Match is anchored `startsWith` on a shared constant — parse-then-check, not a brittle substring (`feedback-wire-format-migration-substring-match-class`).
+
+**Fail-direction (additive-for-suppress-only, CG3):** The gate may ONLY quiet a would-be idle warn; it must NEVER promote a peer to idle. On a match it does `continue` + emits a `compaction-grace-suppressed` breadcrumb. A peer that genuinely crashed mid-compaction resurfaces after the bounded 15-min window — bounded delay, not permanent blindness.
+
+**Cross-edge shape (FOLD-2 crash-isolation preserved):** Producer `compaction-notify.ts`/`formatStatusBody` is UNTOUCHED — it must stay node-builtins-only. The constant `COMPACTION_SENTINEL_PREFIX` lives in conductor `src/channels/index.ts`. The dotfiles paired structural test (`test/channels/compaction-sentinel-contract.test.ts`) pins `formatStatusBody({auto,manual,undefined}).startsWith(COMPACTION_SENTINEL_PREFIX)` → CI-reds if either side drifts.
+
+**Merge order:** conductor first (exports the constant) → dotfiles paired test second (consumes it). W1b precedent.
+
+**Tests T1–T6 (conductor) + revert-proof:** T1 (suppress within grace, breadcrumb written) · T2 (identical, NON-VACUITY: deleting the gate causes T1+T2 to FAIL — verified in an isolated stash-based worktree this build) · T3 (grace expiry, sentinel 20 min old, fires) · T4 (NON-VACUITY #2: non-sentinel status body, gate present, fires — the (i)-not-(ii) boundary, stays green) · T5 (prefix mid-string not startsWith, fires) · T6 (env override 60s, sentinel 2 min old, fires).

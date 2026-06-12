@@ -141,6 +141,13 @@ export type PresenceFailureKind =
   // guard, never age. ADVISORY-OBSERVE-ONLY (CG6): never gates a reaper. Source:
   // `channels-identity`.
   | "harness-active-suppressed"
+  // K4-b §C compaction grace-gate — forensic signal when `teammate-idle-reminder`
+  // suppresses a reminder because the peer's most-recent channel STATUS message
+  // body starts with COMPACTION_SENTINEL_PREFIX and is within the bounded grace
+  // window. Covers sub-class (i) compaction false-fire only (F4: harness writes
+  // non-active status during /compact, so Lane-A structurally misses it). Source:
+  // `channels-identity`.
+  | "compaction-grace-suppressed"
   // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan
   // v1.4 = v1.3's 6 instrumentation points + new Point 7 for
   // `resetArtifactRegistry` rmSync-bypass). Consumed exclusively by
@@ -463,6 +470,8 @@ function isPresenceFailureKind(k: string): k is PresenceFailureKind {
     k === "active-sessions-live-suppressed" ||
     // Lane A (Charlie, 2026-06-07) — teammate-idle harness-status PRIMARY suppression.
     k === "harness-active-suppressed" ||
+    // K4-b §C — teammate-idle compaction grace-gate (atomic with union add above).
+    k === "compaction-grace-suppressed" ||
     // Slice 7 A2 — worktree-provisioner race-fix Phase 1 telemetry (plan v1.4).
     k === "sentinel-dotfilesroot-set" ||
     k === "sentinel-dotfilesroot-cleared" ||
