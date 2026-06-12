@@ -220,13 +220,13 @@ Paired-contract tests at `test/cross-edge/audit-chain-shim-mirror.test.ts` (cond
 
 ## 7. Schema migrations
 
-| Migration | Schema file                           | Description                                                                                  |
-| --------- | ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 001       | (implicit v0.1 baseline)              | Initial unsigned `AuditVerdictBody` per Tier 1 Slice 2 cycle 2026-05-19.                     |
-| 002       | `schemas/audit-verdict/002_v0.2.json` | Additive `signed_at` + `prev_audit_body_ref` + `signer_role` fields per HYBRID lock (PR-A1). |
-| 003       | `schemas/audit-verdict/003_v0.3.json` | DSSE envelope wrapping; payload = base64 of canonical-JSON of v0.2 body (PR-A5).             |
-| 004       | `schemas/audit-verdict/004_v0.4.json` | Pair-A `lineage?: LineageEnvelope` extension field per Pair A §7 (Pair-A-PR-A3).             |
-| 001 (KR)  | `schemas/key-revoke/001_v0.1.json`    | Initial `KeyRevokeBody` v0.1 schema (PR-A7).                                                 |
+| Migration | Schema file                                         | Description                                                                                  |
+| --------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 001       | (implicit v0.1 baseline)                            | Initial unsigned `AuditVerdictBody` per Tier 1 Slice 2 cycle 2026-05-19.                     |
+| 002       | `docs/schema-snapshots/audit-verdict/002_v0.2.json` | Additive `signed_at` + `prev_audit_body_ref` + `signer_role` fields per HYBRID lock (PR-A1). |
+| 003       | `docs/schema-snapshots/audit-verdict/003_v0.3.json` | DSSE envelope wrapping; payload = base64 of canonical-JSON of v0.2 body (PR-A5).             |
+| 004       | `docs/schema-snapshots/audit-verdict/004_v0.4.json` | Pair-A `lineage?: LineageEnvelope` extension field per Pair A §7 (Pair-A-PR-A3).             |
+| 001 (KR)  | `docs/schema-snapshots/key-revoke/001_v0.1.json`    | Initial `KeyRevokeBody` v0.1 schema (PR-A7).                                                 |
 
 Reader-side parser tolerance per Sigstore parse-all-versions-simultaneously precedent: `parseAuditVerdictBody` accepts v0.1/v0.2 raw bodies; `parseAuditVerdictV0_3Wrapped` accepts v0.3 DSSE-wrapped bodies; both compose with Pair-A v0.4 `lineage?` field via inner-body parser delegation. No upconversion codec — parsers dispatch on shape.
 

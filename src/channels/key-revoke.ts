@@ -96,6 +96,9 @@ export function isRevocationReason(v: unknown): v is RevocationReason {
  * **`signed_by` non-empty invariant:** at minimum the revoking operator
  * themselves. For compromise cases, cohort may require N-of-cohort
  * co-signing (deferred per §2.5 prose; parser enforces ≥1 only).
+ *
+ * Historical JSON design snapshots: docs/schema-snapshots/key-revoke/
+ * (NOT runtime artifacts; this file is SSOT — Decision I).
  */
 export type KeyRevokeBody = {
   /** Schema version literal. Stays at 1; future migrations are additive optional. */

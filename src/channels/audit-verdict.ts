@@ -119,6 +119,9 @@ export type ThreeOptionAsk = {
  * `kind_version: 1` matches the digest + live-update + audit-ask schema-
  * version convention. Today's parser accepts only version `1`; mis-
  * versioned bodies return `null`.
+ *
+ * Historical JSON design snapshots: docs/schema-snapshots/audit-verdict/
+ * (NOT runtime artifacts; this file is SSOT — Decision I).
  */
 export type AuditVerdictBody = {
   /** Schema version. Bumped on incompatible schema revisions. */
