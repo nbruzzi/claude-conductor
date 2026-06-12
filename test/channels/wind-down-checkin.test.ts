@@ -25,7 +25,10 @@ import {
   parseWindDownCheckinBody,
   isCycleCharacter,
   CYCLE_CHARACTERS,
+  isFirePhase,
+  FIRE_PHASES,
   type WindDownCheckinBody,
+  type FirePhase,
 } from "../../src/channels/wind-down-checkin.ts";
 
 const CANONICAL_WIND_DOWN_CHECKIN_BODY: WindDownCheckinBody = {
@@ -362,5 +365,85 @@ describe("isCycleCharacter", () => {
     expect(isCycleCharacter(null)).toBe(false);
     expect(isCycleCharacter(undefined)).toBe(false);
     expect(isCycleCharacter({})).toBe(false);
+  });
+});
+
+// ─── Section 10: fire_phase additive field (W1b L113) ─────────────────────
+// T1–T6 per spec §3 (l113-w1b-spec-2026-06-12.md).
+// Base fixture = CANONICAL_WIND_DOWN_CHECKIN_BODY (min next_steps +
+// decisions_logged + cycle_character — all required fields present).
+
+describe("parseWindDownCheckinBody — Section 10: fire_phase (T1-T6)", () => {
+  // T1 (back-compat): existing v1 bodies without fire_phase parse unchanged.
+  it("T1: absent fire_phase → parses non-null; result has no fire_phase key", () => {
+    const result = parseWindDownCheckinBody(
+      JSON.stringify(CANONICAL_WIND_DOWN_CHECKIN_BODY),
+    );
+    expect(result).not.toBeNull();
+    expect(result?.fire_phase).toBeUndefined();
+  });
+
+  // T2: present + "mid" accepted.
+  it('T2: fire_phase "mid" → result.fire_phase === "mid"', () => {
+    const result = parseWindDownCheckinBody(bodyWith({ fire_phase: "mid" }));
+    expect(result?.fire_phase).toBe("mid");
+  });
+
+  // T3: present + "terminal" accepted.
+  it('T3: fire_phase "terminal" → result.fire_phase === "terminal"', () => {
+    const result = parseWindDownCheckinBody(
+      bodyWith({ fire_phase: "terminal" }),
+    );
+    expect(result?.fire_phase).toBe("terminal");
+  });
+
+  // T4 (present-invalid reject, spec 1c): present + invalid → null (whole body rejected).
+  // T6 REVERT-PROOF comment: temporarily neutering the
+  //   `if (!isFirePhase(firePhaseRaw)) return null`
+  // line in parseWindDownCheckinBody must turn EACH case below from null → non-null.
+  // The lens runs this revert in an isolated worktree; canonical untouched.
+  it("T4: present-invalid fire_phase rejects whole body (case-sensitive, type-strict)", () => {
+    const invalids = ["MID", "Terminal", "done", "paused", 1, null, []];
+    for (const fire_phase of invalids) {
+      expect(
+        parseWindDownCheckinBody(bodyWith({ fire_phase })),
+        `expected null for fire_phase=${JSON.stringify(fire_phase)}`,
+      ).toBeNull();
+    }
+  });
+
+  // T5 (NON-VACUITY #1 — M2 guard, load-bearing):
+  // The parser MUST NOT synthesize a terminal default.
+  // REVERT-PROOF: if a builder adds `fire_phase: obj["fire_phase"] ?? "terminal"`
+  // (the unsafe default), THIS test REDS.
+  it("T5 (non-vacuity): absent fire_phase => undefined, NOT 'terminal'", () => {
+    const result = parseWindDownCheckinBody(
+      JSON.stringify(CANONICAL_WIND_DOWN_CHECKIN_BODY),
+    );
+    expect(result?.fire_phase).toBeUndefined();
+    // Explicit negative: must NOT be "terminal"
+    expect(result?.fire_phase).not.toBe("terminal" as FirePhase);
+  });
+});
+
+describe("isFirePhase", () => {
+  it("accepts both valid FirePhase literals", () => {
+    for (const p of FIRE_PHASES) {
+      expect(isFirePhase(p)).toBe(true);
+    }
+  });
+
+  it("rejects invalid string literals (case-sensitive)", () => {
+    expect(isFirePhase("MID")).toBe(false);
+    expect(isFirePhase("Terminal")).toBe(false);
+    expect(isFirePhase("done")).toBe(false);
+    expect(isFirePhase("")).toBe(false);
+  });
+
+  it("rejects non-string values", () => {
+    expect(isFirePhase(1)).toBe(false);
+    expect(isFirePhase(null)).toBe(false);
+    expect(isFirePhase(undefined)).toBe(false);
+    expect(isFirePhase([])).toBe(false);
   });
 });

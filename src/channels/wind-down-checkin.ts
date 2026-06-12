@@ -103,6 +103,41 @@ export function isCycleCharacter(v: unknown): v is CycleCharacter {
 }
 
 /**
+ * Fire-phase rubric for `wind-down-checkin` messages — distinguishes when
+ * in the cycle this checkin fired:
+ *
+ *   - `"mid"` — a mid-cycle snapshot (e.g., arm-fire between slices);
+ *     the cycle is ongoing. NOT the authoritative cycle-close ledger.
+ *   - `"terminal"` — the terminal cycle-close checkin; this IS the
+ *     authoritative cycle-close ledger entry.
+ *
+ * **Reader contract (absent⇒unspecified, NEVER terminal):** a
+ * terminal-gated action MUST require `fire_phase === "terminal"` EXPLICITLY.
+ * An absent `fire_phase` OR `fire_phase === "mid"` MUST be treated as
+ * NOT-terminal. `absent` is the legacy/back-compat shape — every existing
+ * v1 body without this field is valid and means "unspecified", not
+ * "terminal". New posts SHOULD set it explicitly.
+ *
+ * **Closed-set rationale:** `mid|terminal` exhausts "when in the cycle did
+ * this fire"; it is a CLOSED set. A 3rd value (if ever needed) is a
+ * deliberate schema migration with `kind_version` bump, not a forward-compat
+ * additive — so strict-reject on present-invalid gives send-time typo-catch
+ * at the cost of negligible future-value hazard (explicitly accepted per
+ * 1c of the W1b spec, 2026-06-12).
+ */
+export const FIRE_PHASES = ["mid", "terminal"] as const;
+export type FirePhase = (typeof FIRE_PHASES)[number];
+
+/**
+ * Type-guard: `v` is one of the valid `FirePhase` literals.
+ */
+export function isFirePhase(v: unknown): v is FirePhase {
+  return (
+    typeof v === "string" && (FIRE_PHASES as readonly string[]).includes(v)
+  );
+}
+
+/**
  * Schema for the `wind-down-checkin` kind's body field (JSON-serialized to
  * the JSONL line at write time; parsed on read).
  *
@@ -147,6 +182,13 @@ export type WindDownCheckinBody = {
    * enum. See `CYCLE_CHARACTERS` for the 5 valid values + semantics.
    */
   cycle_character: CycleCharacter;
+  /**
+   * Optional cycle-fire phase. Absent ⇒ UNSPECIFIED (legacy/back-compat);
+   * a terminal-gated reader MUST require fire_phase==="terminal" explicitly
+   * — absent or "mid" ⇒ NOT terminal. New posts SHOULD set it.
+   * See FIRE_PHASES.
+   */
+  fire_phase?: FirePhase;
 };
 
 /**
@@ -164,6 +206,8 @@ export type WindDownCheckinBody = {
  *   - `memory_candidates` — same rules as `failed_approaches` (CAN be
  *     empty; each entry non-empty post-trim).
  *   - `cycle_character` is missing or not a valid `CycleCharacter` literal.
+ *   - `fire_phase` present but not a valid `FirePhase` literal → null;
+ *     absent → omitted, body valid.
  *
  * **F1 symmetric trim discipline:** every string-array element rejects
  * whitespace-only values (parse-time null) AND normalizes leading/trailing
@@ -224,6 +268,13 @@ export function parseWindDownCheckinBody(
   const cycleCharacter = obj["cycle_character"];
   if (!isCycleCharacter(cycleCharacter)) return null;
 
+  const firePhaseRaw = obj["fire_phase"];
+  let firePhase: FirePhase | undefined;
+  if (firePhaseRaw !== undefined) {
+    if (!isFirePhase(firePhaseRaw)) return null; // present-invalid ⇒ reject whole body (1c)
+    firePhase = firePhaseRaw;
+  }
+
   return {
     kind_version: 1,
     next_steps: nextSteps,
@@ -231,6 +282,7 @@ export function parseWindDownCheckinBody(
     failed_approaches: failedApproaches,
     memory_candidates: memoryCandidates,
     cycle_character: cycleCharacter,
+    ...(firePhase !== undefined ? { fire_phase: firePhase } : {}),
   };
 }
 
