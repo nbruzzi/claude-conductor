@@ -129,6 +129,7 @@ export type { BandwidthInputs, BandwidthState } from "./audit-types.ts";
 export type {
   WindDownCheckinBody,
   CycleCharacter,
+  FirePhase,
 } from "./wind-down-checkin.ts";
 
 // ─── Value re-exports ──────────────────────────────────────────────
@@ -377,6 +378,8 @@ export { BANDWIDTH_STATES, isBandwidthState } from "./audit-types.ts";
 export {
   CYCLE_CHARACTERS,
   isCycleCharacter,
+  FIRE_PHASES,
+  isFirePhase,
   parseWindDownCheckinBody,
 } from "./wind-down-checkin.ts";
 

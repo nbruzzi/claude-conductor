@@ -318,3 +318,34 @@ affects:
 **Reason:** The empirical record is decisive — the JSON layer produced drift; the TS+gate+tests layer caught every defect. Binding a decorative artifact is framework-vs-library inversion; demote eliminates the drift class with zero maintenance. The deferred bind arm is trigger-pinned: re-open ONLY when a NAMED machine-readable-schema consumer appears (dashboard, cross-language reader).
 
 **Supersedes / superseded_by:** Demotes the Layer-1 registry artifacts shipped 2026-05-26 (the parsers + gates from that cycle remain SSOT and are untouched). Roadmap: `~/.claude/plans-durable/l113-layer2-roadmap-2026-06-12.md` (ring-ratified REV 2; Delta scope-guard SHIP-CLEAN B0/F0/N0 on the execution spec).
+
+---
+
+## 2026-06-12 — Decision: V1 wind-down-checkin fire_phase additive field
+
+```yaml
+---
+ts: 2026-06-12T11:28:00Z
+kind: additive-schema
+severity: minor
+phase: cluster-6 L113-W1b
+affects:
+  - src/channels/wind-down-checkin.ts
+  - src/channels/api.ts
+  - ~/.claude-dotfiles/src/channels/index.ts
+---
+```
+
+**Context:** Repeated arm-fire observations (cycle 2026-05-18_10-50 Bravo double-fire; 2026-05-22_11-00 12 fires incl. Alpha ×4 mid-vs-terminal indistinguishable; pair-cd 8 fires incl. Charlie ×3) show mid-cycle and terminal `wind-down-checkin` fires are observably indistinguishable from the wire format. Downstream Tier-3 consumers (cycle-close ledger, reciprocation) need to distinguish the authoritative terminal cycle-close from snapshot mid-fires.
+
+**Consumer enumeration (primary-sourced 2026-06-12):** Zero current consumers act on `fire_phase` or terminal-ness — all references to `WindDownCheckinBody` / `parseWindDownCheckinBody` are write-side validators, type re-exports, or shim mirrors. Back-compat cost of any default = zero.
+
+**Chosen:** Add optional `fire_phase?: "mid" | "terminal"` to `WindDownCheckinBody`. `FIRE_PHASES` tuple + `FirePhase` type + `isFirePhase` guard parallel the `CYCLE_CHARACTERS`/`CycleCharacter`/`isCycleCharacter` pattern. `kind_version` stays `1` (additive optional field; matches 002_v0.2 precedent).
+
+**Default contract (absent⇒unspecified, NEVER terminal):** The parser MUST NOT synthesize a default. A terminal-gated reader MUST require `fire_phase === "terminal"` explicitly; absent OR `"mid"` ⇒ NOT terminal. Absent is the legacy/back-compat shape. New posts SHOULD set it.
+
+**Fail-direction (present-invalid⇒reject):** `fire_phase` present + invalid (any non-`"mid"|"terminal"` value, wrong type) → `parseWindDownCheckinBody` returns `null` (whole body rejected), consistent with `cycle_character` strict discipline. Closed-set: `mid|terminal` exhausts the rubric; a 3rd value is a deliberate schema migration, not a forward-compat additive.
+
+**Reason:** Fail-SAFE direction — terminal fires only on explicit `"terminal"`. If absent defaulted to `"terminal"`, every legacy body would assert terminal authority, re-creating the exact mid-vs-terminal indistinguishability bug. Strict-reject on present-invalid gives send-time typo-catch. No downstream consumer built this slice (deferred with the consumer per spec §0 + §4).
+
+**Supersedes / superseded_by:** Standalone additive. No prior decision superseded.
