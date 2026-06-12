@@ -854,9 +854,11 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
         force: false,
         cohortDir: cohortKeysDirAbs,
       });
-      // Body string WITHOUT wire target — mirrors S5.1 fixture shape.
-      // Passing a string to writeBodyFile bypasses the auditTargetToWire spread.
-      const bodyPath = writeBodyFile(JSON.stringify(CANONICAL_BODY));
+      // Body WITHOUT wire target OR internal target field — after F1, a body
+      // carrying the internal `target` key also conflicts. Mirrors S5.1 fixture shape.
+      const bodyPath = writeBodyFile(
+        JSON.stringify((({ target: _t, ...r }) => r)(CANONICAL_BODY)),
+      );
       const result = runSend(channelId, bodyPath, TEST_SESSION_ID, [
         "--target-plan",
         "plans/x.md",
@@ -889,7 +891,9 @@ describe("cli send audit-verdict — Lane P CLI integration", () => {
         "plans/x.md",
       ]);
       expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("already carries a wire target field");
+      expect(result.stderr).toContain(
+        "already carries a wire target field or internal target",
+      );
     });
 
     it("T4: kind=note + --target-plan → exit 2, stderr matches 'applies only to audit-ask|audit-verdict'", async () => {
