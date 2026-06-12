@@ -94,6 +94,7 @@ import { parseDigestBody } from "./digest.ts";
 import { parseAuditAskBody } from "./audit-ask.ts";
 import { parseAuditVerdictBody } from "./audit-verdict.ts";
 import { autoWrapAuditVerdict } from "./audit-verdict-auto-wrap.ts";
+import { auditTargetToWire } from "./audit-types.ts";
 import { isSubstrateClassTarget } from "./substrate-class.ts";
 import { parseMemoryProposalBody } from "./memory-proposal.ts";
 import { parseWindDownCheckinBody } from "./wind-down-checkin.ts";
@@ -155,7 +156,7 @@ const VERB_HELP: Record<string, string> = {
     "create <channel-id> <handoff-id>\n  Create a new channel with metadata for the given handoff id.",
   join: "join <channel-id> [--as <Identity>] [--role <pen|queue|out>] [--force [--from-session <session-id>]]\n  Join the channel + atomically claim a NATO identity.\n  Without --as: claim the next available letter (idempotent rejoin returns the existing claim).\n  With --as <Identity>: claim the named letter (Alpha..Zulu). If held by another session,\n    --force takes over via atomic sentinel replacement. --from-session adds an optional\n    CAS check that the takeover holder matches a specific session id.\n  Optional --role lands the claimant directly in pen/queue/out (default queue).\n  Same-letter rejoin is idempotent; same-session-different-letter is rejected.\n  Recovery flow for parallel-session resume: 'join <ch> --as Alpha --role pen --force'.",
   close: "close <channel-id>\n  Mark the channel closed (no further sends).",
-  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest, live-update, audit-ask, audit-verdict, memory-proposal, wind-down-checkin, key-revoke, poll, nudge}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.\n  kind=live-update carries the LiveUpdateBody schema (src/channels/live-update.ts) but is currently NOT pre-validated at send time (parser runs at read time per the verification-budget convention).\n  kind=audit-ask validates body against the AuditAskBody schema (src/channels/audit-ask.ts) before send.\n  kind=audit-verdict validates body against the AuditVerdictBody schema (src/channels/audit-verdict.ts) before send.\n  kind=memory-proposal validates body against the MemoryProposalBody schema (src/channels/memory-proposal.ts) before send.\n  kind=wind-down-checkin validates body against the WindDownCheckinBody schema (src/channels/wind-down-checkin.ts) before send.\n  kind=key-revoke validates body against the KeyRevokeBody schema (src/channels/key-revoke.ts) before send.\n  kind=poll validates body against the PollBody schema (src/channels/poll.ts) before send.",
+  send: "send <channel-id> <kind>\n  Append a message; body read from stdin (or --body-file <path>).\n  kind ∈ {note, question, handoff, status, ack, roger, over, standby, out, digest, live-update, audit-ask, audit-verdict, memory-proposal, wind-down-checkin, key-revoke, poll, nudge}.\n  Run 'channels kinds' for semantic detail + recommended body content per kind.\n  Send is blocked if this session's claimed role is 'out' unless kind=out\n  (announcing departure is the one send allowed from an out-role peer).\n  kind=digest validates body against the DigestBody schema (src/channels/digest.ts) before send.\n  kind=live-update carries the LiveUpdateBody schema (src/channels/live-update.ts) but is currently NOT pre-validated at send time (parser runs at read time per the verification-budget convention).\n  kind=audit-ask validates body against the AuditAskBody schema (src/channels/audit-ask.ts) before send.\n  kind=audit-verdict validates body against the AuditVerdictBody schema (src/channels/audit-verdict.ts) before send.\n  kind=memory-proposal validates body against the MemoryProposalBody schema (src/channels/memory-proposal.ts) before send.\n  kind=wind-down-checkin validates body against the WindDownCheckinBody schema (src/channels/wind-down-checkin.ts) before send.\n  kind=key-revoke validates body against the KeyRevokeBody schema (src/channels/key-revoke.ts) before send.\n  kind=poll validates body against the PollBody schema (src/channels/poll.ts) before send.\n  --target-plan <ref>: inject target_plan wire field at send time (audit-ask|audit-verdict only).\n  [--target-plan <ref>] merges the plan ref into the body JSON before validation; conflicts with a body already carrying target_pr or target_plan.",
   kinds:
     "kinds\n  Print the message-kind reference: semantic gloss + recommended body content\n  per kind + reader verification budget. See also: docs/conventions/message-kinds-and-verification.md.",
   read: "read <channel-id> [--since-mtime <value> | --since-cursor]\n  Print messages as JSON (resolving body_ref'd large bodies).\n  With no flag: returns full message history.\n  --since-mtime <value>: returns messages with Date.parse(msg.ts) > value.\n                         Value is epoch ms (e.g. 1735689600000) or ISO 8601\n                         (e.g. 2025-01-01T00:00:00Z). Mutually exclusive\n                         with --since-cursor.\n  --since-cursor:        returns messages newer than this session's\n                         last read cursor at\n                         ~/.claude/channels/<id>/last-seen-cursors/<sid>.json (legacy: last-seen/; dual-read fallback ≥30d post-Step-G).\n                         First use bootstraps from full history (stderr advisory).\n                         Successful filtered reads update the cursor.\n  Use 'forget-cursor <id>' to reset; 'show-cursor <id>' to inspect.",
@@ -673,6 +674,33 @@ function parseBodyFileFlag(
   return null;
 }
 
+/** Extract `--target-plan <ref>` from an argv tail. Returns null when absent. */
+function parseTargetPlanFlag(
+  ctx: DieContext,
+  args: readonly string[],
+): string | null {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--target-plan") {
+      const ref = args[i + 1];
+      if (ref === undefined || ref.length === 0) {
+        die(ctx, `--target-plan requires a non-empty ref argument`, {
+          code: 2,
+          category: "ARGS",
+        });
+      }
+      const trimmed = ref.trim();
+      if (trimmed.length === 0) {
+        die(ctx, `--target-plan requires a non-empty ref argument`, {
+          code: 2,
+          category: "ARGS",
+        });
+      }
+      return trimmed;
+    }
+  }
+  return null;
+}
+
 /**
  * Phase 2 Slice 8 cursor-write wrapper with RE-4 closure: in-memory
  * per-process backoff for cursor-write failures (EROFS/ENOSPC/EACCES).
@@ -1013,6 +1041,7 @@ export async function runChannelsCli(
         // the second-merging lane) locks the ordering: --body-file with
         // role==='out' must die with the DENYLIST die, NOT the role-die.
         const bodyFilePath = parseBodyFileFlag(ctx, rest);
+        const targetPlanRef = parseTargetPlanFlag(ctx, rest);
         // Mutex with stdin: documented as caller-responsibility for now.
         // Bun's `process.stdin.isTTY` is `undefined` for both piped and
         // closed/ignored stdin (verified empirically), so there is no
@@ -1096,6 +1125,49 @@ export async function runChannelsCli(
           );
         }
 
+        // --target-plan merge block: inject target_plan wire field into body
+        // at send time so operators don't hand-author the wire shape.
+        // Positioned after role-gate (body is final post-read) and before
+        // the digest validator gate so the merged body flows through every
+        // existing kind gate unchanged.
+        if (targetPlanRef !== null) {
+          if (kind !== "audit-ask" && kind !== "audit-verdict") {
+            die(
+              ctx,
+              `--target-plan applies only to audit-ask|audit-verdict (got '${kind}')`,
+              { code: 2, category: "VALIDATION" },
+            );
+          }
+          let parsedBody: Record<string, unknown>;
+          try {
+            const result = JSON.parse(body) as unknown;
+            if (
+              result === null ||
+              typeof result !== "object" ||
+              Array.isArray(result)
+            ) {
+              throw new Error("not a plain object");
+            }
+            parsedBody = result as Record<string, unknown>;
+          } catch {
+            die(ctx, `--target-plan requires a JSON object body`, {
+              code: 2,
+              category: "VALIDATION",
+            });
+          }
+          if ("target_pr" in parsedBody || "target_plan" in parsedBody) {
+            die(
+              ctx,
+              `--target-plan conflicts with a body that already carries a wire target field — remove the flag or the body field`,
+              { code: 2, category: "VALIDATION" },
+            );
+          }
+          body = JSON.stringify({
+            ...parsedBody,
+            ...auditTargetToWire({ kind: "plan", ref: targetPlanRef }),
+          });
+        }
+
         // `message` construction was moved from here to after the
         // kind-specific validator gates so that the audit-verdict
         // auto-wrap dispatcher (Lane P CLI integration follow-up to
@@ -1156,7 +1228,7 @@ export async function runChannelsCli(
                 code: 2,
                 category: "VALIDATION",
                 remediation:
-                  "Add target_pr or target_plan to the body JSON, or use auditTargetToWire to produce the correct wire shape.",
+                  "Add target_pr or target_plan to the body JSON, or use auditTargetToWire to produce the correct wire shape, or pass --target-plan <ref> to inject the wire field at send.",
               },
             );
           }
