@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "claude-conductor:schemas/audit-verdict/002_v0.2.json",
   "title": "AuditVerdictBody v0.2",
-  "description": "Cycle 1 substrate-core schema migration 002 — extends v0.1 AuditVerdictBody with three optional fields per HYBRID lock 4-NATO ratify-clean (cohort cycle 2026-05-26): signed_at (ISO-8601 signing timestamp), prev_audit_body_ref (in-payload chain pointer per DC-2 resolving OBS-A), signer_role (sender's role; signature-covered via PAE per Obs-3). All three are OPTIONAL on the type (back-compat preserved with legacy v0.1 bodies pre-dating Cycle 1; kind_version stays at literal 1). Identity attestation is handled by DSSE signatures[i].keyid per HYBRID (no in-payload signer_nato). See src/channels/audit-verdict.ts AuditVerdictBody type + parseAuditVerdictBody function for parser implementation. See plans/cycle-1-substrate-core-slice-plan-2026-05-26.md §2.6 for migration narrative + §4.2 for cross-pair contract.",
+  "description": "HISTORICAL DESIGN SNAPSHOT — NOT LOADED AT RUNTIME. SSOT = src/channels/audit-verdict.ts (types + parsers) + the cli.ts send gate + paired tests. DO NOT EDIT to change behavior; edit the TS and tests. See decisions/cluster-6.md Decision I. | Cycle 1 substrate-core schema migration 002 — extends v0.1 AuditVerdictBody with three optional fields per HYBRID lock 4-NATO ratify-clean (cohort cycle 2026-05-26): signed_at (ISO-8601 signing timestamp), prev_audit_body_ref (in-payload chain pointer per DC-2 resolving OBS-A), signer_role (sender's role; signature-covered via PAE per Obs-3). All three are OPTIONAL on the type (back-compat preserved with legacy v0.1 bodies pre-dating Cycle 1; kind_version stays at literal 1). Identity attestation is handled by DSSE signatures[i].keyid per HYBRID (no in-payload signer_nato). See src/channels/audit-verdict.ts AuditVerdictBody type + parseAuditVerdictBody function for parser implementation. See plans/cycle-1-substrate-core-slice-plan-2026-05-26.md §2.6 for migration narrative + §4.2 for cross-pair contract.",
   "type": "object",
   "properties": {
     "kind_version": {
@@ -12,31 +12,57 @@
     "target_pr": {
       "type": "object",
       "properties": {
-        "repo": { "type": "string", "minLength": 1 },
-        "number": { "type": "integer", "exclusiveMinimum": 0 }
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "number": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
       },
       "required": ["repo", "number"],
       "additionalProperties": false
     },
-    "target_peer": { "type": "string", "minLength": 1 },
+    "target_peer": {
+      "type": "string",
+      "minLength": 1
+    },
     "lens_set_applied": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-    "audit_class": { "type": "string" },
+    "audit_class": {
+      "type": "string"
+    },
     "audit_axes": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-    "verdict": { "type": "string" },
+    "verdict": {
+      "type": "string"
+    },
     "counts": {
       "type": "object",
       "properties": {
-        "blocker": { "type": "integer", "minimum": 0 },
-        "fold": { "type": "integer", "minimum": 0 },
-        "nit": { "type": "integer", "minimum": 0 }
+        "blocker": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nit": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "required": ["blocker", "fold", "nit"],
       "additionalProperties": false
@@ -44,12 +70,31 @@
     "three_option_ask": {
       "type": "object",
       "properties": {
-        "a_ratify": { "type": "string", "minLength": 1 },
+        "a_ratify": {
+          "type": "string",
+          "minLength": 1
+        },
         "b_fold_if_applicable": {
-          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "c_reframe_if_applicable": {
-          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -68,9 +113,17 @@
             "type": "string",
             "enum": ["BLOCKER", "FOLD", "NIT"]
           },
-          "lens": { "type": "string" },
-          "title": { "type": "string", "minLength": 1 },
-          "detail": { "type": "string", "minLength": 1 }
+          "lens": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "required": ["kind", "lens", "title", "detail"]
       }
@@ -78,19 +131,46 @@
     "cross_edge_consumers_verified": {
       "description": "Optional readonly string[]; PR #120 introduced; required non-empty for substrate-class PRs per isSubstrateClassPR(target_pr) send-time validation.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "signed_at": {
       "description": "v0.2: ISO-8601 timestamp when the audit-verdict was signed. Required when DSSE-wrapped (post-Migration-003 v0.3); optional/absent on legacy unsigned bodies. Verifier resolves the correct historical pubkey by matching this timestamp against signing NATO's keys/cohort/<nato>.history.json entries (DC-5).",
-      "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "prev_audit_body_ref": {
       "description": "v0.2: SHA-256 of prior audit-verdict's canonical-JSON payload (in-payload signature-chain pointer per DC-2; resolves OBS-A — HMAC framing was incorrect crypto-primitive naming per Delta Phase 0 fact-base catch). null for bootstrap (first) audit-verdict in a channel per Charlie Obs-5 HYBRID write-side canonical. Absent on legacy v0.1 bodies.",
-      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "signer_role": {
       "description": "v0.2: sender's channel role at signing time (queue / driver / out etc; matches JSONL line role field). Signature-covered via PAE per Obs-3 4-NATO cohort HYBRID lock; line-vs-payload cross-check at verify time catches role-tamper attacks. NATO identity attestation is handled by DSSE signatures[i].keyid per HYBRID (no in-payload signer_nato).",
-      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

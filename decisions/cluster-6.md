@@ -289,3 +289,32 @@ affects:
 **Reason:** D-MIG-1 is the structural completeness net — without the type drop, the compiler cannot enumerate consumers and a missed consumer is undetectable. D-MIG-2 closes the plan-gate workaround class (plan audits now flow through the same queue/quorum discipline as PR audits). D-MIG-3 is an explicit scope boundary, not a gap.
 
 **Supersedes / superseded_by:** Completes Decision G's deferred fast-follow. The transitional `target_pr?` optional field removed from internal types (D-MIG-1). Wire field `target_pr` / `target_plan` retained in the wire protocol for pre-#230 reader back-compat.
+
+## 2026-06-12 — Decision I: JSON schema registry demoted to historical snapshots (D0-0b)
+
+```yaml
+---
+ts: 2026-06-12T11:25:00Z
+kind: architectural
+severity: major
+phase: cluster-6
+affects:
+  - docs/schema-snapshots/audit-verdict/002_v0.2.json
+  - docs/schema-snapshots/audit-verdict/003_v0.3.json
+  - docs/schema-snapshots/audit-verdict/004_v0.4.json
+  - docs/schema-snapshots/key-revoke/001_v0.1.json
+  - docs/substrate/audit-chain.md
+  - src/channels/audit-verdict.ts
+  - src/channels/key-revoke.ts
+---
+```
+
+**Context:** The L113-Layer-2 planning ring (Bravo/Charlie/Delta, captain Alpha, 2026-06-11) found the `schemas/` JSON registry decorative at primary source: zero runtime/test consumers bind any file under `schemas/` (RE-1, 3-way independently confirmed); the registry had ALREADY silently drifted — `004_v0.4.json` still listed `target_pr` in its required array after #230 D-MIG-1 dropped it from the internal `AuditVerdictBody` type, undetected for 13 days (RE-2); no version dispatch exists (RE-3, `kind_version` frozen at literal 1). The operative enforcement layer is hand-written TS: versioned parsers (`parseAuditVerdictBodyAnyVersion`) + fail-closed send gates (`requireWireTargetField` etc.) + paired structural tests — the layer that caught every wire defect of the 2026-06 cycle (#193, #230).
+
+**Options:** (0a) BIND — build a parser↔schema conformance harness + freshness assertion; standing infra justified only by a machine-readable-schema consumer, none of which exists or is planned (regenerate-JSON-from-parser is 0a-lite and grouped under this arm). (0b) DEMOTE — declare TS-is-SSOT, relocate the JSON files to a self-evidently-historical path with in-file banners; zero standing infra (CHOSEN, ring 3-0; Bravo withdrew 0a as co-equal — 0b removes the second source and thereby the drift CLASS).
+
+**Chosen:** 0b enforcement-grade (Bravo F1 fold — instruction-not-enforcement is the anti-pattern this substrate exists to replace): (i) every snapshot's `description` is prefixed with a loud HISTORICAL-SNAPSHOT banner naming the TS SSOT (JSON has no comments; `description` is the in-file channel); (ii) all 4 snapshots (audit-verdict 002/003/004 + key-revoke 001) relocated `schemas/` → `docs/schema-snapshots/<kind>/` — the directory name does the enforcing; (iii) the stale 004 `target_pr` lines are ANNOTATED, not rewritten (never-edit-applied-snapshot; the staleness note carries the Decision-H cross-reference and the drift evidence); (iv) the sole path consumer — the version-history table at `docs/substrate/audit-chain.md` (4 rows) — updated in the same commit (complete reference set, grep-verified); (v) NO new check-\* gate (a per-commit schema-vs-parser diff would re-import 0a's standing-infra cost).
+
+**Reason:** The empirical record is decisive — the JSON layer produced drift; the TS+gate+tests layer caught every defect. Binding a decorative artifact is framework-vs-library inversion; demote eliminates the drift class with zero maintenance. The deferred bind arm is trigger-pinned: re-open ONLY when a NAMED machine-readable-schema consumer appears (dashboard, cross-language reader).
+
+**Supersedes / superseded_by:** Demotes the Layer-1 registry artifacts shipped 2026-05-26 (the parsers + gates from that cycle remain SSOT and are untouched). Roadmap: `~/.claude/plans-durable/l113-layer2-roadmap-2026-06-12.md` (ring-ratified REV 2; Delta scope-guard SHIP-CLEAN B0/F0/N0 on the execution spec).

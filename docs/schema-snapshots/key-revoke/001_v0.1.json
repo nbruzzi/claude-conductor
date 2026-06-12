@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "claude-conductor:schemas/key-revoke/001_v0.1.json",
   "title": "KeyRevokeBody v0.1",
-  "description": "Cycle 1 substrate-core schema migration 001 baseline for the key-revoke channel kind per Pair B slice plan body §2.5 + §4.3 LOCKED. Posted by the operator revoking their own Ed25519 key OR by cohort members co-signing a revocation when a compromise is detected. The wire-format here drives <nato>.history.json maintenance which feeds resolveKeyAtTime (key-surface.ts) which feeds verifyChannelAuditChain (verify.ts): revoked entries map to breaks[].reason = 'revoked-key' per the 3-class break taxonomy (sub-Obs-6a + DC-5) distinct from 'tamper' (signature failure) and 'key-rotation-discontinuity' (chain gap / no covering history entry). See src/channels/key-revoke.ts KeyRevokeBody type + parseKeyRevokeBody function for parser implementation. Pair B Delta-pen capacity-take per cohort feedback-cohort-standby-standoff-anti-pattern rule + Pair B §5 flexibility-clause invocation at Charlie 19:42Z tool-flow-accuracy explicit-defer.",
+  "description": "HISTORICAL DESIGN SNAPSHOT — NOT LOADED AT RUNTIME. SSOT = src/channels/key-revoke.ts (types + parsers) + the cli.ts send gate + paired tests. DO NOT EDIT to change behavior; edit the TS and tests. See decisions/cluster-6.md Decision I. | Cycle 1 substrate-core schema migration 001 baseline for the key-revoke channel kind per Pair B slice plan body §2.5 + §4.3 LOCKED. Posted by the operator revoking their own Ed25519 key OR by cohort members co-signing a revocation when a compromise is detected. The wire-format here drives <nato>.history.json maintenance which feeds resolveKeyAtTime (key-surface.ts) which feeds verifyChannelAuditChain (verify.ts): revoked entries map to breaks[].reason = 'revoked-key' per the 3-class break taxonomy (sub-Obs-6a + DC-5) distinct from 'tamper' (signature failure) and 'key-rotation-discontinuity' (chain gap / no covering history entry). See src/channels/key-revoke.ts KeyRevokeBody type + parseKeyRevokeBody function for parser implementation. Pair B Delta-pen capacity-take per cohort feedback-cohort-standby-standoff-anti-pattern rule + Pair B §5 flexibility-clause invocation at Charlie 19:42Z tool-flow-accuracy explicit-defer.",
   "type": "object",
   "properties": {
     "kind_version": {
@@ -30,13 +30,24 @@
       "description": "3-class revocation reason per §2.5 LOCKED + sub-Obs-6a — distinct operational remediation paths. compromise = private key suspected leaked/exfiltrated; rotation = operator-intentional key rotation (no compromise); operator-departure = NATO identity retiring from cohort."
     },
     "replacement_fingerprint": {
-      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "SHA-256 fingerprint of the replacement key when a new active key is taking over (rotation scenario). null when no replacement exists (compromise without rotation, operator-departure, emergency revocation). Must be explicit (present in body; not undefined)."
     },
     "signed_by": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "description": "NATO identifiers of cohort members signing this revocation. Min-1 (revoking operator themselves). For compromise scenarios, future cohort design MAY require N-of-cohort co-signing (deferred per §2.5 prose; schema enforces ≥1 only)."
     }
   },

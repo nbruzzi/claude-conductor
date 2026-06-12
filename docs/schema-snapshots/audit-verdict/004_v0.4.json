@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "claude-conductor:schemas/audit-verdict/004_v0.4.json",
   "title": "AuditVerdictBody v0.4 (Layer 2 lineage extension)",
-  "description": "Cycle 1 substrate-extension schema migration 004 — extends v0.2 AuditVerdictBody (schema 002_v0.2.json) with one optional field per Pair A slice plan body §1.1 LOCKED: `lineage?: LineageEnvelope | null` (Layer 2 per-artefact lineage envelope). All v0.2 fields preserved; kind_version stays at literal 1 (purely additive optional field per substrate-precedes-consumer + Sigstore parse-all-versions precedent). Composes with v0.3 DSSE wrapper (schema 003_v0.3.json) per cross-pair contract: the v0.4 body lives INSIDE the DSSE payload bytes; canonicalJson(body) including lineage gets PAE-covered by signPayload → lineage field is signature-covered automatically (composition-lens audit-shadow OBS-COMP-1; empirically verified via Pair-A-PR-A2 T15.8 + T15.9 DSSE wrap-unwrap roundtrip + signature-coverage tests). Send-time validation in cli.ts may require this field when lineage-capture harness integration lands (Cycle 2+); Cycle 1 ships schema-only + opt-in author capture per OQ-A4. See src/channels/lineage-envelope.ts LineageEnvelope type + parseLineageEnvelope function for SSOT parser implementation (Pair-A-PR-A1; see PR #130 + commit message body for SHA citation). See plans/cycle-1-substrate-extension-slice-plan-2026-05-26.md §1.1 + §2.5 + §3.1 + §7.1 for envelope shape + parser semantics + lineage-verify CLI contract + sequencing constraints.",
+  "description": "HISTORICAL DESIGN SNAPSHOT — NOT LOADED AT RUNTIME. SSOT = src/channels/audit-verdict.ts (types + parsers) + the cli.ts send gate + paired tests. DO NOT EDIT to change behavior; edit the TS and tests. See decisions/cluster-6.md Decision I. | Cycle 1 substrate-extension schema migration 004 — extends v0.2 AuditVerdictBody (schema 002_v0.2.json) with one optional field per Pair A slice plan body §1.1 LOCKED: `lineage?: LineageEnvelope | null` (Layer 2 per-artefact lineage envelope). All v0.2 fields preserved; kind_version stays at literal 1 (purely additive optional field per substrate-precedes-consumer + Sigstore parse-all-versions precedent). Composes with v0.3 DSSE wrapper (schema 003_v0.3.json) per cross-pair contract: the v0.4 body lives INSIDE the DSSE payload bytes; canonicalJson(body) including lineage gets PAE-covered by signPayload → lineage field is signature-covered automatically (composition-lens audit-shadow OBS-COMP-1; empirically verified via Pair-A-PR-A2 T15.8 + T15.9 DSSE wrap-unwrap roundtrip + signature-coverage tests). Send-time validation in cli.ts may require this field when lineage-capture harness integration lands (Cycle 2+); Cycle 1 ships schema-only + opt-in author capture per OQ-A4. See src/channels/lineage-envelope.ts LineageEnvelope type + parseLineageEnvelope function for SSOT parser implementation (Pair-A-PR-A1; see PR #130 + commit message body for SHA citation). See plans/cycle-1-substrate-extension-slice-plan-2026-05-26.md §1.1 + §2.5 + §3.1 + §7.1 for envelope shape + parser semantics + lineage-verify CLI contract + sequencing constraints. | STALENESS NOTE (2026-06-11): this snapshot predates #230 D-MIG-1, which dropped target_pr from the internal AuditVerdictBody type; target_pr/target_plan remain WIRE fields only (back-compat). See decisions/cluster-6.md Decision H. This drift went undetected for 13 days because nothing binds these JSON files to the parser — the motivating evidence for Decision I.",
   "type": "object",
   "properties": {
     "kind_version": {
@@ -12,31 +12,57 @@
     "target_pr": {
       "type": "object",
       "properties": {
-        "repo": { "type": "string", "minLength": 1 },
-        "number": { "type": "integer", "exclusiveMinimum": 0 }
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "number": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
       },
       "required": ["repo", "number"],
       "additionalProperties": false
     },
-    "target_peer": { "type": "string", "minLength": 1 },
+    "target_peer": {
+      "type": "string",
+      "minLength": 1
+    },
     "lens_set_applied": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-    "audit_class": { "type": "string" },
+    "audit_class": {
+      "type": "string"
+    },
     "audit_axes": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-    "verdict": { "type": "string" },
+    "verdict": {
+      "type": "string"
+    },
     "counts": {
       "type": "object",
       "properties": {
-        "blocker": { "type": "integer", "minimum": 0 },
-        "fold": { "type": "integer", "minimum": 0 },
-        "nit": { "type": "integer", "minimum": 0 }
+        "blocker": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nit": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "required": ["blocker", "fold", "nit"],
       "additionalProperties": false
@@ -44,12 +70,31 @@
     "three_option_ask": {
       "type": "object",
       "properties": {
-        "a_ratify": { "type": "string", "minLength": 1 },
+        "a_ratify": {
+          "type": "string",
+          "minLength": 1
+        },
         "b_fold_if_applicable": {
-          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "c_reframe_if_applicable": {
-          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -68,9 +113,17 @@
             "type": "string",
             "enum": ["BLOCKER", "FOLD", "NIT"]
           },
-          "lens": { "type": "string" },
-          "title": { "type": "string", "minLength": 1 },
-          "detail": { "type": "string", "minLength": 1 }
+          "lens": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "required": ["kind", "lens", "title", "detail"]
       }
@@ -78,23 +131,57 @@
     "cross_edge_consumers_verified": {
       "description": "Optional readonly string[]; PR #120 introduced; required non-empty for substrate-class PRs per isSubstrateClassPR(target_pr) send-time validation.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "signed_at": {
       "description": "v0.2: ISO-8601 timestamp when the audit-verdict was signed. Required when DSSE-wrapped (post-Migration-003 v0.3); optional/absent on legacy unsigned bodies. Verifier resolves the correct historical pubkey by matching this timestamp against signing NATO's keys/cohort/<nato>.history.json entries (DC-5).",
-      "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "prev_audit_body_ref": {
       "description": "v0.2: SHA-256 of prior audit-verdict's canonical-JSON payload (in-payload signature-chain pointer per DC-2; resolves OBS-A — HMAC framing was incorrect crypto-primitive naming per Delta Phase 0 fact-base catch). null for bootstrap (first) audit-verdict in a channel per Charlie Obs-5 HYBRID write-side canonical. Absent on legacy v0.1 bodies.",
-      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "signer_role": {
       "description": "v0.2: sender's channel role at signing time (queue / driver / out etc; matches JSONL line role field). Signature-covered via PAE per Obs-3 4-NATO cohort HYBRID lock; line-vs-payload cross-check at verify time catches role-tamper attacks. NATO identity attestation is handled by DSSE signatures[i].keyid per HYBRID (no in-payload signer_nato).",
-      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "lineage": {
       "description": "v0.4: optional Layer 2 per-artefact lineage envelope. SSOT type at src/channels/lineage-envelope.ts (Pair-A-PR-A1; see PR #130 commit message body for SHA citation). When present + body is DSSE-wrapped (v0.3 schema 003_v0.3.json), the lineage field becomes part of canonical-JSON payload bytes that signPayload signs via PAE → signature-covered automatically (composition-lens OBS-COMP-1). Verifier extracts via parseAuditVerdictV0_3Wrapped → body.lineage. Parser at parseAuditVerdictBody tolerates absent / null / shape-valid envelope; delegates shape validation to parseLineageEnvelope SSOT. See $defs/LineageEnvelope for inline shape.",
-      "anyOf": [{ "$ref": "#/$defs/LineageEnvelope" }, { "type": "null" }]
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LineageEnvelope"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -126,33 +213,72 @@
         },
         "input_body_refs": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Body_refs (or content-hashes when body_ref unavailable) of prior artefacts that fed into this one. Empty array allowed (source-of-truth-no-prior-input). Tier-3 RESOLVABILITY checked at lineage-verify time, NOT parse time (substrate-precedes-consumer cadence)."
         },
         "produced_at": {
           "anyOf": [
-            { "type": "string", "format": "date-time" },
-            { "type": "null" }
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Optional ISO-8601 production timestamp (distinct from signed_at; for memory + handoff frontmatter, production-time is meaningful even before signing)."
         },
         "input_handoffs": {
           "anyOf": [
-            { "type": "array", "items": { "type": "string", "minLength": 1 } },
-            { "type": "null" }
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
           ],
           "description": "Optional list of handoff filenames this artefact was derived from. Distinct from input_body_refs (handoffs aren't body_refs; they're filesystem paths). OQ-A2 resolution: extension field on envelope (uniform across 4 surfaces) rather than handoff-frontmatter-specific top-level field."
         },
         "prompt_sha": {
-          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
           "description": "Optional SHA256 of the prompt that produced this artefact. Useful for prompt-injection audit class + cross-model audit (B-P0-3 dep). OQ-A4 opt-in Cycle 1."
         },
         "model": {
-          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
           "description": "Optional model identifier (e.g., claude-opus-4-7, claude-sonnet-4-6). Required for B-P0-3 cross-model audit; optional otherwise. OQ-A4 opt-in Cycle 1."
         },
         "cost": {
-          "anyOf": [{ "$ref": "#/$defs/TokenCost" }, { "type": "null" }],
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "description": "Optional token cost. OQ-A4 opt-in Cycle 1. Note: cost_usd is float per locked spec; canonical-json.ts RFC 8785 subset does NOT implement §3.2.2 full number canonicalization → canonical-encoding non-determinism risk if populated. Cycle 2 substrate-debt path: promote canonical-json.ts to full RFC 8785 OR amend to integer micros. See vault wiki/backlog.md Cycle 2 substrate-debt entry on canonical-json.ts RFC 8785 (or cost_usd to micros migration)."
         }
       },
@@ -162,8 +288,14 @@
     "TokenCost": {
       "type": "object",
       "properties": {
-        "input_tokens": { "type": "integer", "minimum": 0 },
-        "output_tokens": { "type": "integer", "minimum": 0 },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
         "cost_usd": {
           "type": "number",
           "minimum": 0,
