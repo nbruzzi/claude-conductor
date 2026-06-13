@@ -164,6 +164,23 @@ describe("memory-attention-updater Stop hook", () => {
     expect(existsSync(statePath)).toBe(false);
   });
 
+  // tiered-memory-index PR-0 site 9 (HIGHEST impact): MEMORY-FULL.md is
+  // regenerated constantly; if it were tracked as an applied memory it would
+  // inflate its attention score and corrupt the AW1 archival apply-data. The
+  // exclusion routes through isIndexFile on the un-stripped basename — this
+  // pins it so the extension-stripped-stem check can't regress.
+  it("MEMORY-FULL.md edits are excluded (not tracked — apply-data integrity)", async () => {
+    const fullPath = join(memDir, "MEMORY-FULL.md");
+    writeFileSync(fullPath, "# complete index\n");
+    writeTranscriptLines([
+      toolUseLine("2026-05-20T17:00:00Z", "Write", fullPath),
+      toolUseLine("2026-05-20T17:01:00Z", "Edit", fullPath),
+    ]);
+    const result = await check(makeInput(transcriptPath));
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(statePath)).toBe(false);
+  });
+
   it("apply_history is bounded at 50 entries (oldest dropped on push)", async () => {
     const memPath = join(memDir, "feedback-bounded.md");
     writeFileSync(memPath, "# bounded memory\n");

@@ -384,3 +384,41 @@ affects:
 **Merge order:** conductor first (exports the constant) → dotfiles paired test second (consumes it). W1b precedent.
 
 **Tests T1–T6 (conductor) + revert-proof:** T1 (suppress within grace, breadcrumb written) · T2 (identical, NON-VACUITY: deleting the gate causes T1+T2 to FAIL — verified in an isolated stash-based worktree this build) · T3 (grace expiry, sentinel 20 min old, fires) · T4 (NON-VACUITY #2: non-sentinel status body, gate present, fires — the (i)-not-(ii) boundary, stays green) · T5 (prefix mid-string not startsWith, fires) · T6 (env override 60s, sentinel 2 min old, fires).
+
+---
+
+## 2026-06-13 — Decision: tiered-memory-index conductor consumer leg (PR-0)
+
+```yaml
+---
+ts: 2026-06-13T14:55:00Z
+kind: architectural
+severity: major
+phase: cluster-6 tiered-memory-index PR-0
+affects:
+  - src/shared/paths.ts
+  - src/hooks/checks/memory-attention-updater.ts
+  - src/memory-attention/cli.ts
+  - src/lexicon/cli.ts
+  - src/memory-loader/index.ts
+  - docs/conventions/memory-index-filenames.md
+  - test/shared/paths.test.ts
+  - test/hooks/checks/memory-attention-updater.test.ts
+---
+```
+
+**Context:** The dotfiles-side tiered-memory-index slice splits the always-loaded memory index into two files in the shared memory dir — `MEMORY.md` (the hot subset) and a NEW `MEMORY-FULL.md` (the complete index, regenerated constantly). A dedicated cross-repo census (REV-5 of the build spec, ordered after the "missed consumer" finding-class recurred three audit rounds running) found that **conductor** has LIVE consumers that enumerate/classify the memory dir and key on one-off `MEMORY.md` literals — they were missed by three rounds of dotfiles-scoped greps precisely because they key on DIFFERENT literals (`basename === "MEMORY"` extension-stripped; `name === "MEMORY.md"`; `path.endsWith("MEMORY.md")`). Without exclusion, the new `MEMORY-FULL.md` artifact would be scored/parsed as a phantom memo.
+
+**Options considered:**
+
+1. Import the dotfiles leaf (`src/shared/memory-index-shared.ts`) — REJECTED: cross-edge; the substrate is not importable from the plugin, and a runtime import would re-introduce the dep-coupling crash class the dep-drift guard exists to prevent.
+2. Inline `=== "MEMORY-FULL.md"` at each site alongside the existing literal — REJECTED: re-creates the literal-divergence that caused the three-round miss; the next index-file addition re-opens the class.
+3. **CHOSEN — conductor's OWN `isIndexFile` + constants in a shared leaf, route every consumer through it.** Cross-repo filename SET (`MEMORY.md` + `MEMORY-FULL.md`) is a documented string convention with a unit test in each repo, not a shared symbol.
+
+**Chosen:** Add `MEMORY_FILE` / `MEMORY_FULL_FILE` + `isIndexFile(name)` to `src/shared/paths.ts` (the module already imported by all three consumers). Apply at the 3 LIVE sites: site 9 `memory-attention-updater.ts` (basename-check on the un-stripped name — **highest impact**, else every `MEMORY-FULL.md` edit corrupts the AW1 archival apply-data + the design-§6 utility-selector input); site 10 `memory-attention/cli.ts` (`isIndexFile(name)`); site 11 `lexicon/cli.ts` (`isIndexFile(basename(path))` — exact-basename, tightening the prior suffix-match). Site 12 `memory-loader/index.ts` is DORMANT (zero non-test callers) → code-comment note only, no edit. Document the convention in `docs/conventions/memory-index-filenames.md`; unit-test `isIndexFile` excludes both (`test/shared/paths.test.ts`) + a site-9 regression that `MEMORY-FULL.md` edits are not tracked.
+
+**Reason:** The literal-divergence across repos is the actual bug the census found; the documented filename convention + each-repo `isIndexFile` + each-repo test is the pragmatic contract (a true paired-import test is impossible — filenames are a string convention, not a shared symbol). Routing through `isIndexFile` instead of a one-off literal closes the recurring-miss class structurally. The site-11 change to `isIndexFile(basename(path))` also fixes a latent suffix-match over-match (a hypothetical `XMEMORY.md` would have matched `endsWith`).
+
+**Merge order (LOAD-BEARING):** PR-0 (this, conductor) must be LIVE before the dotfiles PR-2 migration creates `MEMORY-FULL.md` — else `memory-attention-updater` logs the first FULL write as an applied memory and corrupts the apply-data. Build order: PR-0 → PR-1 (dotfiles code) → PR-2 (dotfiles migration).
+
+**Supersedes / superseded_by:** Standalone cross-edge consumer-exclusion. No prior decision superseded.

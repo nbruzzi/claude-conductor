@@ -40,6 +40,7 @@ import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import {
+  isIndexFile,
   memoriesDir,
   memoriesDirForSlug,
   projectSlugFromTranscriptPath,
@@ -129,8 +130,11 @@ function extractMemoryToolUseEvents(
     if (typeof filePath !== "string") continue;
     if (!filePath.startsWith(memDir)) continue;
     if (!filePath.endsWith(".md")) continue;
+    // Skip the index TOC files (MEMORY.md + MEMORY-FULL.md). Checked on the
+    // un-stripped basename via isIndexFile (cross-repo filename convention);
+    // memory_name below still uses the extension-stripped stem.
+    if (isIndexFile(basename(filePath))) continue;
     const name = basename(filePath, ".md");
-    if (name === "MEMORY") continue; // skip TOC index file
     events.push({ ts, memory_name: name });
   }
   return events;

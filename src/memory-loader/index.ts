@@ -197,6 +197,13 @@ export function loadMemories(dir: string = memoriesDir()): MemoryLoadResult {
   const entries: MemoryEntry[] = [];
   const errors: MemoryLoadError[] = [];
 
+  // DORMANT (tiered-memory-index PR-0, site 12): loadMemories has zero non-test
+  // callers, so it gets NO edit now. Its `name !== "INDEX.md"` filter is a third
+  // index-filename convention that never matched MEMORY.md either, so the
+  // tiered-index MEMORY-FULL.md artifact is symmetric here — no NEW breakage. IF
+  // this is ever wired to the real user corpus, it MUST exclude both index files
+  // via isIndexFile (from ../shared/paths.ts), matching the live consumers
+  // (memory-attention-updater / memory-attention/cli / lexicon/cli).
   const filenames = readdirSync(dir)
     .filter(
       (name) =>

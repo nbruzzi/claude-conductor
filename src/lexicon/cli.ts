@@ -16,10 +16,15 @@
  */
 
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { listChannelArchiveFilePaths } from "../channels/index.ts";
 
-import { channelsDir, handoffsDir, memoriesDir } from "../shared/paths.ts";
+import {
+  channelsDir,
+  handoffsDir,
+  isIndexFile,
+  memoriesDir,
+} from "../shared/paths.ts";
 import {
   aggregateLexicon,
   type AggregateInput,
@@ -147,7 +152,12 @@ function scanMemorySource(): AggregateInput[] {
   const files = listMarkdownFiles(dir);
   const out: AggregateInput[] = [];
   for (const path of files) {
-    if (path.endsWith("MEMORY.md")) continue;
+    // Exclude both index files (MEMORY.md + MEMORY-FULL.md). Match on the exact
+    // basename via isIndexFile, not endsWith — a bare suffix-match would also
+    // catch e.g. a hypothetical "XMEMORY.md". The shared listMarkdownFiles
+    // helper has no exclusion (it also serves the handoffs dir); the guard is
+    // correctly caller-side here.
+    if (isIndexFile(basename(path))) continue;
     let body = "";
     try {
       body = readFileSync(path, "utf8");
