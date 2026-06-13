@@ -21,7 +21,7 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { memoriesDir } from "../shared/paths.ts";
+import { isIndexFile, memoriesDir } from "../shared/paths.ts";
 import { effectiveHome } from "../shared/home.ts";
 import {
   buildAttentionOutput,
@@ -121,7 +121,7 @@ function listMemoryFiles(dir: string): readonly string[] {
   const out: string[] = [];
   for (const name of entries) {
     if (!name.endsWith(".md")) continue;
-    if (name === "MEMORY.md") continue;
+    if (isIndexFile(name)) continue; // exclude both index files (MEMORY.md + MEMORY-FULL.md)
     const fullPath = join(dir, name);
     try {
       if (lstatSync(fullPath).isSymbolicLink()) continue;

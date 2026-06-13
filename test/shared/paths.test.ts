@@ -14,6 +14,9 @@ import {
   handoffsDir,
   identityDir,
   INTERNAL,
+  isIndexFile,
+  MEMORY_FILE,
+  MEMORY_FULL_FILE,
   memoriesDir,
   memoriesDirForSlug,
   projectSlugFromTranscriptPath,
@@ -355,5 +358,40 @@ describe("paths — T4-Y1 project-namespaced memoriesDir helpers", () => {
         rmSync(tmpHome, { recursive: true, force: true });
       }
     });
+  });
+});
+
+// tiered-memory-index PR-0 (F-C0.2): the index-filename SET is a cross-repo
+// string convention (claude-conductor + claude-dotfiles), not a shared symbol —
+// each repo pins its own isIndexFile + this each-repo test is the contract. The
+// conductor consumers (memory-attention-updater / memory-attention/cli /
+// lexicon/cli) route their memory-dir exclusion through isIndexFile; this test
+// is the structural pin that both index files stay excluded as the set evolves.
+describe("paths — isIndexFile (tiered-memory-index cross-repo filename convention)", () => {
+  test("MEMORY_FILE / MEMORY_FULL_FILE constants are the pinned literals", () => {
+    expect(MEMORY_FILE).toBe("MEMORY.md");
+    expect(MEMORY_FULL_FILE).toBe("MEMORY-FULL.md");
+  });
+
+  test("isIndexFile is true for BOTH index files (the cross-repo convention pin)", () => {
+    expect(isIndexFile("MEMORY.md")).toBe(true);
+    expect(isIndexFile("MEMORY-FULL.md")).toBe(true);
+    // Driven off the constants so a future rename of either can't silently
+    // desync the predicate from its own filenames.
+    expect(isIndexFile(MEMORY_FILE)).toBe(true);
+    expect(isIndexFile(MEMORY_FULL_FILE)).toBe(true);
+  });
+
+  test("isIndexFile is false for ordinary memos and near-miss names", () => {
+    expect(isIndexFile("feedback-some-memo.md")).toBe(false);
+    expect(isIndexFile("INDEX.md")).toBe(false);
+    // Extension-stripped stems do NOT match — callers must pass the un-stripped
+    // basename (memory-attention-updater strips .md only for memory_name).
+    expect(isIndexFile("MEMORY")).toBe(false);
+    expect(isIndexFile("MEMORY-FULL")).toBe(false);
+    // Suffix/substring near-misses must not match (exact-basename contract).
+    expect(isIndexFile("XMEMORY.md")).toBe(false);
+    expect(isIndexFile("MEMORY-FULL.md.bak")).toBe(false);
+    expect(isIndexFile("")).toBe(false);
   });
 });
